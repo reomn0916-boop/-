@@ -121,7 +121,7 @@ button { font: inherit; color: inherit; }
 }
 #tools::-webkit-scrollbar { display: none; }
 .tool {
-  flex: 1 1 0; min-width: 40px; border: 0; border-radius: 10px; background: transparent;
+  flex: 1 1 0; min-width: 34px; border: 0; border-radius: 10px; background: transparent;
   color: #c9d4de; font-size: 11px; padding: 4px 2px; white-space: nowrap; display: flex; flex-direction: column; align-items: center;
 }
 .tool span { font-size: 20px; line-height: 26px; }
@@ -162,3 +162,81 @@ dialog h3 { margin: 14px 0 6px; font-size: 13px; color: var(--muted); font-weigh
 #ptList td.num { font-family: ui-monospace, "SF Mono", Menlo, monospace; text-align: right; }
 #ptList tr[data-id] { cursor: pointer; }
 #ptList tr[data-id]:active { background: var(--bg); }
+
+/* ---------- 図から選ぶ ---------- */
+#pickBar {
+  /* ヘッダーの上に重ねる（図面を隠さない） */
+  position: fixed; left: 0; right: 0; top: 0; z-index: 20;
+  padding: calc(6px + var(--safe-t)) 8px 6px 12px; min-height: calc(52px + var(--safe-t));
+  display: flex; align-items: center; gap: 6px;
+  background: #c026d3; color: #fff; box-shadow: var(--shadow);
+}
+#pickMsg { flex: 1; font-size: 14px; }
+#pickBar .btn { min-height: 34px; }
+
+/* ---------- 全画面シート ---------- */
+.sheet.full { width: 100%; max-width: 640px; margin: 0 auto; }
+.sheet-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.sheet-head h2 { flex: 1; margin: 0; font-size: 17px; }
+.calc-tip { margin: 0 0 8px; }
+#calcBody h3 { margin: 16px 0 6px; }
+.calc-item {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%;
+  text-align: left; border: 1px solid var(--line); border-radius: 10px; background: var(--bg);
+  padding: 10px 12px; margin-bottom: 6px;
+}
+.calc-item b { font-size: 15px; }
+.calc-item span { font-size: 12px; color: var(--muted); }
+.calc-item:active { filter: brightness(.95); }
+
+.field { display: block; margin: 10px 0; }
+.field > span { display: block; font-size: 13px; color: var(--muted); margin-bottom: 3px; }
+.field > span i { font-style: normal; font-size: 11px; margin-left: 6px; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; }
+.field small { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.in { display: flex; gap: 6px; }
+.in input, .in select, .field select {
+  flex: 1; min-width: 0; height: 42px; font-size: 16px; padding: 0 10px; width: 100%;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.pick { width: 46px; flex: 0 0 46px; height: 42px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: 18px; }
+.btn.wide { flex: 1; }
+.calc-result { margin-top: 12px; }
+.calc-result .kv { padding: 10px; background: var(--bg); border-radius: 10px; }
+.err { color: var(--danger); font-size: 14px; }
+.tbl { overflow-x: auto; margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; }
+.tbl table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.tbl th, .tbl td { padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.tbl th { background: var(--bg); text-align: left; font-weight: 600; }
+.tbl td.num { text-align: right; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+.small-btn { min-height: 30px; padding: 0 10px; font-size: 13px; }
+input.mini { width: 80px; height: 34px; font-size: 15px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); margin-left: auto; }
+#calPairs table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 8px; }
+#calPairs td, #calPairs th { padding: 6px 4px; border-bottom: 1px solid var(--line); text-align: left; }
+#calPairs td.num { text-align: right; font-family: ui-monospace, Menlo, monospace; }
+#calDialog .in { margin-top: 4px; }
+#calDialog select { width: 100%; }
+
+/* ---------- 計算書 ---------- */
+.report-wrap { border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin-top: 10px; }
+.report h3 { margin: 0; font-size: 15px; color: var(--fg); }
+.report .small { margin: 2px 0 6px; }
+.rk { border-collapse: collapse; font-size: 13px; margin: 4px 0; }
+.rk th { text-align: left; font-weight: 500; color: var(--muted); padding: 2px 12px 2px 0; vertical-align: top; }
+.rk td { font-family: ui-monospace, Menlo, monospace; padding: 2px 0; }
+.rk.res td { font-weight: 600; }
+.report-wrap .small-btn { margin-top: 6px; }
+
+#printArea { display: none; }
+@media print {
+  html, body { height: auto; overflow: visible; background: #fff; color: #000; display: block; }
+  body > *:not(#printArea) { display: none !important; }
+  #printArea { display: block; font-size: 11pt; }
+  #printArea h1 { font-size: 16pt; margin: 0 0 4px; }
+  #printArea .report { page-break-inside: avoid; border-top: 1px solid #999; padding-top: 8px; margin-top: 12px; }
+  #printArea .rk th { color: #444; }
+  #printArea .tbl { overflow: visible; border: 0; }
+  #printArea .tbl table { font-size: 9pt; }
+  #printArea .tbl th, #printArea .tbl td { border: 1px solid #999; padding: 2px 6px; }
+}

@@ -1,5 +1,7 @@
 import { llToXY, xyToLL, guessZone, toDMS, parseAngle, azimuth, ZONES, ZONE_AREAS } from './geo.js';
 import { decodeText, parseDXF, toDXF, parseSIMA, toSIMA, parseCSV, toCSV } from './io.js';
+import { buildAlignment, alignPoint, alignStation, alignStakes, fmtStation, intersect, fitTransform, applyTransform, invertTransform } from './cogo.js';
+import { initCalc, reportHtml, reportsCSV } from './calc.js';
 
 // ============================================================
 // 状態
@@ -14,9 +16,12 @@ const doc = {
   entities: [],
   seq: 1,             // 次の点番号
   nextId: 1,
+  hiddenLayers: [],   // 非表示の画層
+  reports: [],        // 計算書
+  gpsCal: { mode: 'rigid', pairs: [] }, // GPS 基準点補正
 };
 const view = { x: 0, y: 0, s: 10 }; // 画面中心のワールド座標と拡大率 (px/m)
-const settings = { snap: true, onLine: true, showLen: true, showNames: true, dark: false };
+const settings = { snap: true, onLine: true, showLen: true, showNames: true, dark: false, prefix: 'P', stakes: true };
 
 let tool = 'select';
 let temp = [];          // 作図中の点
@@ -24,11 +29,18 @@ let selected = null;    // 選択中エンティティ id
 let selPoint = null;    // 選択ツールでタップしたスナップ点
 let result = null;      // 計測結果（距離・角度）
 let hover = null;       // マウスホバー位置 / 最後のタップ位置（スナップ済み）
+let overlay = null;     // 計算結果の表示 {lines, pts, align}
+let picker = null;      // 図から点を選ぶモード {cb, multi, done}
+let calTf = null;       // GPS 補正の変換
 const undoStack = [];
 const redoLimit = 60;
 
 // GPS
 const gps = { watchId: null, fix: null, avg: null, follow: false };
+
+// 画層
+const layerOf = (e) => e.layer || '（作図）';
+const visible = (e) => !doc.hiddenLayers.length || !doc.hiddenLayers.includes(layerOf(e));
 
 // ============================================================
 // DOM
@@ -83,11 +95,20 @@ function addEntity(e, { snap = true } = {}) {
   return e;
 }
 function getEnt(id) { return doc.entities.find((e) => e.id === id); }
-function nextPointName() {
+function nextPointName(peek = false) {
   const used = new Set(doc.entities.filter((e) => e.type === 'point').map((e) => e.name));
-  let name;
-  do { name = 'P' + doc.seq++; } while (used.has(name));
+  const pre = settings.prefix || 'P';
+  let n = doc.seq, name;
+  do { name = pre + n++; } while (used.has(name));
+  if (!peek) doc.seq = n;
   return name;
+}
+function uniqueName(name) {
+  const used = new Set(doc.entities.filter((e) => e.type === 'point').map((e) => e.name));
+  if (!used.has(name)) return name;
+  let i = 2;
+  while (used.has(`${name}-${i}`)) i++;
+  return `${name}-${i}`;
 }
 
 // ============================================================
@@ -108,6 +129,8 @@ function bounds(ents = doc.entities) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   const add = (p) => { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y); };
   for (const e of ents) {
+    if (!visible(e)) continue;
+    if (e.type === 'align') { const g = alignGeom(e); if (g.poly) g.poly.forEach(add); continue; }
     if (e.type === 'circle' || e.type === 'arc') { add({ x: e.c.x - e.r, y: e.c.y - e.r }); add({ x: e.c.x + e.r, y: e.c.y + e.r }); }
     else for (const p of verts(e)) add(p);
   }
@@ -147,8 +170,44 @@ function verts(e) {
     case 'circle': return [e.c];
     case 'arc': return [e.c, arcPt(e, e.a0), arcPt(e, e.a1)];
     case 'text': return [e.p];
+    case 'align': return (alignGeom(e).keys || []).map((k) => k.p);
     default: return [];
   }
+}
+
+// 路線の形状（キャッシュ）
+const geomCache = new WeakMap();
+function alignGeom(e) {
+  let g = geomCache.get(e);
+  if (g) return g;
+  try {
+    const al = buildAlignment(e.ips, e.radii, e.s0 || 0);
+    const poly = [];
+    for (const el of al.elems) {
+      const n = el.type === 'line' ? 1 : Math.max(6, Math.ceil(el.len / el.R / (Math.PI / 90)));
+      for (let i = poly.length ? 1 : 0; i <= n; i++) poly.push(alignPoint(al, Math.min(el.s + (el.len * i) / n, al.sEnd)).p);
+    }
+    const pitch = e.pitch || 20;
+    const keys = [{ p: alignPoint(al, al.s0).p, label: 'BP', s: al.s0 }];
+    for (const c of al.curves) keys.push({ p: c.BC, label: `BC${c.ip}`, s: c.sBC }, { p: c.MC, label: `MC${c.ip}`, s: c.sMC }, { p: c.EC, label: `EC${c.ip}`, s: c.sEC });
+    keys.push({ p: alignPoint(al, al.sEnd).p, label: 'EP', s: al.sEnd });
+    g = { al, poly, keys, pitch };
+  } catch (err) {
+    g = { err: err.message };
+  }
+  geomCache.set(e, g);
+  return g;
+}
+const lr = (w) => (Math.abs(w) < 5e-4 ? '中心' : `${w > 0 ? '右' : '左'} ${Math.abs(w).toFixed(3)} m`);
+function stationRows(p) {
+  const rows = [];
+  const als = doc.entities.filter((e) => e.type === 'align' && visible(e));
+  for (const e of als) {
+    const g = alignGeom(e); if (g.err) continue;
+    const r = alignStation(g.al, p, 0.5);
+    if (r) rows.push([als.length > 1 ? `測点（${esc(e.name)}）` : '測点', `${fmtStation(r.s, g.pitch)}　${lr(r.w)}`, 'big']);
+  }
+  return rows;
 }
 // DXF の角度（東から反時計回り）で円弧上の点
 function arcPt(e, angDeg) {
@@ -157,6 +216,11 @@ function arcPt(e, angDeg) {
 }
 function segments(e) {
   if (e.type === 'line' || e.type === 'dim') return [[e.a, e.b]];
+  if (e.type === 'align') {
+    const g = alignGeom(e); const s = [];
+    if (g.poly) for (let i = 0; i + 1 < g.poly.length; i++) s.push([g.poly[i], g.poly[i + 1]]);
+    return s;
+  }
   if (e.type === 'poly') {
     const s = [];
     for (let i = 0; i + 1 < e.pts.length; i++) s.push([e.pts[i], e.pts[i + 1]]);
@@ -208,8 +272,14 @@ function snapAt(sx, sy, { ignoreTemp = false } = {}) {
     if (!best || score < best.score) best = { p: { x: p.x, y: p.y }, kind, score };
   };
   if (settings.snap) {
+    const nearSegs = [];
     for (const e of doc.entities) {
+      if (!visible(e)) continue;
+      if (e.type !== 'align' && nearSegs.length < 60) {
+        for (const [a, b] of segments(e)) if (dist(projectOnSeg(w, a, b).q, w) <= tol) nearSegs.push([a, b]);
+      }
       switch (e.type) {
+        case 'align': for (const k of alignGeom(e).keys || []) consider(k.p, k.label, 2); break;
         case 'point': consider(e.p, '点', 2); break;
         case 'line': case 'dim':
           consider(e.a, '端点', 2); consider(e.b, '端点', 2); consider(mid(e.a, e.b), '中点', 1); break;
@@ -222,11 +292,23 @@ function snapAt(sx, sy, { ignoreTemp = false } = {}) {
         case 'text': consider(e.p, '文字', 0); break;
       }
     }
+    // 交点
+    const isEnd = (p, a, b) => dist(p, a) < 1e-7 || dist(p, b) < 1e-7;
+    for (let i = 0; i < nearSegs.length; i++) {
+      for (let j = i + 1; j < nearSegs.length; j++) {
+        const [a, b] = nearSegs[i], [c, d] = nearSegs[j];
+        const r = intersect(a, b, c, d);
+        if (!r || r.t < -1e-9 || r.t > 1 + 1e-9 || r.u < -1e-9 || r.u > 1 + 1e-9) continue;
+        if (isEnd(r.p, a, b) || isEnd(r.p, c, d)) continue;
+        consider(r.p, '交点', 2.2);
+      }
+    }
     if (!ignoreTemp) temp.forEach((p) => consider(p, '作図点', 2));
     if (gps.fix) consider(gps.fix.p, 'GPS', 1.5);
   }
   if (!best && settings.onLine) {
     for (const e of doc.entities) {
+      if (!visible(e)) continue;
       for (const [a, b] of segments(e)) {
         const { q } = projectOnSeg(w, a, b);
         const d = dist(q, w);
@@ -254,6 +336,7 @@ function hitTest(sx, sy) {
   let best = null;
   const take = (e, d) => { if (d <= tol && (!best || d < best.d)) best = { e, d }; };
   for (const e of doc.entities) {
+    if (!visible(e)) continue;
     switch (e.type) {
       case 'point': take(e, dist(e.p, w) * 0.6); break; // 点は優先
       case 'text': take(e, dist(e.p, w)); break;
@@ -308,8 +391,9 @@ function draw() {
   // エンティティ
   ctx.font = '12px ui-monospace, Menlo, monospace';
   for (const e of doc.entities) {
+    if (!visible(e)) continue;
     const isSel = e.id === selected;
-    ctx.strokeStyle = isSel ? sel : (e.type === 'dim' ? C.accent : ent);
+    ctx.strokeStyle = isSel ? sel : (e.type === 'dim' ? C.accent : e.type === 'align' ? '#16a34a' : ent);
     ctx.fillStyle = ctx.strokeStyle;
     ctx.lineWidth = isSel ? 3 : 1.5;
     drawEntity(e, isSel);
@@ -333,8 +417,9 @@ function draw() {
     temp.forEach((p) => { const s = toS(p); ctx.fillRect(s.sx - 3, s.sy - 3, 6, 6); });
   }
 
-  // 計測結果
+  // 計測結果・計算結果
   if (result) drawResult(result, tmpC);
+  if (overlay) drawOverlay(overlay);
 
   // 選択ツールのスナップ点
   if (selPoint) {
@@ -443,6 +528,34 @@ function drawEntity(e, isSel) {
       ctx.beginPath(); ctx.arc(c.sx, c.sy, e.r * view.s, -e.a0 * Math.PI / 180, -e.a1 * Math.PI / 180, true); ctx.stroke();
       break;
     }
+    case 'align': {
+      const g = alignGeom(e);
+      if (g.err) break;
+      ctx.lineWidth = isSel ? 3.5 : 2.5;
+      ctx.beginPath();
+      g.poly.forEach((p, i) => { const s = toS(p); i ? ctx.lineTo(s.sx, s.sy) : ctx.moveTo(s.sx, s.sy); });
+      ctx.stroke();
+      ctx.lineWidth = 1.5;
+      // No.杭
+      const pitch = g.pitch, ppx = pitch * view.s;
+      if (settings.stakes && ppx >= 10) {
+        const every = ppx >= 45 ? 1 : ppx >= 18 ? 5 : 10;
+        for (let k = Math.ceil(g.al.s0 / pitch - 1e-9); k * pitch <= g.al.sEnd + 1e-9; k++) {
+          const { p, az } = alignPoint(g.al, k * pitch);
+          const s = toS(p), r = (az * Math.PI) / 180;
+          const big = k % every === 0;
+          const L = big ? 7 : 4;
+          ctx.beginPath(); ctx.moveTo(s.sx - Math.cos(r) * L, s.sy - Math.sin(r) * L); ctx.lineTo(s.sx + Math.cos(r) * L, s.sy + Math.sin(r) * L); ctx.stroke();
+          if (big) label(`No.${k}`, s.sx + Math.cos(r) * 10, s.sy + Math.sin(r) * 10 + 4, color);
+        }
+      }
+      for (const k of g.keys) {
+        const s = toS(k.p);
+        ctx.beginPath(); ctx.arc(s.sx, s.sy, 4, 0, Math.PI * 2); ctx.fill();
+        label(k.label, s.sx - 8, s.sy - 8, color, 'center');
+      }
+      break;
+    }
     case 'text': {
       const s = toS(e.p);
       const px = Math.max(9, Math.min(48, (e.h || 1) * view.s));
@@ -452,6 +565,20 @@ function drawEntity(e, isSel) {
       ctx.fillText(e.text, s.sx, s.sy);
       break;
     }
+  }
+}
+
+function drawOverlay(ov) {
+  const col = '#c026d3';
+  if (ov.align) { ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 2; drawEntity(ov.align, false); }
+  ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = 2; ctx.setLineDash([7, 4]);
+  for (const [a, b] of ov.lines || []) { const s1 = toS(a), s2 = toS(b); ctx.beginPath(); ctx.moveTo(s1.sx, s1.sy); ctx.lineTo(s2.sx, s2.sy); ctx.stroke(); }
+  ctx.setLineDash([]);
+  for (const q of ov.pts || []) {
+    const s = toS(q.p);
+    ctx.beginPath(); ctx.arc(s.sx, s.sy, 6, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(s.sx, s.sy, 2, 0, Math.PI * 2); ctx.fill();
+    if (q.label) label(q.label, s.sx + 8, s.sy + 14, col);
   }
 }
 
@@ -501,7 +628,8 @@ function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 
 function llRows(p) {
   if (!doc.zone) return [];
-  const ll = xyToLL(p.x, p.y, doc.zone);
+  const q = invertTransform(calTf, p); // 基準点補正中は GPS 側の座標へ戻してから換算
+  const ll = xyToLL(q.x, q.y, doc.zone);
   if (!Number.isFinite(ll.lat) || Math.abs(ll.lat) > 90) return [];
   return [['緯度', toDMS(ll.lat, 2)], ['経度', toDMS(ll.lon, 2)]];
 }
@@ -515,7 +643,7 @@ function targetPoint() {
 }
 
 function guideRows(p) {
-  if (!gps.fix || !p) return [];
+  if (!gps.fix || !p) return stationRows(p);
   const g = gps.fix.p;
   const d = dist(g, p);
   const az = azimuth(g, p);
@@ -525,6 +653,7 @@ function guideRows(p) {
     ['方向', `${dirs[Math.round(az / 45) % 8]}（${toDMS(az, 0)}）`],
     ['ΔX / ΔY', `${fmt(p.x - g.x, 2)} / ${fmt(p.y - g.y, 2)}`],
     ['GPS精度', `±${fmt(gps.fix.acc, 1)} m`],
+    ...stationRows(p),
   ];
 }
 
@@ -557,23 +686,36 @@ function renderPanel() {
     }
     if (e) html += entityInfo(e);
   }
-  if (gps.fix) html = html ? html + '<hr>' + '<h4>GPS</h4>' + gpsActions() : gpsInfo();
+  if (overlay && !html) {
+    html = '<h4>計算結果を表示中</h4><div class="panel-actions"><button class="btn" data-act="openCalc">計算に戻る</button><button class="btn" data-act="clearOverlay">表示を消す</button></div>';
+  }
+  if (gps.fix) html = html ? html + '<hr>' + '<h4>GPS</h4>' + stationRowsHtml() + gpsActions() : gpsInfo();
   body.innerHTML = html;
   panel.hidden = !html;
 }
 
+function stationRowsHtml() {
+  const r = stationRows(gps.fix.p);
+  return r.length ? kv(r) : '';
+}
+function calSummary() {
+  if (!calTf) return 'なし';
+  const n = doc.gpsCal.pairs.filter((q) => q.zone === doc.zone).length;
+  const mx = Math.max(...calTf.residuals.map((r) => r.d));
+  return `基準点 ${n} 点` + (n > 1 ? `（最大残差 ${fmt(mx, 2)} m）` : '');
+}
 function gpsInfo() {
   const f = gps.fix;
   return '<h4>現在地（GPS）</h4>' + kv([
-    ['X（北）', fmt(f.p.x), 'big'], ['Y（東）', fmt(f.p.y), 'big'],
-    ['系', `${doc.zone}系`], ['精度', `±${fmt(f.acc, 1)} m`],
+    ['X（北）', fmt(f.p.x), 'big'], ['Y（東）', fmt(f.p.y), 'big'], ...stationRows(f.p),
+    ['系', `${doc.zone}系`], ['精度', `±${fmt(f.acc, 1)} m`], ['基準点補正', calSummary()],
     ['緯度', toDMS(f.lat, 2)], ['経度', toDMS(f.lon, 2)],
     ...(f.alt != null ? [['標高(参考)', fmt(f.alt, 1) + ' m']] : []),
   ]) + gpsActions();
 }
 function gpsActions() {
-  const busy = gps.avg ? `平均中… ${gps.avg.samples.length}/${gps.avg.n}` : '平均して点を追加（10回）';
-  return `<div class="panel-actions"><button class="btn primary" data-act="gpsAvg" ${gps.avg ? 'disabled' : ''}>${busy}</button><button class="btn" data-act="gpsAdd">今の位置で点を追加</button></div>`;
+  const busy = gps.avg ? `${gps.avg.label || '平均中'}… ${gps.avg.samples.length}/${gps.avg.n}` : '平均して点を追加（10回）';
+  return `<div class="panel-actions"><button class="btn primary" data-act="gpsAvg" ${gps.avg ? 'disabled' : ''}>${busy}</button><button class="btn" data-act="gpsAdd">今の位置で点を追加</button><button class="btn" data-act="openCal">基準点で補正</button></div>`;
 }
 
 function entityInfo(e) {
@@ -594,7 +736,15 @@ function entityInfo(e) {
       if (e.closed) rows.unshift(['面積', fmt(polyArea(e.pts), 3) + ' ㎡', 'big']);
       if (e.closed) rows.push(['（坪）', fmt(polyArea(e.pts) / 3.305785, 2) + ' 坪']);
       return `<h4>${e.closed ? '閉じた図形' : '連続線'}</h4>` + kv([...rows, ...layer]) +
-        `<div class="panel-actions"><button class="btn" data-act="regVerts">頂点を点登録</button>${del}</div>`;
+        `<div class="panel-actions">${e.closed ? '<button class="btn primary" data-act="areaTable">求積表</button>' : ''}<button class="btn" data-act="regVerts">頂点を点登録</button>${del}</div>`;
+    }
+    case 'align': {
+      const g = alignGeom(e);
+      if (g.err) return `<h4>路線 ${esc(e.name)}</h4><p class="err">${esc(g.err)}</p><div class="panel-actions">${del}</div>`;
+      return `<h4>路線 ${esc(e.name)}</h4>` + kv([
+        ['路線延長', fmt(g.al.length) + ' m', 'big'], ['BP', fmtStation(g.al.s0, g.pitch)], ['EP', fmtStation(g.al.sEnd, g.pitch)],
+        ['IP 数', e.ips.length - 2], ['曲線', g.al.curves.map((c) => `R${c.R}`).join(' / ') || 'なし'], ['杭間隔', `${g.pitch} m`],
+      ]) + `<div class="panel-actions"><button class="btn primary" data-act="alignStation">測点⇔座標</button><button class="btn" data-act="alignStakes">中心杭を点登録</button><button class="btn" data-act="alignReport">測点表を計算書へ</button>${del}</div>`;
     }
     case 'circle':
       return '<h4>円</h4>' + kv([
@@ -849,6 +999,27 @@ cv.addEventListener('wheel', (ev) => {
 const clampScale = (s) => Math.min(Math.max(s, 1e-4), 5000);
 
 function onTap(sx, sy) {
+  if (picker) {
+    const sn = snapAt(sx, sy, { ignoreTemp: true });
+    const tol = SNAP_PX / view.s;
+    let pe = null, best = Infinity;
+    for (const e of doc.entities) {
+      if (e.type !== 'point' || !visible(e)) continue;
+      const d = dist(e.p, sn.p);
+      if (d < best && d <= tol) { best = d; pe = e; }
+    }
+    let val;
+    if (pe) val = pe.name;
+    else if (picker.multi) {
+      const e = addEntity({ type: 'point', p: sn.p, name: nextPointName(), z: 0 });
+      val = e.name; save();
+    } else val = `${sn.p.x.toFixed(3)},${sn.p.y.toFixed(3)}`;
+    hover = sn; updateHud(sn.p, sn.kind);
+    picker.cb(val);
+    if (picker.multi) { picker.count = (picker.count || 0) + 1; $('#pickMsg').textContent = `${picker.count} 点選択済み（${val}）→ 続けてタップ / 完了`; draw(); }
+    else endPick();
+    return;
+  }
   if (tool === 'select') {
     const sn = snapAt(sx, sy, { ignoreTemp: true });
     const e = hitTest(sx, sy);
@@ -884,8 +1055,8 @@ function toggleGps() {
   gps.follow = true;
   gps.watchId = navigator.geolocation.watchPosition(onFix, (err) => {
     const msg = { 1: '位置情報の利用が許可されていません（設定を確認）', 2: '位置を取得できません', 3: '測位がタイムアウトしました' }[err.code] || err.message;
-    toast(msg);
-    $('#gpsHud').textContent = 'GPS: ' + msg;
+    // 測位できている途中の一時的なエラーは控えめに（watch は継続する）
+    if (err.code === 1 || !gps.fix) { toast(msg); $('#gpsHud').textContent = 'GPS: ' + msg; }
   }, { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 });
 }
 
@@ -896,33 +1067,67 @@ function onFix(pos) {
     updateZoneChip(); save();
     toast(`座標系を ${doc.zone}系 に設定しました（右上で変更できます）`);
   }
-  const p = llToXY(lat, lon, doc.zone);
-  gps.fix = { lat, lon, acc, alt, p, t: pos.timestamp };
-  $('#gpsHud').textContent = `GPS ±${fmt(acc, 1)}m\nX ${fmt(p.x, 2)}\nY ${fmt(p.y, 2)}`;
+  const raw = llToXY(lat, lon, doc.zone);
+  const p = applyTransform(calTf, raw);
+  gps.fix = { lat, lon, acc, alt, p, raw, t: pos.timestamp };
+  $('#gpsHud').textContent = `GPS ±${fmt(acc, 1)}m${calTf ? '（補正）' : ''}\nX ${fmt(p.x, 2)}\nY ${fmt(p.y, 2)}`;
   $('#gpsHud').style.whiteSpace = 'pre';
   $('#btnGoGps').hidden = false;
 
   if (gps.avg) {
     gps.avg.samples.push({ lat, lon, acc, alt });
-    if (gps.avg.samples.length >= gps.avg.n) finishAvg();
+    if (gps.avg.samples.length >= gps.avg.n) {
+      const a = gps.avg; gps.avg = null;
+      a.onDone(averageFix(a.samples));
+    }
   }
-  if (gps.follow) { gps.follow = false; centerOn(p, Math.max(view.s, 2)); }
+  if (gps.follow) { gps.follow = false; centerOn(gps.fix.p, Math.max(view.s, 2)); }
   renderPanel();
   draw();
 }
 
-function finishAvg() {
-  const s = gps.avg.samples;
-  gps.avg = null;
-  // 精度で重み付け平均
+/** 精度で重み付けした平均位置 */
+function averageFix(s) {
   let wsum = 0, la = 0, lo = 0;
   for (const q of s) { const w = 1 / Math.max(q.acc, 0.5) ** 2; wsum += w; la += q.lat * w; lo += q.lon * w; }
   const lat = la / wsum, lon = lo / wsum;
-  const p = llToXY(lat, lon, doc.zone);
   const accs = s.map((q) => q.acc).sort((a, b) => a - b);
-  const e = addEntity({ type: 'point', p, name: nextPointName(), z: 0, gps: { acc: accs[Math.floor(accs.length / 2)], n: s.length } });
-  toast(`${e.name} を登録（${s.length}回平均・精度目安 ±${fmt(e.gps.acc, 1)}m）`);
-  changed();
+  const raw = llToXY(lat, lon, doc.zone);
+  return { lat, lon, raw, p: applyTransform(calTf, raw), acc: accs[Math.floor(accs.length / 2)], n: s.length };
+}
+function startAvg(onDone, label, n = 10) {
+  if (!gps.fix) { toast('GPS を ON にして測位を待ってください'); return; }
+  gps.avg = { n, samples: [], onDone, label };
+  toast('その場で静止してください（10回測位して平均します）');
+  renderPanel();
+}
+
+// ---------- 基準点補正 ----------
+function recomputeCal() {
+  const pairs = doc.gpsCal.pairs.filter((q) => q.zone === doc.zone);
+  calTf = pairs.length ? fitTransform(pairs, doc.gpsCal.mode) : null;
+  if (gps.fix) { gps.fix.raw = llToXY(gps.fix.lat, gps.fix.lon, doc.zone); gps.fix.p = applyTransform(calTf, gps.fix.raw); }
+}
+function renderCal() {
+  $('#calMode').value = doc.gpsCal.mode;
+  const pairs = doc.gpsCal.pairs;
+  const res = calTf ? calTf.residuals : [];
+  let i = 0;
+  $('#calPairs').innerHTML = pairs.length
+    ? '<table><thead><tr><th>基準点</th><th>残差</th><th></th></tr></thead><tbody>' + pairs.map((q, k) => {
+      const ok = q.zone === doc.zone;
+      const r = ok ? res[i++] : null;
+      return `<tr><td>${esc(q.name)}</td><td class="num">${ok ? (pairs.filter((x) => x.zone === doc.zone).length > 1 ? fmt(r.d, 3) + ' m' : '—') : '系が違う'}</td><td><button class="btn small-btn" data-caldel="${k}">✕</button></td></tr>`;
+    }).join('') + '</tbody></table>'
+    : '<p class="small">まだ基準点がありません。</p>';
+  $('#calInfo').textContent = calTf
+    ? `補正中：回転 ${toDMS(calTf.rot, 1)}・縮尺 ${calTf.scale.toFixed(6)}・移動 X ${fmt(calTf.tx, 3)} / Y ${fmt(calTf.ty, 3)}`
+    : '補正なし（GPS の座標をそのまま使います）';
+  $('#calStatus').textContent = gps.fix ? `GPS 測位中 ±${fmt(gps.fix.acc, 1)} m` : 'GPS が OFF です。先に GPS を ON にしてください。';
+}
+function openCal() {
+  recomputeCal(); renderCal(); renderNames();
+  $('#calDialog').showModal();
 }
 
 // ============================================================
@@ -935,6 +1140,25 @@ function download(name, text, type = 'text/plain') {
   a.download = name;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+/** DXF 用: 路線を線・円弧・文字に展開 */
+function exportEntities() {
+  const out = [];
+  const angDxf = (c, p) => (Math.atan2(p.x - c.x, p.y - c.y) * 180) / Math.PI;
+  for (const e of doc.entities) {
+    if (e.type !== 'align') { out.push(e); continue; }
+    const g = alignGeom(e); if (g.err) continue;
+    const layer = `路線_${e.name}`;
+    for (const el of g.al.elems) {
+      if (el.type === 'line') out.push({ type: 'line', layer, a: el.a, b: alignPoint(g.al, el.s + el.len).p });
+      else {
+        const end = el.curve.EC, a0 = angDxf(el.c, el.sign > 0 ? end : el.a), a1 = angDxf(el.c, el.sign > 0 ? el.a : end);
+        out.push({ type: 'arc', layer, c: el.c, r: el.R, a0: (a0 + 360) % 360, a1: (a1 + 360) % 360 });
+      }
+    }
+    for (const q of alignStakes(g.al, { pitch: g.pitch })) out.push({ type: 'text', layer, p: q.p, h: 1, text: q.station + (q.label ? ` ${q.label}` : '') });
+  }
+  return out;
 }
 const safeName = () => (doc.name || 'genbacad').replace(/[\\/:*?"<>|]/g, '_');
 const pointList = () => doc.entities.filter((e) => e.type === 'point').map((e) => ({ name: e.name, x: e.p.x, y: e.p.y, z: e.z || 0 }));
@@ -978,7 +1202,11 @@ $('#fileJson').addEventListener('change', async (ev) => {
     const d = JSON.parse(f.text);
     if (!Array.isArray(d.entities)) throw new Error('形式が違います');
     snapshot();
-    Object.assign(doc, { name: d.name || '無題', zone: d.zone || null, entities: d.entities, seq: d.seq || 1, nextId: d.nextId || 1 });
+    Object.assign(doc, {
+      name: d.name || '無題', zone: d.zone || null, entities: d.entities, seq: d.seq || 1, nextId: d.nextId || 1,
+      hiddenLayers: d.hiddenLayers || [], reports: d.reports || [], gpsCal: d.gpsCal || { mode: 'rigid', pairs: [] },
+    });
+    recomputeCal();
     doc.nextId = Math.max(doc.nextId, ...doc.entities.map((e) => (e.id || 0) + 1), 1);
     doc.entities.forEach((e) => { if (!e.id) e.id = doc.nextId++; });
     updateTitle(); updateZoneChip(); changed(); fitAll();
@@ -1023,7 +1251,7 @@ function openZoneDialog() {
 $('#zoneOk').addEventListener('click', () => {
   doc.zone = Number($('#zoneSel').value);
   updateZoneChip(); save();
-  if (gps.fix) gps.fix.p = llToXY(gps.fix.lat, gps.fix.lon, doc.zone);
+  recomputeCal();
   $('#zoneDialog').close(); renderPanel(); draw();
 });
 
@@ -1060,7 +1288,7 @@ const actions = {
   openDxf() { $('#fileDxf').click(); },
   openPts() { $('#filePts').click(); },
   openJson() { $('#fileJson').click(); },
-  saveDxf() { download(safeName() + '.dxf', toDXF(doc.entities), 'application/dxf'); },
+  saveDxf() { download(safeName() + '.dxf', toDXF(exportEntities()), 'application/dxf'); },
   saveSima() {
     const pts = pointList(); if (!pts.length) { toast('点がありません'); return; }
     download(safeName() + '.sim', toSIMA(pts, doc.name));
@@ -1099,22 +1327,65 @@ const actions = {
   },
   clearResult() { result = null; temp = []; updateCmd(); renderPanel(); draw(); },
   gpsAvg() {
-    if (!gps.fix) return;
-    gps.avg = { n: 10, samples: [] };
-    toast('その場で静止してください（10回測位して平均します）');
-    renderPanel();
+    startAvg((r) => {
+      const e = addEntity({ type: 'point', p: r.p, name: nextPointName(), z: 0, gps: { acc: r.acc, n: r.n } });
+      toast(`${e.name} を登録（${r.n}回平均・精度目安 ±${fmt(r.acc, 1)}m）`);
+      changed();
+    }, '平均中');
   },
   gpsAdd() {
     if (!gps.fix) return;
     const e = addEntity({ type: 'point', p: { ...gps.fix.p }, name: nextPointName(), z: 0, gps: { acc: gps.fix.acc, n: 1 } });
     toast(`${e.name} を登録（精度目安 ±${fmt(gps.fix.acc, 1)}m）`); changed();
   },
+  openCal() { openCal(); },
+  openCalc() { renderNames(); calc.open(); },
+  openReports() { renderReports(); $('#reportSheet').showModal(); },
+  openLayers() { renderLayers(); $('#layerSheet').showModal(); },
+  clearOverlay() { overlay = null; renderPanel(); draw(); },
+  areaTable() { renderNames(); calc.openWith('area', { pts: '選択' }); },
+  alignStation() {
+    const e = getEnt(selected); if (!e) return;
+    renderNames(); calc.open('station');
+    const sel = document.querySelector('#calcBody [data-k="al"]'); if (sel) sel.value = String(e.id);
+  },
+  alignStakes() {
+    const e = getEnt(selected); const g = e && alignGeom(e); if (!g || g.err) return;
+    const st = alignStakes(g.al, { pitch: g.pitch, widths: e.widths || [] });
+    addPoints([
+      ...st.map((q) => ({ p: q.p, name: q.label ? `${q.station}(${q.label})` : q.station })),
+      ...st.flatMap((q) => q.wp.map((w) => ({ p: w.p, name: `${q.station} ${w.w < 0 ? '左' : '右'}${Math.abs(w.w)}` }))),
+    ]);
+  },
+  alignReport() {
+    const e = getEnt(selected); const g = e && alignGeom(e); if (!g || g.err) return;
+    const st = alignStakes(g.al, { pitch: g.pitch });
+    addReport({
+      title: `路線計算 ${e.name}`, time: new Date().toLocaleString('ja-JP'),
+      inputs: [['BP・IP・EP', e.ips.map((q) => q.name || '').join(', ')], ['曲線半径', (e.radii || []).join(', ')], ['杭間隔', `${g.pitch} m`]],
+      rows: [['路線延長', fmt(g.al.length) + ' m'], ...g.al.curves.map((c) => [c.name, `R=${c.R} IA=${toDMS(Math.abs(c.IA), 0)} TL=${fmt(c.TL)} CL=${fmt(c.CL)}`])],
+      table: { head: ['測点', '追加距離', 'X', 'Y'], rows: st.map((q) => [q.station + (q.label ? ` ${q.label}` : ''), fmt(q.s), fmt(q.p.x), fmt(q.p.y)]) },
+    });
+  },
+  exportReportsCsv() {
+    if (!doc.reports.length) { toast('計算書がありません'); return; }
+    download(safeName() + '_計算書.csv', reportsCSV(doc.reports), 'text/csv');
+  },
+  printReports() {
+    if (!doc.reports.length) { toast('計算書がありません'); return; }
+    $('#printArea').innerHTML = `<h1>${esc(doc.name)} 計算書</h1><p>${doc.zone ? `平面直角座標系 ${doc.zone}系　` : ''}出力 ${new Date().toLocaleString('ja-JP')}</p>` + doc.reports.map(reportHtml).join('');
+    window.print();
+  },
+  clearReports() {
+    if (!doc.reports.length || !confirm('計算書をすべて削除しますか？')) return;
+    doc.reports = []; save(); renderReports();
+  },
 };
 
 document.addEventListener('click', (ev) => {
   const a = ev.target.closest('[data-act]');
   if (a) {
-    const sheet = a.closest('dialog.sheet');
+    const sheet = a.closest('#menu');
     if (sheet) sheet.close();
     actions[a.dataset.act]?.();
     return;
@@ -1132,6 +1403,7 @@ document.querySelectorAll('dialog').forEach((d) => d.addEventListener('click', (
 document.querySelectorAll('[data-tool]').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
 $('#btnGps').addEventListener('click', toggleGps);
 $('#btnUndo').addEventListener('click', undo);
+$('#btnCalc').addEventListener('click', () => actions.openCalc());
 $('#btnFit').addEventListener('click', fitAll);
 $('#btnGoGps').addEventListener('click', () => gps.fix && centerOn(gps.fix.p, Math.max(view.s, 5)));
 $('#btnMenu').addEventListener('click', () => $('#menu').showModal());
@@ -1143,8 +1415,162 @@ $('#cmdDone').addEventListener('click', finish);
 $('#cmdClose').addEventListener('click', closeLine);
 $('#cmdUndoPt').addEventListener('click', () => { if (result) { result = null; } else temp.pop(); updateCmd(); renderPanel(); draw(); });
 
+// 図から点を選ぶ
+function pick(cb, multi, done) {
+  picker = { cb, multi, done, count: 0 };
+  $('#pickMsg').textContent = multi ? '点を順にタップ → 完了' : '図面上の点をタップ';
+  $('#pickDone').hidden = !multi;
+  $('#pickBar').hidden = false;
+}
+function endPick() {
+  const d = picker && picker.done;
+  picker = null;
+  $('#pickBar').hidden = true;
+  if (d) d();
+}
+$('#pickDone').addEventListener('click', endPick);
+$('#pickCancel').addEventListener('click', endPick);
+
+// 点名の候補（入力補完）
+function renderNames() {
+  $('#ptNames').innerHTML = doc.entities.filter((e) => e.type === 'point').map((e) => `<option value="${esc(e.name)}">`).join('');
+}
+
+// 計算から呼ぶ機能
+function resolvePt(str) {
+  const s = String(str).trim();
+  const pts = doc.entities.filter((e) => e.type === 'point');
+  const pe = pts.find((e) => e.name === s) || pts.find((e) => e.name.toLowerCase() === s.toLowerCase());
+  if (pe) return { p: { ...pe.p }, z: pe.z || 0, label: pe.name };
+  if (/^(gps|現在地)$/i.test(s)) {
+    if (!gps.fix) throw new Error('GPS が測位されていません');
+    return { p: { ...gps.fix.p }, z: 0, label: '現在地' };
+  }
+  const m = s.replace(/[，、]/g, ',').split(',').map((t) => Number(t.trim()));
+  if (m.length === 2 && m.every(Number.isFinite)) return { p: { x: m[0], y: m[1] }, z: 0, label: `(${fmt(m[0])},${fmt(m[1])})` };
+  throw new Error(`点「${s}」が見つかりません`);
+}
+function addPoints(list) {
+  if (!list.length) return;
+  snapshot();
+  let first = null;
+  for (const q of list) {
+    const e = addEntity({ type: 'point', p: { x: q.p.x, y: q.p.y }, z: q.z || 0, name: uniqueName(q.name || nextPointName()) }, { snap: false });
+    first = first || e;
+  }
+  toast(list.length === 1 ? `${first.name} を登録しました` : `${list.length} 点を登録しました`);
+  renderNames(); changed();
+}
+function addReport(r) {
+  doc.reports.push({ ...r, id: Date.now() });
+  save();
+  toast('計算書に追加しました（メニュー → 計算書）');
+}
+function setOverlay(ov) { overlay = ov; draw(); }
+function showOverlay(ov) {
+  overlay = ov;
+  const pts = [...(ov.lines || []).flat(), ...(ov.pts || []).map((q) => q.p)];
+  if (ov.align) { const g = alignGeom(ov.align); if (g.poly) pts.push(...g.poly); }
+  if (pts.length) {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of pts) { minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x); minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y); }
+    view.x = (minX + maxX) / 2; view.y = (minY + maxY) / 2;
+    view.s = Math.min(400, (W - 80) / Math.max(maxY - minY, 1e-3), (H - 80) / Math.max(maxX - minX, 1e-3));
+  }
+  setTool('select');
+  renderPanel(); draw();
+}
+const calc = initCalc({
+  resolve: resolvePt,
+  allPoints: () => doc.entities.filter((e) => e.type === 'point' && visible(e)).map((e) => ({ p: { ...e.p }, z: e.z || 0, label: e.name })),
+  selectedVerts: () => {
+    const e = getEnt(selected);
+    if (!e || e.type !== 'poly') return null;
+    const pts = doc.entities.filter((q) => q.type === 'point');
+    return e.pts.map((p, i) => {
+      const n = pts.find((q) => dist(q.p, p) < 1e-4);
+      return { p: { ...p }, z: 0, label: n ? n.name : `V${i + 1}` };
+    });
+  },
+  nextName: () => nextPointName(true),
+  nextAlignName: () => `路線${doc.entities.filter((e) => e.type === 'align').length + 1}`,
+  addPoints,
+  addArea: (pts) => { const e = addEntity({ type: 'poly', pts: pts.map((p) => ({ ...p })), closed: true, area: true }); toast('面積図形を追加しました'); changed(); return e; },
+  addAlign: (ent) => {
+    const e = addEntity(JSON.parse(JSON.stringify(ent)));
+    toast(`路線「${e.name}」を追加しました`);
+    overlay = null; changed();
+  },
+  aligns: () => doc.entities.filter((e) => e.type === 'align'),
+  alignGeom: (e) => { const g = alignGeom(e); if (g.err) throw new Error(g.err); return g.al; },
+  addReport,
+  setOverlay,
+  showOverlay,
+  pick,
+});
+
+// 画層
+function renderLayers() {
+  const counts = new Map();
+  for (const e of doc.entities) counts.set(layerOf(e), (counts.get(layerOf(e)) || 0) + 1);
+  const names = [...counts.keys()].sort((a, b) => a.localeCompare(b, 'ja'));
+  $('#layerList').innerHTML = names.length
+    ? names.map((n) => `<label class="toggle"><input type="checkbox" data-layer="${esc(n)}" ${doc.hiddenLayers.includes(n) ? '' : 'checked'}> ${esc(n)} <span class="small">（${counts.get(n)}）</span></label>`).join('')
+    : '<p class="small">図形がありません。</p>';
+}
+$('#layerList').addEventListener('change', (ev) => {
+  const n = ev.target.dataset.layer; if (n == null) return;
+  doc.hiddenLayers = doc.hiddenLayers.filter((q) => q !== n);
+  if (!ev.target.checked) doc.hiddenLayers.push(n);
+  const e = getEnt(selected); if (e && !visible(e)) selected = null;
+  save(); renderPanel(); draw();
+});
+$('#layerAll').addEventListener('click', () => { doc.hiddenLayers = []; save(); renderLayers(); draw(); });
+
+// 計算書
+function renderReports() {
+  $('#reportList').innerHTML = doc.reports.length
+    ? doc.reports.map((r, i) => `<div class="report-wrap">${reportHtml(r)}<button class="btn small-btn danger" data-repdel="${i}">削除</button></div>`).join('')
+    : '<p class="small">まだ計算書がありません。計算の結果画面で「計算書に追加」を押すと、ここに溜まります。</p>';
+}
+$('#reportList').addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-repdel]'); if (!b) return;
+  doc.reports.splice(Number(b.dataset.repdel), 1); save(); renderReports();
+});
+
+// 基準点補正ダイアログ
+$('#calMode').addEventListener('change', () => { doc.gpsCal.mode = $('#calMode').value; recomputeCal(); save(); renderCal(); renderPanel(); draw(); });
+$('#calPairs').addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-caldel]'); if (!b) return;
+  doc.gpsCal.pairs.splice(Number(b.dataset.caldel), 1); recomputeCal(); save(); renderCal(); renderPanel(); draw();
+});
+$('#calPick').addEventListener('click', () => {
+  $('#calDialog').close();
+  pick((v) => { $('#calPt').value = v; }, false, () => { renderCal(); $('#calDialog').showModal(); });
+});
+$('#calAdd').addEventListener('click', () => {
+  let ref;
+  try { ref = resolvePt($('#calPt').value); } catch (err) { toast(err.message); return; }
+  if (!gps.fix) { toast('GPS を ON にして測位を待ってください'); return; }
+  $('#calDialog').close();
+  startAvg((r) => {
+    doc.gpsCal.pairs = doc.gpsCal.pairs.filter((q) => !(q.name === ref.label && q.zone === doc.zone));
+    doc.gpsCal.pairs.push({ name: ref.label, dst: ref.p, src: r.raw, zone: doc.zone, acc: r.acc });
+    recomputeCal(); save();
+    gps.follow = true; // 補正後の現在地へ画面を移動
+    toast(`基準点 ${ref.label} で補正しました`);
+    renderPanel(); draw(); renderCal(); $('#calDialog').showModal();
+  }, `基準点 ${ref.label} 取得中`);
+});
+$('#calClear').addEventListener('click', () => {
+  if (!doc.gpsCal.pairs.length || !confirm('基準点補正をすべて解除しますか？')) return;
+  doc.gpsCal.pairs = []; recomputeCal(); save(); renderCal(); renderPanel(); draw();
+});
+
 // 設定
-const optMap = { optSnap: 'snap', optOnLine: 'onLine', optLen: 'showLen', optNames: 'showNames', optDark: 'dark' };
+$('#optPrefix').value = settings.prefix || 'P';
+$('#optPrefix').addEventListener('change', () => { settings.prefix = $('#optPrefix').value.trim() || 'P'; saveSettings(); });
+const optMap = { optSnap: 'snap', optOnLine: 'onLine', optLen: 'showLen', optNames: 'showNames', optDark: 'dark', optStakes: 'stakes' };
 for (const [id, key] of Object.entries(optMap)) {
   const el = document.getElementById(id);
   el.checked = !!settings[key];
@@ -1156,7 +1582,7 @@ function applyTheme() { document.documentElement.classList.toggle('dark', settin
 document.addEventListener('keydown', (ev) => {
   if (ev.target.matches('input, select, textarea')) return;
   if ((ev.ctrlKey || ev.metaKey) && ev.key === 'z') { ev.preventDefault(); undo(); }
-  else if (ev.key === 'Escape') { temp = []; result = null; updateCmd(); renderPanel(); draw(); }
+  else if (ev.key === 'Escape') { if (picker) { endPick(); return; } temp = []; result = null; updateCmd(); renderPanel(); draw(); }
   else if (ev.key === 'Delete' || ev.key === 'Backspace') actions.delete();
 });
 
@@ -1164,6 +1590,7 @@ document.addEventListener('keydown', (ev) => {
 // 起動
 // ============================================================
 load();
+recomputeCal();
 applyTheme();
 updateTitle();
 updateZoneChip();
@@ -1176,4 +1603,4 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
 }
 
 // テスト・デバッグ用
-window.__genbacad = { doc, view, settings, setTool, place, parseCmd };
+window.__genbacad = { doc, view, settings, setTool, place, parseCmd, actions, alignGeom, get calTf() { return calTf; } };
