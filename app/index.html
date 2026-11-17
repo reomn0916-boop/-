@@ -880,7 +880,7 @@ function dayUl(list){
 /* ---------- drawer ---------- */
 function openTask(id, focusTitle){
   if (S.openId !== id){
-    S.openId = id; S.pendingFiles = []; S.confirmDelete = false; S.picker = false;
+    S.openId = id; S.pendingFiles = []; S.confirmDelete = false; S.picker = false; S.editNote = null; S.delNote = null;
     subscribeNotes(id);
   }
   render();
@@ -1033,15 +1033,21 @@ function notesSection(t, ro, composerText){
         fileIn, post)));
   }
   if (S.notes.length){
-    sect.append(h("ul",{class:"timeline"}, S.notes.map(n => h("li",{class:"note"},
+    sect.append(h("ul",{class:"timeline"}, S.notes.map(n => { const mine = !ro && (n.author === S.myId || S.canEdit); return S.editNote === n.id && mine ? h("li",{class:"note"}, avatarEl(n.author), noteEditor(t, n)) : h("li",{class:"note"},
       avatarEl(n.author),
       h("div",null,
-        h("div",{class:"nh"}, h("b",{text:nameOf(n.author)}), h("span",{text:fmtStamp(n.createdAt)}),
-          !ro && (n.author === S.myId || S.canEdit) ? h("button",{class:"del",type:"button",onclick(){ deleteNote(t, n); }},"削除") : null),
+        h("div",{class:"nh"}, h("b",{text:nameOf(n.author)}), h("span",{text:fmtStamp(n.createdAt)+(n.editedAt ? "（修正 "+fmtStamp(n.editedAt)+"）" : "")}),
+          mine ? (S.delNote === n.id
+            ? h("span",{style:"margin-left:auto;display:flex;gap:8px;align-items:center;font-size:12px"},"この記録と写真を削除しますか？",
+                h("button",{class:"del",type:"button",style:"margin:0;color:var(--danger);font-weight:700",onclick(){ S.delNote = null; deleteNote(t, n); }},"削除する"),
+                h("button",{class:"del",type:"button",style:"margin:0",onclick(){ S.delNote = null; renderDrawer(); }},"やめる"))
+            : h("span",{style:"margin-left:auto;display:flex;gap:10px"},
+                h("button",{class:"del",type:"button",style:"margin:0",onclick(){ S.editNote = n.id; S.noteDraft = n.text || ""; S.notePhotos = [...(n.photos||[])]; renderDrawer(); }},"修正"),
+                h("button",{class:"del",type:"button",style:"margin:0",onclick(){ S.delNote = n.id; renderDrawer(); }},"削除"))) : null),
         n.text ? h("p",{text:n.text}) : null,
         (n.photos||[]).length ? h("div",{class:"gallery"}, n.photos.map(id => h("button",{type:"button","aria-label":"写真を拡大",onclick(){ showPhoto(id); }},
           h("img",{src:"/_blob/"+id,alt:"記録写真",loading:"lazy",onerror(){ this.replaceWith(h("span",{class:"muted",style:"font-size:11px;padding:6px;display:block",text:"表示できません"})); }})))) : null
-      )))));
+      )); })));
   } else {
     sect.append(h("p",{class:"muted",style:"margin:12px 0 0;font-size:13px",text:"まだ記録はありません。現場の状況や写真を残すと、チーム全員が同じ情報を見られます。"}));
   }
@@ -1087,6 +1093,27 @@ async function postNote(t, ta, btn){
     toast("記録しました");
     renderDrawer();
   } catch(e){ writeError(e); btn.disabled = false; btn.textContent = "記録する"; }
+}
+function noteEditor(t, n){
+  const ta = h("textarea",{id:"noteEdit",rows:"3",style:"width:100%;border:1px solid var(--accent);border-radius:8px;padding:8px;background:var(--surface);color:var(--ink);resize:vertical"});
+  ta.value = S.noteDraft ?? (n.text || "");
+  ta.addEventListener("input", () => { S.noteDraft = ta.value; });
+  const keep = S.notePhotos || [];
+  return h("div",{class:"reply-edit"},
+    h("div",{class:"ai-note",text:"記録を修正しています。写真の ✕ で、その写真だけを外せます。"}), ta,
+    keep.length ? h("div",{class:"thumbs"}, keep.map(id => h("div",{class:"th"}, h("img",{src:"/_blob/"+id,alt:"記録写真"}),
+      h("button",{class:"x",type:"button","aria-label":"この写真を外す",onclick(){ S.notePhotos = keep.filter(x => x !== id); renderDrawer(); }},"✕")))) : null,
+    h("div",{class:"actions",style:"display:flex;gap:8px"},
+      h("button",{class:"btn primary",type:"button",async onclick(){
+        const removed = (n.photos||[]).filter(id => !keep.includes(id));
+        try {
+          await withRetry(() => db.doc("tasks/"+t.id+"/notes/"+n.id).update({text:ta.value.trim(), photos:keep, editedAt:new Date().toISOString(), editedBy:S.myId}));
+          for (const id of removed) if (assets) assets.delete(id).catch(() => {});
+          if (removed.includes(t.cover)){ const other = S.notes.map(x => x.id === n.id ? {photos:keep} : x).find(x => (x.photos||[]).length); patchTask(t.id, {cover: other ? other.photos[0] : null}); }
+          S.editNote = null; S.noteDraft = null; S.notePhotos = null; toast("記録を修正しました"); renderDrawer();
+        } catch(e){ writeError(e); }
+      }},"保存"),
+      h("button",{class:"btn",type:"button",onclick(){ S.editNote = null; S.noteDraft = null; S.notePhotos = null; renderDrawer(); }},"やめる")));
 }
 async function deleteNote(t, n){
   try {
@@ -1257,6 +1284,22 @@ async function saveReply(r, text, finish){
   if (finish && patch.status === "done") toast("回答して完了にしました");
   render();
 }
+function reqBodyEditor(r){
+  const ta = h("textarea",{id:"rb-"+r.id,rows:"3",style:"width:100%;border:1px solid var(--accent);border-radius:7px;padding:6px 9px;background:var(--surface);color:var(--ink)"}); ta.value = r.body || "";
+  const due = h("input",{type:"date",id:"rd-"+r.id,style:"border:1px solid var(--line);border-radius:7px;padding:5px 8px;background:var(--surface);color:var(--ink)"}); due.value = r.due || "";
+  const money = h("input",{type:"checkbox",id:"rm-"+r.id}); money.checked = !!r.money;
+  return h("div",{class:"reply-edit"}, ta,
+    h("div",{style:"display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12.5px;color:var(--muted)"},
+      h("label",{style:"display:flex;gap:6px;align-items:center"},"期限", due),
+      h("label",{style:"display:flex;gap:6px;align-items:center"}, money, "金額・契約・支払に関わる")),
+    h("div",{style:"display:flex;gap:8px"},
+      h("button",{class:"btn primary",type:"button",async onclick(){
+        if (!ta.value.trim()){ ta.focus(); return; }
+        await patchReq(r.id, {body:ta.value.trim(), due:due.value || null, money:money.checked, editedAt:new Date().toISOString()});
+        S.editBody = null; toast("依頼を修正しました"); render();
+      }},"保存"),
+      h("button",{class:"btn",type:"button",onclick(){ S.editBody = null; render(); }},"やめる")));
+}
 function reqEl(r){
   const st = RSMAP[r.status] || RSMAP.open;
   const ro = !S.canWrite || !db;
@@ -1284,6 +1327,7 @@ function reqEl(r){
     actions.push(h("button",{class:"btn primary",type:"button",onclick(){ const now = new Date().toISOString(); patchReq(r.id,{status:"done",doneAt:now,approvedBy:S.myId,approvedAt:now}); toast("承認して完了にしました"); }},"承認して完了"));
     actions.push(h("button",{class:"btn",type:"button",onclick(){ patchReq(r.id,{status:"doing"}); toast("差し戻しました（対応中に戻しました）"); }},"差し戻す"));
   }
+  if (canDel && S.editBody !== r.id && r.status !== "done") actions.push(h("button",{class:"btn ghost",type:"button",style:"color:var(--muted)",onclick(){ S.editBody = r.id; render(); setTimeout(() => { const e = $("rb-"+r.id); if (e) e.focus(); }, 0); }},"依頼を修正"));
   if (canDel){
     if (S.confirmReq === r.id) actions.push(h("span",{style:"margin-left:auto;font-size:12.5px",text:"この依頼を削除しますか？"}),
       h("button",{class:"btn danger",type:"button",async onclick(){ try { await withRetry(() => db.doc("requests/"+r.id).delete()); toast("依頼を削除しました"); } catch(e){ writeError(e); } S.confirmReq = null; }},"削除する"),
@@ -1306,7 +1350,7 @@ function reqEl(r){
       r.approvedBy ? h("span",{class:"tag ok",text:"承認済み"}) : null,
       r.due ? h("span",{class:"due "+(di ? di.cls : ""),text: di ? "期限 "+di.txt : "期限 "+fmtDay(r.due)}) : null,
       h("span",{style:"margin-left:auto",text:(r.date ? fmtDay(r.date)+" 受付" : "")+(r.status === "done" && r.doneAt ? " · "+fmtStamp(r.doneAt)+" 完了" : "")})),
-    h("div",{class:"body",text:r.body || ""}),
+    S.editBody === r.id && canDel ? reqBodyEditor(r) : h("div",{class:"body",text:r.body || ""}),
     task ? h("div",null, h("button",{class:"link",type:"button",onclick(){ openTask(task.id); }}, "案件："+(task.project ? task.project+" ／ " : "")+(task.title || "（無題）"))) : null,
     r.triage ? h("div",{class:"ai-note",text:"AI振り分け："+(r.triage.reason || "")}) : null,
     auditEl(r, ro),
@@ -1932,7 +1976,17 @@ function crewForm(){
     h("label",null,"職種", trade), h("label",null,"連絡先", phone),
     h("label",{class:"full"},"メモ", memo),
     h("label",{class:"chk full"}, active, "手配表に表示する（取引がなくなったらチェックを外す）"),
-    h("div",{class:"full",style:"display:flex;gap:8px;justify-content:flex-end"},
+    h("div",{class:"full",style:"display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;align-items:center"},
+      S.crewEdit !== "new" ? (S.crewDel
+        ? h("span",{style:"margin-right:auto;display:flex;gap:6px;align-items:center;font-size:12.5px"},"登録と、この人の手配をすべて削除しますか？",
+            h("button",{class:"btn danger",type:"button",async onclick(){
+              try {
+                for (const a of [...S.assign.values()].filter(a => a.crewId === S.crewEdit)) await withRetry(() => db.doc("assign/"+a.id).delete());
+                await withRetry(() => db.doc("crews/"+S.crewEdit).delete()); toast("削除しました"); close();
+              } catch(e){ writeError(e); }
+            }},"削除する"),
+            h("button",{class:"btn",type:"button",onclick(){ S.crewDel = false; $("crewForm").replaceChildren(); render(); }},"やめる"))
+        : h("button",{class:"btn ghost",type:"button",style:"margin-right:auto;color:var(--muted)",onclick(){ S.crewDel = true; $("crewForm").replaceChildren(); render(); }},"削除")) : null,
       h("button",{class:"btn",type:"button",onclick:close},"やめる"), h("button",{class:"btn primary",type:"button",onclick:save},"保存")));
 }
 
@@ -2177,6 +2231,28 @@ function renderGenba(){
         h("p",{style:"margin:0;font-size:14px",text:"まだ現場が登録されていません。現場名を入れて登録すると、写真で記録できるようになります。"}),
         inp, h("button",{class:"btn primary big",type:"button",onclick:add},"この現場を登録する")));
     }
+  } else if (tasks.length && !ro && db){
+    if (S.gbAdding){
+      if (!nb.querySelector("#gbNewName2")){
+        const inp = h("input",{type:"text",id:"gbNewName2",placeholder:"新しい現場名",enterkeyhint:"done",style:"font-size:16px;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);width:100%"});
+        const add = async () => {
+          const name = inp.value.trim(); if (!name){ inp.focus(); return; }
+          const now = new Date().toISOString(), ref = tasksCol().doc();
+          try {
+            await withRetry(() => ref.set({title:name, project:name, status:"doing", order:Date.now(), assignee:S.myId, start:todayYmd(), due:null, desc:"", cover:null, createdAt:now, createdBy:S.myId, updatedAt:now, updatedBy:S.myId}));
+            S.gbTask = ref.id; S.gbAdding = false; try { localStorage.setItem("anken-gbtask", ref.id); } catch(_) {}
+            nb.replaceChildren(); $("gbStatus").textContent = "「" + name + "」を登録しました。"; render();
+          } catch(e){ writeError(e); }
+        };
+        inp.addEventListener("keydown", e => { if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229){ e.preventDefault(); add(); } });
+        nb.replaceChildren(h("div",{class:"gb-panel"}, inp,
+          h("div",{style:"display:flex;gap:8px"}, h("button",{class:"btn primary big",type:"button",style:"flex:1",onclick:add},"登録する"),
+            h("button",{class:"btn big",type:"button",onclick(){ S.gbAdding = false; nb.replaceChildren(); render(); }},"やめる"))));
+        setTimeout(() => inp.focus(), 0);
+      }
+    } else nb.replaceChildren(h("div",{style:"display:flex;gap:16px;flex-wrap:wrap;font-size:14px"},
+      h("button",{class:"link",type:"button",style:"font-size:14px",onclick(){ S.gbAdding = true; nb.replaceChildren(); render(); }},"＋ 別の現場を追加"),
+      S.gbTask ? h("button",{class:"link",type:"button",style:"font-size:14px",onclick(){ openTask(S.gbTask); }},"この現場の名前・工期を直す／削除する") : null));
   } else nb.replaceChildren();
   if (why && !S.gbBusy && !$("gbStatus").textContent) $("gbStatus").textContent = why;
   const panel = $("gbPanel");
