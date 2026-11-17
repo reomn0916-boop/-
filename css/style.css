@@ -268,3 +268,24 @@ input.mini { width: 80px; height: 34px; font-size: 15px; padding: 0 8px; border:
 .modal { overflow-y: auto; max-height: 92vh; }
 .modal label.toggle { display: flex; align-items: center; gap: 10px; color: var(--fg); }
 .modal .toggle input { display: inline-block; width: 20px; height: 20px; margin: 0; flex: 0 0 auto; }
+
+/* ---------- 施工図 ---------- */
+#top .chip { white-space: nowrap; }
+.sheet-preview { background: #d1d5db; border-radius: 8px; padding: 8px; display: flex; justify-content: center; }
+#sheetCv { width: 100%; height: auto; background: #fff; box-shadow: 0 1px 6px rgba(0,0,0,.25); }
+.form label { display: block; margin: 8px 0; font-size: 13px; color: var(--muted); }
+.form input[type=text], .form select {
+  display: block; width: 100%; height: 40px; font-size: 16px; margin-top: 3px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg);
+}
+.form .toggle { display: flex; align-items: center; gap: 10px; color: var(--fg); font-size: 14px; }
+.form .toggle input { width: 20px; height: 20px; margin: 0; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+.row.wrap { flex-wrap: wrap; }
+.row.wrap .btn { flex: 1 1 auto; }
+.sheet-out { position: sticky; bottom: calc(-16px); background: var(--panel); padding: 10px 0 calc(10px + var(--safe-b)); border-top: 1px solid var(--line); margin-top: 12px; }
+#shGroups label { display: inline-flex; align-items: center; gap: 4px; margin: 0; font-size: 13px; color: var(--fg); }
+#kindSel, .mini-sel { height: 36px; font-size: 15px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); padding: 0 6px; }
+#kindSel { flex: 1; }
+.mini-sel { margin-left: auto; }
+#printArea img { display: block; }

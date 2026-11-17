@@ -58,7 +58,16 @@ export function parseDXF(text) {
       case 'MTEXT': {
         let t = g.filter((q) => q[0] === 3 || q[0] === 1).map((q) => q[1]).join('');
         t = t.replace(/\\P/g, ' ').replace(/\\[A-Za-z][^;]*;/g, '').replace(/[{}]/g, '');
-        out.push({ type: 'text', layer, p: P(num(10), num(20)), h: num(40, 1), text: t });
+        let align = 'left';
+        let pos = P(num(10), num(20));
+        if (type === 'TEXT') {
+          const h72 = num(72, 0);
+          if (h72 === 1 || h72 === 4) align = 'center'; else if (h72 === 2) align = 'right';
+          if (align !== 'left' && g.some((q) => q[0] === 11)) pos = P(num(11), num(21));
+        } else {
+          align = ['left', 'center', 'right'][(Math.max(1, num(71, 1)) - 1) % 3];
+        }
+        out.push({ type: 'text', layer, p: pos, h: num(40, 1), text: t, rot: num(50, 0), align });
         break;
       }
       case 'LWPOLYLINE': {
@@ -145,6 +154,8 @@ export function toDXF(entities) {
         break;
       case 'text':
         w(0, 'TEXT'); w(8, layer); xy(e.p); w(40, f(e.h || 1)); w(1, e.text);
+        if (e.rot) w(50, f(e.rot));
+        if (e.align === 'center' || e.align === 'right') { w(72, e.align === 'center' ? 1 : 2); xy(e.p, 11); }
         break;
     }
   }

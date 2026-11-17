@@ -2,6 +2,7 @@ import { llToXY, xyToLL, guessZone, toDMS, parseAngle, azimuth, ZONES, ZONE_AREA
 import { decodeText, parseDXF, toDXF, parseSIMA, toSIMA, parseCSV, toCSV, encodeSJIS } from './io.js';
 import { buildAlignment, alignPoint, alignStation, alignStakes, fmtStation, intersect, fitTransform, applyTransform, invertTransform, orientation, offsetPolyline, extendFrom, transformEntity } from './cogo.js';
 import { initCalc, reportHtml, reportsCSV } from './calc.js';
+import { SCALES, defaultSheet, layout as sheetLayout, makeXf, fitRange, autoScale, renderSheet, makePdf, sheetFrameEntities, sheetInfo, inViewport, dimGeom, dimText } from './sheet.js';
 
 // ============================================================
 // 状態
@@ -19,9 +20,10 @@ const doc = {
   hiddenLayers: [],   // 非表示の画層
   reports: [],        // 計算書
   gpsCal: { mode: 'rigid', pairs: [] }, // GPS 基準点補正
+  sheet: null,        // 施工図の設定
 };
 const view = { x: 0, y: 0, s: 10 }; // 画面中心のワールド座標と拡大率 (px/m)
-const settings = { snap: true, onLine: true, showLen: true, showNames: true, dark: false, prefix: 'P', stakes: true, ptGrp: '位置出し', nigeMode: 'corner', nigeDist: '1' };
+const settings = { snap: true, onLine: true, showLen: true, showNames: true, dark: false, prefix: 'P', stakes: true, ptGrp: '位置出し', nigeMode: 'corner', nigeDist: '1', dimUnit: 'm', lineKind: 'line', measKind: 'measure' };
 
 let tool = 'select';
 let temp = [];          // 作図中の点
@@ -171,7 +173,7 @@ const fmt = (v, d = 3) => (Number.isFinite(v) ? v.toFixed(d) : '—');
 function verts(e) {
   switch (e.type) {
     case 'point': return [e.p];
-    case 'line': case 'dim': return [e.a, e.b];
+    case 'line': case 'dim': case 'leader': return [e.a, e.b];
     case 'poly': return e.pts;
     case 'circle': return [e.c];
     case 'arc': return [e.c, arcPt(e, e.a0), arcPt(e, e.a1)];
@@ -221,7 +223,8 @@ function arcPt(e, angDeg) {
   return { x: e.c.x + e.r * Math.sin(t), y: e.c.y + e.r * Math.cos(t) };
 }
 function segments(e) {
-  if (e.type === 'line' || e.type === 'dim') return [[e.a, e.b]];
+  if (e.type === 'line' || e.type === 'leader') return [[e.a, e.b]];
+  if (e.type === 'dim') { const g = dimGeom(e); return [[g.a2, g.b2]]; }
   if (e.type === 'align') {
     const g = alignGeom(e); const s = [];
     if (g.poly) for (let i = 0; i + 1 < g.poly.length; i++) s.push([g.poly[i], g.poly[i + 1]]);
@@ -287,8 +290,9 @@ function snapAt(sx, sy, { ignoreTemp = false } = {}) {
       switch (e.type) {
         case 'align': for (const k of alignGeom(e).keys || []) consider(k.p, k.label, 2); break;
         case 'point': consider(e.p, '点', 2); break;
-        case 'line': case 'dim':
+        case 'line':
           consider(e.a, '端点', 2); consider(e.b, '端点', 2); consider(mid(e.a, e.b), '中点', 1); break;
+        case 'dim': case 'leader': consider(e.a, '端点', 1.5); consider(e.b, '端点', 1.5); break;
         case 'poly':
           e.pts.forEach((p) => consider(p, '頂点', 2));
           for (const [a, b] of segments(e)) consider(mid(a, b), '中点', 1);
@@ -510,13 +514,30 @@ function drawEntity(e, isSel) {
       break;
     }
     case 'dim': {
-      const a = toS(e.a), b = toS(e.b);
-      ctx.beginPath(); ctx.moveTo(a.sx, a.sy); ctx.lineTo(b.sx, b.sy); ctx.stroke();
-      const ang = Math.atan2(b.sy - a.sy, b.sx - a.sx) + Math.PI / 2;
-      for (const p of [a, b]) {
-        ctx.beginPath(); ctx.moveTo(p.sx + Math.cos(ang) * 6, p.sy + Math.sin(ang) * 6); ctx.lineTo(p.sx - Math.cos(ang) * 6, p.sy - Math.sin(ang) * 6); ctx.stroke();
+      const g = dimGeom(e);
+      const a = toS(e.a), b = toS(e.b), a2 = toS(g.a2), b2 = toS(g.b2);
+      ctx.lineWidth = isSel ? 2.5 : 1;
+      if (e.off) {
+        ctx.beginPath(); ctx.moveTo(a.sx, a.sy); ctx.lineTo(a2.sx, a2.sy); ctx.moveTo(b.sx, b.sy); ctx.lineTo(b2.sx, b2.sy); ctx.stroke();
       }
-      label(fmt(dist(e.a, e.b)) + 'm', (a.sx + b.sx) / 2, (a.sy + b.sy) / 2 - 5, color, 'center');
+      ctx.lineWidth = isSel ? 2.5 : 1.5;
+      ctx.beginPath(); ctx.moveTo(a2.sx, a2.sy); ctx.lineTo(b2.sx, b2.sy); ctx.stroke();
+      const d = Math.hypot(b2.sx - a2.sx, b2.sy - a2.sy) || 1, ux = (b2.sx - a2.sx) / d, uy = (b2.sy - a2.sy) / d;
+      const tx = (ux - uy) * 5, ty = (uy + ux) * 5;
+      for (const p of [a2, b2]) { ctx.beginPath(); ctx.moveTo(p.sx - tx, p.sy - ty); ctx.lineTo(p.sx + tx, p.sy + ty); ctx.stroke(); }
+      label(dimText(g.L, settings.dimUnit), (a2.sx + b2.sx) / 2, (a2.sy + b2.sy) / 2 - 5, color, 'center');
+      break;
+    }
+    case 'leader': {
+      const a = toS(e.a), b = toS(e.b);
+      const right = b.sx >= a.sx;
+      ctx.lineWidth = isSel ? 2.5 : 1.2;
+      ctx.beginPath(); ctx.moveTo(a.sx, a.sy); ctx.lineTo(b.sx, b.sy); ctx.lineTo(b.sx + (right ? 12 : -12), b.sy); ctx.stroke();
+      ctx.beginPath(); ctx.arc(a.sx, a.sy, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.font = `${Math.round((e.hmm || 2.5) * 4.5)}px sans-serif`;
+      ctx.textAlign = right ? 'left' : 'right';
+      ctx.fillText(e.text, b.sx + (right ? 2 : -2), b.sy - 4);
+      ctx.textAlign = 'left';
       break;
     }
     case 'poly': {
@@ -579,11 +600,18 @@ function drawEntity(e, isSel) {
     }
     case 'text': {
       const s = toS(e.p);
-      const px = Math.max(9, Math.min(48, (e.h || 1) * view.s));
-      if (px < 6) break;
-      ctx.font = `${px}px sans-serif`;
+      if (e.hmm) { ctx.font = `${Math.round(e.hmm * 4.5)}px sans-serif`; ctx.fillStyle = color; ctx.fillText(e.text, s.sx, s.sy); break; }
+      // DXF の文字高さ（≒大文字の高さ）を実寸で。小さすぎるときは描かない
+      const px = (e.h || 1) * view.s * 1.25;
+      if (px < 3) break;
+      ctx.save();
+      ctx.translate(s.sx, s.sy);
+      if (e.rot) ctx.rotate((-e.rot * Math.PI) / 180);
+      ctx.font = `${Math.min(px, 400)}px sans-serif`;
+      ctx.textAlign = e.align || 'left';
       ctx.fillStyle = color;
-      ctx.fillText(e.text, s.sx, s.sy);
+      ctx.fillText(e.text, 0, 0);
+      ctx.restore();
       break;
     }
   }
@@ -747,8 +775,18 @@ function entityInfo(e) {
       return `<h4>点 ${esc(e.name || '')}<span class="tag g-${grpOf(e)}">${grpOf(e)}</span></h4>` + kv([
         ['X（北）', fmt(e.p.x), 'big'], ['Y（東）', fmt(e.p.y), 'big'], ['Z', fmt(e.z || 0)], ...llRows(e.p), ...guideRows(e.p), ...layer,
       ]) + `<div class="panel-actions"><button class="btn" data-act="editPoint">編集</button>${del}</div>`;
-    case 'line': case 'dim':
-      return `<h4>${e.type === 'dim' ? '寸法線' : '線'}</h4>` + kv([
+    case 'dim':
+      return '<h4>寸法</h4>' + kv([
+        ['寸法', dimText(dimGeom(e).L, settings.dimUnit) + (settings.dimUnit === 'mm' ? ' mm' : ' m'), 'big'], ['方向角', toDMS(azimuth(e.a, e.b))], ['離れ', fmt(e.off || 0) + ' m'],
+      ]) + `<div class="panel-actions">${del}</div>`;
+    case 'text': case 'leader':
+      if (e.type === 'leader' || e.hmm) {
+        return `<h4>${e.type === 'leader' ? '引出線' : '文字'}</h4>` + kv([['内容', esc(e.text)], ['大きさ', `${e.hmm || 2.5} mm`]]) +
+          `<div class="panel-actions"><button class="btn" data-act="editText">文字を編集</button>${del}</div>`;
+      }
+      return '<h4>文字</h4>' + kv([['内容', esc(e.text)], ['位置', `${fmt(e.p.x)}, ${fmt(e.p.y)}`], ...layer]) + `<div class="panel-actions">${del}</div>`;
+    case 'line':
+      return '<h4>線</h4>' + kv([
         ['長さ', fmt(dist(e.a, e.b)) + ' m', 'big'], ['方向角', toDMS(azimuth(e.a, e.b))],
         ['始点', `${fmt(e.a.x)}, ${fmt(e.a.y)}`], ['終点', `${fmt(e.b.x)}, ${fmt(e.b.y)}`], ...layer,
       ]) + `<div class="panel-actions"><button class="btn" data-act="regVerts">端点を点登録</button><button class="btn" data-act="nigeExtSel">両端に延長逃げ</button>${del}</div>`;
@@ -797,6 +835,15 @@ const HINTS = {
   angle: ['1点目をタップ（頂点は2点目）', 'X,Y'],
   area: ['頂点を順にタップ → 完了', '座標 X,Y / @ΔX,ΔY / @距離<方向角'],
   nige: ['', ''],
+  dimension: ['寸法の始点をタップ', 'X,Y'],
+  text: ['文字を置く位置をタップ', 'X,Y'],
+  leader: ['引出線が指す点をタップ', 'X,Y'],
+};
+// 1つのボタンにまとめたツール
+const FAMILY = { line: 'line', circle: 'line', leader: 'line', measure: 'measure', angle: 'measure' };
+const KINDS = {
+  line: [['line', '線（連続）'], ['circle', '円'], ['leader', '引出線']],
+  measure: [['measure', '距離'], ['angle', '角度']],
 };
 const NIGE_HINT = {
   corner: '角・交点をタップ → 各辺の延長上に逃げを作ります',
@@ -810,7 +857,13 @@ function setTool(t) {
   nigePending = null;
   result = null;
   if (t !== 'select') { selected = null; selPoint = null; }
-  document.querySelectorAll('[data-tool]').forEach((b) => b.classList.toggle('active', b.dataset.tool === t));
+  document.querySelectorAll('[data-tool]').forEach((b) => b.classList.toggle('active', b.dataset.tool === (FAMILY[t] || t)));
+  const fam = FAMILY[t];
+  if (fam) {
+    if (fam === 'line') settings.lineKind = t; else settings.measKind = t;
+    $('#kindSel').innerHTML = KINDS[fam].map(([v, l]) => `<option value="${v}">${l}</option>`).join('');
+    $('#kindSel').value = t;
+  }
   updateCmd();
   renderPanel();
   draw();
@@ -829,12 +882,16 @@ function updateCmd() {
   if (tool === 'angle' && temp.length === 2) hint = '3点目をタップ';
   if (tool === 'area' && temp.length) hint = `頂点 ${temp.length} 点・面積 ${fmt(temp.length > 2 ? polyArea(temp) : 0, 2)}㎡ → 完了で確定`;
   if (tool === 'nige') hint = nigePending ? '逃げる側（外側・内側）をタップ' : NIGE_HINT[settings.nigeMode];
+  if (tool === 'dimension' && temp.length === 1) hint = '寸法の終点をタップ';
+  if (tool === 'dimension' && temp.length === 2) hint = '寸法線を置く位置をタップ（または離れの距離 m を入力）';
+  if (tool === 'leader' && temp.length === 1) hint = '文字を置く位置をタップ';
+  $('#kindRow').hidden = !FAMILY[tool];
   $('#ptRow').hidden = tool !== 'point';
   $('#nigeRow').hidden = tool !== 'nige';
   $('#cmdRow').hidden = tool === 'nige';
   $('#cmdHint').textContent = hint;
-  $('#cmd').placeholder = tool === 'circle' && temp.length ? '半径（m）' : ph;
-  $('#cmdUndoPt').hidden = !['line', 'area', 'angle', 'measure', 'circle'].includes(tool);
+  $('#cmd').placeholder = tool === 'circle' && temp.length ? '半径（m）' : tool === 'dimension' && temp.length === 2 ? '離れ m（右＋/左−）' : ph;
+  $('#cmdUndoPt').hidden = !['line', 'area', 'angle', 'measure', 'circle', 'dimension', 'leader'].includes(tool);
   if (tool === 'nige') $('#cmdUndoPt').hidden = true;
   $('#cmdClose').hidden = tool !== 'line';
   $('#cmdDone').hidden = !['line', 'area'].includes(tool);
@@ -878,9 +935,63 @@ function place(p, kind) {
     case 'area':
       temp.push(p);
       break;
+    case 'dimension':
+      if (temp.length < 2) { temp.push(p); break; }
+      addDim(temp[0], temp[1], perpOff(temp[0], temp[1], p));
+      return;
+    case 'text':
+      openTextDialog('文字', '', 3.5, (text, hmm) => {
+        addEntity({ type: 'text', p: { ...p }, text, hmm });
+        changed();
+      });
+      break;
+    case 'leader':
+      if (!temp.length) { temp.push(p); break; }
+      {
+        const a = temp[0];
+        temp = [];
+        openTextDialog('引出線の文字', '', 2.5, (text, hmm) => {
+          addEntity({ type: 'leader', a: { ...a }, b: { ...p }, text, hmm });
+          changed();
+        });
+      }
+      break;
   }
   updateCmd(); renderPanel(); draw();
 }
+
+/** 点 p の、線 a→b からの離れ（右 +） */
+function perpOff(a, b, p) {
+  const L = dist(a, b) || 1;
+  return (-(p.x - a.x) * (b.y - a.y) + (p.y - a.y) * (b.x - a.x)) / L;
+}
+function addDim(a, b, off) {
+  if (dist(a, b) < 1e-6) { toast('同じ点です'); temp = []; updateCmd(); return; }
+  addEntity({ type: 'dim', a: { ...a }, b: { ...b }, off: Math.abs(off) < 1e-6 ? 0 : off });
+  temp = [];
+  toast(`寸法 ${dimText(dist(a, b), settings.dimUnit)}`);
+  changed(); updateCmd();
+}
+
+// ---------- 文字の入力 ----------
+let textCb = null;
+function openTextDialog(title, text, size, cb) {
+  $('#textTitle').textContent = title;
+  $('#textVal').value = text;
+  $('#textSize').value = String(size);
+  textCb = cb;
+  $('#textDialog').showModal();
+  setTimeout(() => $('#textVal').focus(), 50);
+}
+function textOk() {
+  const t = $('#textVal').value.trim();
+  if (!t) { toast('文字を入力してください'); return; }
+  $('#textDialog').close();
+  const cb = textCb; textCb = null;
+  cb?.(t, Number($('#textSize').value));
+}
+$('#textOk').addEventListener('click', textOk);
+$('#textVal').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); textOk(); } });
 
 function finishCircle(r) {
   if (!(r > 0)) { toast('半径が正しくありません'); return; }
@@ -943,6 +1054,9 @@ function submitCmd() {
   const text = inp.value;
   if (tool === 'circle' && temp.length && /^\s*[\d.]+\s*$/.test(text)) {
     finishCircle(Number(text)); inp.value = ''; return;
+  }
+  if (tool === 'dimension' && temp.length === 2 && /^\s*-?[\d.]+\s*$/.test(text)) {
+    inp.value = ''; addDim(temp[0], temp[1], Number(text)); return;
   }
   const p = parseCmd(text);
   if (!p) { toast('入力形式: X,Y / @ΔX,ΔY / @距離<方向角'); return; }
@@ -1040,6 +1154,14 @@ function onTap(sx, sy) {
       if (e.type !== 'point' || !visible(e)) continue;
       const d = dist(e.p, sn.p);
       if (d < best && d <= tol) { best = d; pe = e; }
+    }
+    if (picker.raw) {
+      hover = sn; updateHud(sn.p, sn.kind);
+      picker.cb({ ...sn.p });
+      picker.count = (picker.count || 0) + 1;
+      if (picker.max && picker.count >= picker.max) endPick();
+      else { $('#pickMsg').textContent = `${picker.count} 点目を指定しました → 次の点をタップ`; draw(); }
+      return;
     }
     let val;
     if (pe) val = pe.name;
@@ -1334,10 +1456,33 @@ function download(name, data, type = 'text/plain') {
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 /** DXF 用: 路線を線・円弧・文字に展開 */
-function exportEntities() {
+function exportEntities(ents = doc.entities, scaleN = doc.sheet?.scaleN || 100, sheetRot = 0) {
   const out = [];
   const angDxf = (c, p) => (Math.atan2(p.x - c.x, p.y - c.y) * 180) / Math.PI;
-  for (const e of doc.entities) {
+  const k = scaleN / 1000; // 用紙 mm → m
+  // 文字の向き: 用紙（図の回転 sheetRot）に対して読める向きにする
+  const textAng = (a, b) => { let t = angDxf(a, b) + sheetRot; t = ((t % 360) + 360) % 360; if (t > 90 && t <= 270) t -= 180; if (t > 270) t -= 360; return t - sheetRot; };
+  const annRot = -sheetRot; // 注記は用紙に水平
+  const th = (sheetRot * Math.PI) / 180, Rv = { x: -Math.sin(th), y: Math.cos(th) }; // 用紙の右方向
+  for (const e of ents) {
+    if (e.type === 'dim') {
+      const g = dimGeom(e), layer = e.layer || '寸法';
+      if (e.off) { out.push({ type: 'line', layer, a: e.a, b: g.a2 }, { type: 'line', layer, a: e.b, b: g.b2 }); }
+      out.push({ type: 'line', layer, a: g.a2, b: g.b2 });
+      const m = { x: (g.a2.x + g.b2.x) / 2, y: (g.a2.y + g.b2.y) / 2 };
+      const t = textAng(g.a2, g.b2), r = (t * Math.PI) / 180;
+      out.push({ type: 'text', layer, p: { x: m.x + Math.cos(r) * 0.8 * k, y: m.y - Math.sin(r) * 0.8 * k }, h: 2.5 * k, text: dimText(g.L, settings.dimUnit), rot: t, align: 'center' });
+      continue;
+    }
+    if (e.type === 'leader') {
+      const layer = e.layer || '注記';
+      const right = (e.b.x - e.a.x) * Rv.x + (e.b.y - e.a.y) * Rv.y >= 0;
+      const up = { x: Math.cos(th), y: Math.sin(th) }; // 用紙の上方向
+      out.push({ type: 'line', layer, a: e.a, b: e.b });
+      out.push({ type: 'text', layer, p: { x: e.b.x + up.x * 0.8 * k, y: e.b.y + up.y * 0.8 * k }, h: (e.hmm || 2.5) * k, text: e.text, align: right ? 'left' : 'right', rot: annRot });
+      continue;
+    }
+    if (e.type === 'text' && e.hmm) { out.push({ ...e, layer: e.layer || '注記', h: e.hmm * k, rot: annRot }); continue; }
     if (e.type !== 'align') { out.push(e); continue; }
     const g = alignGeom(e); if (g.err) continue;
     const layer = `路線_${e.name}`;
@@ -1396,7 +1541,7 @@ $('#fileJson').addEventListener('change', async (ev) => {
     snapshot();
     Object.assign(doc, {
       name: d.name || '無題', zone: d.zone || null, entities: d.entities, seq: d.seq || 1, nextId: d.nextId || 1,
-      hiddenLayers: d.hiddenLayers || [], reports: d.reports || [], gpsCal: d.gpsCal || { mode: 'rigid', pairs: [] },
+      hiddenLayers: d.hiddenLayers || [], reports: d.reports || [], gpsCal: d.gpsCal || { mode: 'rigid', pairs: [] }, sheet: d.sheet || null,
     });
     recomputeCal();
     doc.nextId = Math.max(doc.nextId, ...doc.entities.map((e) => (e.id || 0) + 1), 1);
@@ -1490,6 +1635,13 @@ const actions = {
   openJson() { $('#fileJson').click(); },
   saveDxf() { download(safeName() + '.dxf', encodeSJIS(toDXF(exportEntities())), 'application/dxf'); },
   openSima() { openSima(); },
+  openSheet() { openSheet(true); },
+  editText() {
+    const e = getEnt(selected); if (!e) return;
+    openTextDialog(e.type === 'leader' ? '引出線の文字' : '文字', e.text, e.hmm || 2.5, (text, hmm) => {
+      snapshot(); e.text = text; e.hmm = hmm; changed();
+    });
+  },
   openFit() { openFit(); },
   toolNige() { setTool('nige'); },
   nigeCornersSel() {
@@ -1613,7 +1765,11 @@ document.querySelectorAll('dialog').forEach((d) => d.addEventListener('click', (
   if (ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom) d.close();
 }));
 
-document.querySelectorAll('[data-tool]').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
+document.querySelectorAll('[data-tool]').forEach((b) => b.addEventListener('click', () => {
+  const t = b.dataset.tool;
+  setTool(t === 'line' ? settings.lineKind || 'line' : t === 'measure' ? settings.measKind || 'measure' : t);
+}));
+$('#kindSel').addEventListener('change', () => { setTool($('#kindSel').value); saveSettings(); });
 $('#btnGps').addEventListener('click', toggleGps);
 $('#btnUndo').addEventListener('click', undo);
 $('#btnCalc').addEventListener('click', () => actions.openCalc());
@@ -1629,10 +1785,10 @@ $('#cmdClose').addEventListener('click', closeLine);
 $('#cmdUndoPt').addEventListener('click', () => { if (result) { result = null; } else temp.pop(); updateCmd(); renderPanel(); draw(); });
 
 // 図から点を選ぶ
-function pick(cb, multi, done) {
-  picker = { cb, multi, done, count: 0 };
-  $('#pickMsg').textContent = multi ? '点を順にタップ → 完了' : '図面上の点をタップ';
-  $('#pickDone').hidden = !multi;
+function pick(cb, multi, done, opt = {}) {
+  picker = { cb, multi, done, count: 0, ...opt };
+  $('#pickMsg').textContent = opt.msg || (multi ? '点を順にタップ → 完了' : '図面上の点をタップ');
+  $('#pickDone').hidden = !multi || !!opt.max;
   $('#pickBar').hidden = false;
 }
 function endPick() {
@@ -1888,6 +2044,149 @@ $('#fitApply').addEventListener('click', () => {
   toast(`図面を現場の座標に合わせました（${n} 個の図形・元に戻す可）`);
 });
 
+// ---------- 施工図 ----------
+function sheetCfg() {
+  if (!doc.sheet) doc.sheet = defaultSheet(doc.name);
+  return doc.sheet;
+}
+const sheetData = () => ({ entities: doc.entities.filter(visible), alignGeom, grpOf, zone: doc.zone, unit: settings.dimUnit });
+function rangeFromView(cfg) { fitRange(cfg, (cfg.rangePts = [toW(0, 0), toW(W, 0), toW(0, H), toW(W, H)])); }
+function setRange(cfg, pts) { if (!pts.length) { toast('範囲にする図形がありません'); return false; } cfg.rangePts = pts.map((p) => ({ x: p.x, y: p.y })); fitRange(cfg, cfg.rangePts); return true; }
+function entityExtent(e) {
+  if (e.type === 'circle' || e.type === 'arc') return [{ x: e.c.x - e.r, y: e.c.y - e.r }, { x: e.c.x + e.r, y: e.c.y + e.r }];
+  if (e.type === 'align') return alignGeom(e).poly || [];
+  if (e.type === 'dim') { const g = dimGeom(e); return [e.a, e.b, g.a2, g.b2]; }
+  return verts(e);
+}
+function openSheet(resetRange) {
+  const cfg = sheetCfg();
+  if (resetRange || !cfg.center) rangeFromView(cfg);
+  if (!cfg.koji) cfg.koji = doc.name;
+  $('#shShare').hidden = !(navigator.canShare && navigator.canShare({ files: [new File(['x'], 'a.pdf', { type: 'application/pdf' })] }));
+  fillSheetForm();
+  $('#sheetDialog').showModal();
+  renderSheetPreview();
+}
+function fillSheetForm() {
+  const cfg = sheetCfg();
+  $('#shScale').innerHTML = `<option value="auto">自動</option>` + SCALES.map((k) => `<option value="${k}">1 : ${k}</option>`).join('');
+  $('#shPaper').value = cfg.paper; $('#shOrient').value = cfg.orient; $('#shScale').value = String(cfg.scale);
+  $('#shRot').value = String(+(cfg.rot || 0).toFixed(4));
+  $('#shKoji').value = cfg.koji || ''; $('#shTitle').value = cfg.title || ''; $('#shAuthor').value = cfg.author || '';
+  $('#shTable').checked = cfg.table; $('#shLen').checked = cfg.len; $('#shGrid').checked = cfg.grid;
+  $('#shGroups').innerHTML = GROUPS.map((g) => `<label><input type="checkbox" value="${g}" ${cfg.groups.includes(g) ? 'checked' : ''}> <span class="tag g-${g}">${g}</span></label>`).join('');
+  $('#shGroups').hidden = !cfg.table;
+}
+function readSheetForm() {
+  const cfg = sheetCfg();
+  const oldRot = cfg.rot;
+  cfg.paper = $('#shPaper').value; cfg.orient = $('#shOrient').value; cfg.scale = $('#shScale').value;
+  const r = Number($('#shRot').value);
+  cfg.rot = Number.isFinite(r) ? r : 0;
+  cfg.koji = $('#shKoji').value; cfg.title = $('#shTitle').value; cfg.author = $('#shAuthor').value;
+  cfg.table = $('#shTable').checked; cfg.len = $('#shLen').checked; cfg.grid = $('#shGrid').checked;
+  cfg.groups = [...document.querySelectorAll('#shGroups input:checked')].map((i) => i.value);
+  $('#shGroups').hidden = !cfg.table;
+  if (cfg.rot !== oldRot && cfg.rangePts) fitRange(cfg, cfg.rangePts);
+}
+let sheetTimer = null;
+function renderSheetPreview() {
+  const cfg = sheetCfg();
+  autoScale(cfg);
+  const cvs = $('#sheetCv');
+  const L = sheetLayout(cfg);
+  const wpx = Math.max(200, cvs.parentElement.clientWidth - 16);
+  renderSheet(cvs, cfg, sheetData(), Math.min(6, (wpx * (window.devicePixelRatio || 1)) / L.W));
+  const X = makeXf(cfg, L);
+  const info = sheetInfo(cfg, L, X, sheetData());
+  $('#sheetInfo').textContent = `${cfg.paper}・${cfg.orient === 'portrait' ? '縦' : '横'}・縮尺 1:${cfg.scaleN}${cfg.scale === 'auto' ? '（自動）' : ''}・座標表 ${info.tablePts.length} 点`;
+  save();
+}
+function scheduleSheet() { clearTimeout(sheetTimer); sheetTimer = setTimeout(() => { readSheetForm(); renderSheetPreview(); }, 120); }
+$('#sheetDialog').addEventListener('input', (ev) => { if (ev.target.closest('.form')) scheduleSheet(); });
+$('#sheetDialog').addEventListener('change', (ev) => { if (ev.target.closest('.form')) scheduleSheet(); });
+$('#shRangeView').addEventListener('click', () => {
+  // ダイアログの裏の画面（今の表示範囲）
+  rangeFromView(sheetCfg()); renderSheetPreview();
+});
+$('#shRangeAll').addEventListener('click', () => {
+  const pts = doc.entities.filter(visible).flatMap(entityExtent);
+  if (setRange(sheetCfg(), pts)) renderSheetPreview();
+});
+$('#shRangeSel').addEventListener('click', () => {
+  const e = getEnt(selected);
+  if (!e) { toast('先に「選択」ツールで図形を選んでください'); return; }
+  if (setRange(sheetCfg(), entityExtent(e))) renderSheetPreview();
+});
+$('#shRangePick').addEventListener('click', () => {
+  const pts = [];
+  $('#sheetDialog').close();
+  pick((p) => pts.push(p), true, () => {
+    if (pts.length === 2) setRange(sheetCfg(), pts);
+    openSheet(false);
+  }, { raw: true, max: 2, msg: '施工図にする範囲の角を2点タップ' });
+});
+$('#shRotSel').addEventListener('click', () => {
+  const e = getEnt(selected);
+  let seg = null;
+  if (e && (e.type === 'line' || e.type === 'dim')) seg = [e.a, e.b];
+  else if (e && e.type === 'poly') {
+    for (const [a, b] of segments(e)) if (!seg || dist(a, b) > dist(seg[0], seg[1])) seg = [a, b];
+  }
+  if (!seg) { toast('先に「選択」ツールで線か図形を選んでください'); return; }
+  let az = azimuth(seg[0], seg[1]) % 180; // 上向きに近い方
+  if (az > 90) az -= 180;
+  $('#shRot').value = String(+az.toFixed(4));
+  readSheetForm(); renderSheetPreview();
+});
+$('#shRot0').addEventListener('click', () => { $('#shRot').value = '0'; readSheetForm(); renderSheetPreview(); });
+
+/** 出力用の高解像度キャンバス（端末のメモリに収まる解像度） */
+function sheetCanvas() {
+  const cfg = sheetCfg(); autoScale(cfg);
+  const L = sheetLayout(cfg);
+  const ppm = Math.min(300 / 25.4, Math.sqrt(12e6 / (L.W * L.H)));
+  const c = document.createElement('canvas');
+  renderSheet(c, cfg, sheetData(), ppm);
+  return { c, L, cfg };
+}
+const toBlob = (c, type, q) => new Promise((res) => c.toBlob(res, type, q));
+const sheetFileName = (ext) => `${safeName()}_${(sheetCfg().title || '施工図').replace(/[\\/:*?"<>|]/g, '_')}.${ext}`;
+async function sheetPdf() {
+  const { c, L } = sheetCanvas();
+  const jpg = new Uint8Array(await (await toBlob(c, 'image/jpeg', 0.92)).arrayBuffer());
+  return new File([makePdf(jpg, c.width, c.height, L.W, L.H)], sheetFileName('pdf'), { type: 'application/pdf' });
+}
+$('#shPdf').addEventListener('click', async () => {
+  const f = await sheetPdf(); download(f.name, f); toast(`${f.name} を保存しました`);
+});
+$('#shShare').addEventListener('click', async () => {
+  const f = await sheetPdf();
+  try { await navigator.share({ files: [f], title: f.name }); } catch (err) { if (err.name !== 'AbortError') toast('共有できませんでした: ' + err.message); }
+});
+$('#shPng').addEventListener('click', async () => {
+  const { c } = sheetCanvas();
+  const b = await toBlob(c, 'image/png');
+  download(sheetFileName('png'), b); toast('画像を保存しました');
+});
+$('#shPrint').addEventListener('click', () => {
+  const { c, L } = sheetCanvas();
+  let st = document.getElementById('pageStyle');
+  if (!st) { st = document.createElement('style'); st.id = 'pageStyle'; document.head.appendChild(st); }
+  st.textContent = `@page { size: ${L.W}mm ${L.H}mm; margin: 0; }`;
+  $('#printArea').innerHTML = `<img src="${c.toDataURL('image/jpeg', 0.92)}" style="width:${L.W}mm;height:${L.H}mm">`;
+  setTimeout(() => window.print(), 100);
+});
+$('#shDxf').addEventListener('click', () => {
+  const cfg = sheetCfg(); autoScale(cfg);
+  const { entities: frame, L, X } = sheetFrameEntities(cfg, sheetData());
+  const ents = doc.entities.filter((e) => visible(e) && inViewport(e, L, X, entityExtent));
+  const out = [...exportEntities(ents, cfg.scaleN, cfg.rot || 0), ...frame];
+  download(sheetFileName('dxf'), encodeSJIS(toDXF(out)), 'application/dxf');
+  toast(`DXF（縮尺 1:${cfg.scaleN}・${ents.length} 図形＋図枠）を保存しました`);
+});
+$('#btnSheet').addEventListener('click', () => openSheet(true));
+
 // ---------- 点ツール・逃げツールの設定 ----------
 $('#ptGrp').value = settings.ptGrp;
 $('#ptGrp').addEventListener('change', () => { settings.ptGrp = $('#ptGrp').value; saveSettings(); });
@@ -1899,6 +2198,8 @@ $('#nigeDist').value = settings.nigeDist;
 $('#nigeDist').addEventListener('change', () => { settings.nigeDist = $('#nigeDist').value.trim() || '1'; saveSettings(); });
 
 // 設定
+$('#optDimUnit').value = settings.dimUnit;
+$('#optDimUnit').addEventListener('change', () => { settings.dimUnit = $('#optDimUnit').value; saveSettings(); renderPanel(); draw(); });
 $('#optPrefix').value = settings.prefix || 'P';
 $('#optPrefix').addEventListener('change', () => { settings.prefix = $('#optPrefix').value.trim() || 'P'; $('#ptPrefix').value = settings.prefix; saveSettings(); });
 const optMap = { optSnap: 'snap', optOnLine: 'onLine', optLen: 'showLen', optNames: 'showNames', optDark: 'dark', optStakes: 'stakes' };
