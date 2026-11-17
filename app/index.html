@@ -260,6 +260,13 @@ select.grid-in{border-color:var(--line);background:var(--surface);min-width:88px
 .mydept{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)}
 .mydept select{border:1px solid var(--line);border-radius:8px;padding:4px 8px;background:var(--surface);color:var(--ink);font-size:13px}
 
+.report{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:10px;padding:10px 14px;margin-bottom:12px}
+.report .rh{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.report .rh b{font-family:var(--f-head);font-size:14px}
+.report .rh select{margin-left:auto;border:1px solid var(--line);border-radius:7px;padding:3px 6px;background:var(--surface);color:var(--ink);font-size:12.5px}
+.report .sum{margin:6px 0 0;font-size:13.5px}
+.report pre{margin:8px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--f-body);font-size:13px;line-height:1.7;background:var(--bg);border-radius:8px;padding:10px 12px}
+
 /* ---------- drawer ---------- */
 .scrim{position:fixed;inset:0;background:rgba(10,14,12,.38);z-index:40}
 .drawer{position:fixed;top:0;right:0;bottom:0;width:min(540px,100%);z-index:41;background:var(--surface);box-shadow:-8px 0 30px rgba(0,0,0,.18);display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);padding-right:env(safe-area-inset-right,0px)}
@@ -421,6 +428,7 @@ select.grid-in{border-color:var(--line);background:var(--surface);min-width:88px
       <div class="rk-main">
         <div class="cal-head"><h2>部署間連絡</h2><button class="btn primary" id="reqNew" type="button">＋ 依頼を出す</button>
           <label class="mydept" style="margin-left:auto">自分の部署 <select id="myDeptSel"><option value="">未設定</option><option value="keiri">経理</option><option value="keiei">経営</option><option value="sekou">施工管理</option><option value="shacho">社長</option></select></label></div>
+        <div id="rkReport"></div>
         <div class="subnav" id="subnav" role="group" aria-label="依頼の絞り込み"></div>
         <div id="reqForm"></div>
         <div class="req-list" id="reqList"></div>
@@ -500,6 +508,7 @@ const S = {
   materials:new Map(), mtTask:"", mtConfirm:null, mtFocus:null,
   crews:new Map(), assign:new Map(), thWeek:null, crewEdit:null,
   docsort:new Map(), dsConfirm:null,
+  reports:new Map(), reportSel:"", reportOpen:false,
 };
 let db = null, user = null, assets = null, loadTimer = null;
 
@@ -1107,6 +1116,23 @@ function renderRenraku(){
   }
   renderDepts(ro);
   renderPrompts();
+  renderReport();
+}
+function renderReport(){
+  const box = $("rkReport"), ids = [...S.reports.keys()].sort().reverse();
+  if (!ids.length){ box.replaceChildren(h("div",{class:"report"}, h("div",{class:"rh"}, h("b",{text:"今朝の報告"})),
+    h("p",{class:"sum muted",text:"毎朝 2:50 の自動整理が終わると、ここに報告が届きます（振り分け・監査・期限切れ・経費・材料・予算超過）。"}))); return; }
+  if (!ids.includes(S.reportSel)) S.reportSel = ids[0];
+  const r = S.reports.get(S.reportSel), latest = S.reportSel === ids[0];
+  const sel = h("select",{"aria-label":"報告の日付"}, ids.slice(0,14).map(id => h("option",{value:id},fmtDay(id))));
+  sel.value = S.reportSel;
+  sel.addEventListener("change", () => { S.reportSel = sel.value; S.reportOpen = true; render(); });
+  box.replaceChildren(h("div",{class:"report"},
+    h("div",{class:"rh"}, h("b",{text:(latest && S.reportSel === todayYmd() ? "今朝の報告" : "朝の報告")+" · "+fmtDay(S.reportSel)}),
+      r.createdAt ? h("span",{class:"ai-note",text:fmtStamp(r.createdAt)+" 作成"}) : null, sel),
+    h("p",{class:"sum",text:r.summary || ""}),
+    h("button",{class:"link",type:"button",onclick(){ S.reportOpen = !S.reportOpen; render(); }}, S.reportOpen ? "閉じる" : "全文を見る"),
+    S.reportOpen ? h("pre",{text:r.body || ""}) : null));
 }
 function reqForm(){
   const sel = (id, opts, val) => { const s = h("select",{id}, opts.map(o => h("option",{value:o.id},o.label))); s.value = val; return s; };
@@ -2064,7 +2090,7 @@ route();
   const sub = (col, key) => db.collection(col).onSnapshot(snap => {
     const m = new Map(); for (const d of snap.docs) m.set(d.id, {id:d.id, ...d.data()}); S[key] = m; render();
   }, err => console.warn(err));
-  sub("materials","materials"); sub("crews","crews"); sub("assign","assign"); sub("docsort","docsort");
+  sub("materials","materials"); sub("crews","crews"); sub("assign","assign"); sub("docsort","docsort"); sub("reports","reports");
   db.doc("config/prompts").onSnapshot(snap => { S.prompts = (snap.exists && snap.data()) || {}; render(); }, err => console.warn(err));
   db.collection("depts").onSnapshot(snap => {
     const o = {};
