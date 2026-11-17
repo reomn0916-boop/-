@@ -2,8 +2,9 @@
 
 チームで案件と作業を共有して管理する Web アプリです。スマホと PC のブラウザで使えます。
 
-- 公開ページ: https://claude.ai/artifact/G2xFQttNwaQrHGNYbptNTd
+- 公開ページ（Claude 版）: https://claude.ai/artifact/G2xFQttNwaQrHGNYbptNTd
 - ソース: `app/index.html`
+- Claude を入れていない人も使える版（Firebase 版）: `web/`。準備と公開の手順は [`web/README.md`](web/README.md)
 
 ## できること
 

@@ -1,0 +1,32 @@
+# 案件ボード（Firebase 版）を公開する。
+# 手動で実行する（Actions タブ → 「Firebase に公開」 → Run workflow）。
+# 事前に、リポジトリの Settings → Secrets and variables → Actions に
+# FIREBASE_SERVICE_ACCOUNT（Firebase のサービスアカウント鍵の JSON 全文）を登録しておくこと。
+name: Firebase に公開
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install --no-audit --no-fund
+      - run: node build.mjs
+      - name: 公開（画面・データの権限・写真の権限）
+        env:
+          SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$SA" ]; then echo "FIREBASE_SERVICE_ACCOUNT が登録されていません"; exit 1; fi
+          printf '%s' "$SA" > "$RUNNER_TEMP/sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
+          PROJECT=$(node -e "global.window={};require('./firebase-config.js');process.stdout.write(window.FIREBASE_CONFIG.projectId)")
+          npx firebase deploy --project "$PROJECT" --only hosting,firestore:rules,storage --non-interactive
+          rm -f "$RUNNER_TEMP/sa.json"

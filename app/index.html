@@ -549,6 +549,8 @@ const SMAP = Object.fromEntries(STATUSES.map(s => [s.id, s]));
 const WD = ["日","月","火","水","木","金","土"];
 const VIEWS = ["today","genba","nippo","board","calendar","zairyo","tehai","keihi","renraku","shiryo"];
 const $ = id => document.getElementById(id);
+const blobUrl = id => /^https?:/.test(String(id)) ? id : "/_blob/" + id;
+const LIMITED_VIEWS = ["today","genba","nippo"];
 const DEPTS = [
   {id:"keiri", label:"経理",     scope:"請求書・支払・入金管理・月次の数字・資金繰り・設備投資の資金試算", hint:"月次の売上・入金・支払予定、資金残高の概況、請求の締め日"},
   {id:"keiei", label:"経営",     scope:"方針・目標・投資判断・見積もり・積算・過去工事の実績", hint:"今期の方針、受注目標、投資・採用の判断結果、優先する現場"},
@@ -594,7 +596,7 @@ const S = {
   crews:new Map(), assign:new Map(), thWeek:null, crewEdit:null,
   docsort:new Map(), dsConfirm:null,
   reports:new Map(), reportSel:"", reportOpen:false,
-  gbTask:"", gbFiles:[], gbMode:null, gbBusy:false,
+  gbTask:"", gbFiles:[], gbMode:null, gbBusy:false, limited:false,
   dailies:new Map(), npDate:"", npTask:"", dr:null, drKey:"", drDirty:false, drFrom:"", npDel:false,
 };
 try { S.gbTask = localStorage.getItem("anken-gbtask") || ""; } catch(e) {}
@@ -683,7 +685,7 @@ function projectNames(){ return [...new Set([...S.tasks.values()].map(t => (t.pr
 /* ---------- render ---------- */
 function render(){
   if (S.dragging){ S.deferred = true; return; }
-  for (const v of VIEWS){ $("tab-"+v).setAttribute("aria-current", S.view === v ? "page" : "false"); $("view-"+v).hidden = S.view !== v; }
+  for (const v of VIEWS){ $("tab-"+v).setAttribute("aria-current", S.view === v ? "page" : "false"); $("view-"+v).hidden = S.view !== v; $("tab-"+v).hidden = S.limited && !LIMITED_VIEWS.includes(v); }
   const rk = S.view !== "board" && S.view !== "calendar";
   $("newBtn").hidden = !S.canWrite || !db || rk;
   $("fMine").setAttribute("aria-pressed", String(S.fMine));
@@ -710,7 +712,7 @@ function cardEl(t){
   const di = dueInfo(t);
   const el = h("article",{class:"card",style:"--c:"+st.c,"data-id":t.id,tabindex:"0",role:"button","aria-label":(t.title||"無題")+"を開く"},
     t.project ? h("div",{class:"proj",text:t.project}) : null,
-    t.cover ? h("img",{class:"cover",src:"/_blob/"+t.cover,alt:"",loading:"lazy",draggable:"false",onerror(){ this.remove(); }}) : null,
+    t.cover ? h("img",{class:"cover",src:blobUrl(t.cover),alt:"",loading:"lazy",draggable:"false",onerror(){ this.remove(); }}) : null,
     h("div",{class:"ttl"+(t.title?"":" untitled"),text:t.title||"（無題）"}),
     cardChips(t),
     (di || t.assignee) ? h("div",{class:"meta"},
@@ -914,6 +916,7 @@ function dayUl(list){
 
 /* ---------- drawer ---------- */
 function openTask(id, focusTitle){
+  if (S.limited){ goTo("#nippo", () => { S.npTask = id; S.npDate = todayYmd(); }); return; }
   if (S.openId !== id){
     S.openId = id; S.pendingFiles = []; S.confirmDelete = false; S.picker = false; S.editNote = null; S.delNote = null;
     subscribeNotes(id);
@@ -1081,7 +1084,7 @@ function notesSection(t, ro, composerText){
                 h("button",{class:"del",type:"button",style:"margin:0",onclick(){ S.delNote = n.id; renderDrawer(); }},"削除"))) : null),
         n.text ? h("p",{text:n.text}) : null,
         (n.photos||[]).length ? h("div",{class:"gallery"}, n.photos.map(id => h("button",{type:"button","aria-label":"写真を拡大",onclick(){ showPhoto(id); }},
-          h("img",{src:"/_blob/"+id,alt:"記録写真",loading:"lazy",onerror(){ this.replaceWith(h("span",{class:"muted",style:"font-size:11px;padding:6px;display:block",text:"表示できません"})); }})))) : null
+          h("img",{src:blobUrl(id),alt:"記録写真",loading:"lazy",onerror(){ this.replaceWith(h("span",{class:"muted",style:"font-size:11px;padding:6px;display:block",text:"表示できません"})); }})))) : null
       )); })));
   } else {
     sect.append(h("p",{class:"muted",style:"margin:12px 0 0;font-size:13px",text:"まだ記録はありません。現場の状況や写真を残すと、チーム全員が同じ情報を見られます。"}));
@@ -1136,7 +1139,7 @@ function noteEditor(t, n){
   const keep = S.notePhotos || [];
   return h("div",{class:"reply-edit"},
     h("div",{class:"ai-note",text:"記録を修正しています。写真の ✕ で、その写真だけを外せます。"}), ta,
-    keep.length ? h("div",{class:"thumbs"}, keep.map(id => h("div",{class:"th"}, h("img",{src:"/_blob/"+id,alt:"記録写真"}),
+    keep.length ? h("div",{class:"thumbs"}, keep.map(id => h("div",{class:"th"}, h("img",{src:blobUrl(id),alt:"記録写真"}),
       h("button",{class:"x",type:"button","aria-label":"この写真を外す",onclick(){ S.notePhotos = keep.filter(x => x !== id); renderDrawer(); }},"✕")))) : null,
     h("div",{class:"actions",style:"display:flex;gap:8px"},
       h("button",{class:"btn primary",type:"button",async onclick(){
@@ -1184,7 +1187,7 @@ async function deleteTask(t){
     closeTask(); toast("カードを削除しました");
   } catch(e){ writeError(e); }
 }
-function showPhoto(id){ $("lbImg").src = "/_blob/"+id; $("lightbox").hidden = false; }
+function showPhoto(id){ $("lbImg").src = blobUrl(id); $("lightbox").hidden = false; }
 $("lightbox").addEventListener("click", () => { $("lightbox").hidden = true; $("lbImg").removeAttribute("src"); });
 
 /* ---------- 部署間連絡 ---------- */
@@ -1611,7 +1614,7 @@ function renderKeihi(){
     h("thead",null, h("tr",null, h("th",null,""), h("th",null,"日付"), h("th",null,"取引先・品目"), h("th",null,"勘定科目"), h("th",null,"案件"), h("th",{class:"num"},"税込"), h("th",null,"状態"))),
     h("tbody",null, list.map(r => h("tr",{class:"clickable",tabindex:"0",onclick(){ S.rcEdit = r.id; S.rcNew = false; S.rcConfirmDel = false; render(); window.scrollTo({top:0, behavior:"smooth"}); },
         onkeydown(e){ if (e.key === "Enter") this.click(); }},
-      h("td",null, r.photo ? h("img",{class:"thumb",src:"/_blob/"+r.photo,alt:"",loading:"lazy",onerror(){ this.remove(); }}) : null),
+      h("td",null, r.photo ? h("img",{class:"thumb",src:blobUrl(r.photo),alt:"",loading:"lazy",onerror(){ this.remove(); }}) : null),
       h("td",{class:"num",text: r.date ? fmtDay(r.date) : "日付不明"}),
       h("td",null, h("div",{text:r.vendor || "（取引先不明）"}), r.items ? h("div",{class:"muted",style:"font-size:12px",text:r.items}) : null),
       h("td",{text:r.category || "未分類"}),
@@ -1668,7 +1671,7 @@ function rcForm(){
   const ai = r && r.ai;
   return h("div",{class:"rc-form"},
     h("div",null,
-      r && r.photo ? h("img",{class:"ph",src:"/_blob/"+r.photo,alt:"レシートの写真",onclick(){ showPhoto(r.photo); }}) : h("div",{class:"muted",style:"font-size:12px",text: r ? "写真なし" : "手入力"}),
+      r && r.photo ? h("img",{class:"ph",src:blobUrl(r.photo),alt:"レシートの写真",onclick(){ showPhoto(r.photo); }}) : h("div",{class:"muted",style:"font-size:12px",text: r ? "写真なし" : "手入力"}),
       ai ? h("p",{class:"ai-note",style:"margin:6px 0 0",text:"AI読み取り（確からしさ："+({high:"高",medium:"中",low:"低"}[ai.confidence] || "不明")+"）"+(ai.notes ? "：" + ai.notes : "")}) : null,
       r && isDup(r) ? h("p",{class:"ai-note",style:"color:var(--danger);margin:6px 0 0",text:"同じ日付・金額・取引先の伝票がほかにもあります。二重登録でないか確認してください。"}) : null),
     h("div",{class:"rc-fields"},
@@ -2110,7 +2113,7 @@ async function exportAlbum(t, btn){
     if (!items.length){ toast("写真がありません"); return; }
     for (let i = 0; i < items.length; i++){
       btn.textContent = "写真を読み込み中 " + (i+1) + " / " + items.length;
-      try { const r = await fetch("/_blob/" + items[i].id); items[i].src = r.ok ? await blobToDataUrl(await r.blob()) : ""; } catch(e){ items[i].src = ""; }
+      try { const r = await fetch(blobUrl(items[i].id)); items[i].src = r.ok ? await blobToDataUrl(await r.blob()) : ""; } catch(e){ items[i].src = ""; }
     }
     const pages = [];
     for (let i = 0; i < items.length; i += 2) pages.push(items.slice(i, i+2));
@@ -2215,9 +2218,9 @@ function renderToday(){
   kids.push(panel("自分の担当", myTasks.length+"件",
     !S.myId ? h("p",{class:"td-hint",text:"サインインすると、自分が担当のカードがここに並びます。"}) :
     myTasks.length ? h("ul",{class:"td-list"}, myTasks.slice(0,8).map(t => li(taskLabel(t), (SMAP[t.status]||SMAP.todo).label, () => openTask(t.id), dueChip(t.due)))) :
-      h("p",{class:"td-hint",text:"担当のカードはありません。カードの詳細で「自分にする」を押すとここに出ます。"}),
+      h("p",{class:"td-hint",text: S.limited ? "あなたが担当の現場はありません。会社の担当者があなたを担当にすると、ここに出ます。" : "担当のカードはありません。カードの詳細で「自分にする」を押すとここに出ます。"}),
     myTasks.length > 8 ? h("button",{class:"link td-more",type:"button",onclick(){ goTo("#board", () => { S.fMine = true; saveFilters(); }); }},"すべて見る（"+myTasks.length+"件）") : null));
-  kids.push(panel(S.myDept ? deptLabel(S.myDept)+"宛ての依頼"+(S.canEdit ? "・承認待ち" : "") : "自分宛ての依頼", myReqs.length+"件",
+  if (!S.limited) kids.push(panel(S.myDept ? deptLabel(S.myDept)+"宛ての依頼"+(S.canEdit ? "・承認待ち" : "") : "自分宛ての依頼", myReqs.length+"件",
     !S.myDept && !S.canEdit ? h("p",{class:"td-hint",text:"「連絡」タブの右上で自分の部署を選ぶと、自部署宛ての依頼がここに並びます。"}) :
     myReqs.length ? h("ul",{class:"td-list"}, myReqs.slice(0,8).map(r => li((r.status === "pending" ? "【承認待ち】" : "")+(r.body||""), deptLabel(r.from)+"から",
       () => goTo("#renraku", () => { S.rkTab = r.status === "pending" ? "pending" : (r.to || "all"); }), r.due ? dueChip(r.due) : null))) :
@@ -2226,7 +2229,7 @@ function renderToday(){
     asg.length ? h("ul",{class:"td-list"}, asg.map(a => { const c = S.crews.get(a.crewId), t = S.tasks.get(a.taskId);
       return li((c.name||"")+" → "+taskLabel(t), c.trade || c.kind || "", () => t ? openTask(t.id) : goTo("#tehai")); })) :
       h("p",{class:"td-hint",text:"今日の手配は登録されていません。"}),
-    h("button",{class:"link td-more",type:"button",onclick(){ goTo("#tehai"); }},"手配表を開く")));
+    S.limited ? null : h("button",{class:"link td-more",type:"button",onclick(){ goTo("#tehai"); }},"手配表を開く")));
   const siteToday = [...new Set(asg.map(a => a.taskId))].filter(id => S.tasks.has(id));
   const npMissing = siteToday.filter(id => !S.dailies.has(today + "_" + id));
   kids.push(panel("今日の日報", npMissing.length ? "未記入 " + npMissing.length + "件" : "",
@@ -2234,11 +2237,11 @@ function renderToday(){
       () => goTo("#nippo", () => { S.npTask = id; S.npDate = today; }), S.dailies.has(today + "_" + id) ? null : h("span",{class:"flag uncheck",text:"未記入"})))) :
       h("p",{class:"td-hint",text:"今日の手配がある現場がここに並び、日報の記入状況がわかります。"}),
     h("button",{class:"link td-more",type:"button",onclick(){ goTo("#nippo", () => { S.npDate = today; }); }},"日報を開く")));
-  kids.push(panel("材料の知らせ", mtIssues.length+"件",
+  if (!S.limited) kids.push(panel("材料の知らせ", mtIssues.length+"件",
     mtIssues.length ? h("ul",{class:"td-list"}, mtIssues.slice(0,8).map(({m, al}) => li((m.name||"（材料名なし）")+" "+(m.spec||""), taskLabel(S.tasks.get(m.taskId)),
       () => goTo("#zairyo", () => { S.mtTask = m.taskId; }), h("span",{class:"flag "+al[0].c,text:al[0].t})))) :
       h("p",{class:"td-hint",text:"要発注・納品遅れ・判断待ちの材料はありません。"})));
-  kids.push(panel("未確認の伝票", unchecked.length+"件",
+  if (!S.limited) kids.push(panel("未確認の伝票", unchecked.length+"件",
     h("p",{class:"td-hint",text: unchecked.length ? "合計 "+yen(unchecked.reduce((a,r) => a + (Number(r.total)||0), 0))+"。現場で撮ったレシートは、経理が中身を確かめて「確認済み」にします。" : "確認待ちの伝票はありません。"}),
     unchecked.length ? h("button",{class:"link td-more",type:"button",onclick(){ goTo("#keihi", () => { const d = unchecked.map(r => rcMonth(r)).filter(Boolean).sort()[0]; if (d) S.khMonth = d; }); }},"経費を開く") : null));
   $("tdGrid").replaceChildren(...kids);
@@ -2258,7 +2261,8 @@ function renderGenba(){
   const nb = $("gbNew"), why = !db ? "共有データに接続できません。claude.ai にサインインして開き直してください。"
     : ro ? "閲覧のみの権限のため記録できません。オーナーに「Contributor」以上の権限をもらってください。"
     : !assets ? "この表示では写真を保存できません。オーナーに「Contributor」以上の権限をもらうか、claude.ai で開き直してください。" : "";
-  if (!tasks.length && !ro && db){
+  if (S.limited) nb.replaceChildren(tasks.length ? "" : h("div",{class:"gb-panel"}, h("p",{style:"margin:0;font-size:14px",text:"まだ現場が登録されていません。会社の担当者が現場を登録すると、ここで選べるようになります。"})));
+  else if (!tasks.length && !ro && db){
     if (!nb.firstChild){
       const inp = h("input",{type:"text",id:"gbNewName",placeholder:"例：〇〇公園 伐採工事",enterkeyhint:"done",style:"font-size:16px;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);width:100%"});
       const add = async () => {
@@ -2553,6 +2557,7 @@ $("reqNew").addEventListener("click", () => { S.reqFormOpen = true; S.reqFormTas
 function route(){
   const v = location.hash.replace("#","");
   S.view = VIEWS.includes(v) ? v : "today";
+  if (S.limited && !LIMITED_VIEWS.includes(S.view)) S.view = "genba";
   render();
 }
 window.addEventListener("hashchange", route);
@@ -2583,6 +2588,8 @@ route();
     const cw = await user.can("data.write");
     S.canWrite = cw !== false;
     S.canEdit = await user.canEdit();
+    S.limited = (await user.can("view.limited")) === true;
+    if (S.limited) route();
     const me = await user.me();
     $("who").textContent = me.name ? me.name+" でログイン中" : "";
   }
