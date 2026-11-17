@@ -42,7 +42,8 @@ button{cursor:pointer}
 .brand{display:flex;align-items:baseline;gap:8px;margin-right:auto}
 .brand h1{font-family:var(--f-head);font-size:19px;margin:0;letter-spacing:.04em}
 .brand small{color:var(--muted);font-size:12px}
-.tabs{display:flex;background:var(--sunken);border-radius:8px;padding:3px}
+.tabs{display:flex;background:var(--sunken);border-radius:8px;padding:3px;overflow-x:auto;max-width:100%;scrollbar-width:none}
+.tabs a{white-space:nowrap;flex:none}
 .tabs a{padding:5px 14px;border-radius:6px;color:var(--muted);text-decoration:none;font-weight:500;font-size:13px}
 .tabs a[aria-current="page"]{background:var(--surface);color:var(--ink);box-shadow:var(--shadow)}
 .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:6px 12px;font-size:13px;font-weight:500;white-space:nowrap}
@@ -234,6 +235,31 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .rc-fields input[type=number]{font-family:var(--f-mono)}
 .progress{font-size:13px;color:var(--accent)}
 
+/* ---------- 材料・手配・資料・共通 ---------- */
+.grid-in{width:100%;min-width:56px;border:1px solid transparent;background:transparent;padding:4px 6px;border-radius:5px;font-size:13px;color:var(--ink)}
+.grid-in:hover{border-color:var(--line)}
+.grid-in:focus{border-color:var(--accent);background:var(--surface);outline:none}
+select.grid-in{border-color:var(--line);background:var(--surface);min-width:88px}
+#mtList table.tbl{min-width:1560px}
+#mtList td{padding:3px 4px;vertical-align:middle}
+#thGrid table.tbl{min-width:820px}
+#dsList table.tbl{min-width:760px}
+.th-cell select{width:100%;font-size:12px;border:1px solid var(--line);border-radius:6px;padding:4px;background:var(--surface);color:var(--ink)}
+.th-cell.on select{background:color-mix(in srgb,var(--accent) 14%,var(--surface));border-color:var(--accent);font-weight:500}
+.th-cell.sun{background:color-mix(in srgb,var(--danger) 5%,transparent)}
+.crew-name{border:0;background:transparent;padding:0;text-align:left;color:var(--ink);font-weight:500;text-decoration:underline;text-decoration-color:var(--line)}
+.meter{height:8px;border-radius:4px;background:var(--sunken);overflow:hidden;margin:2px 0 6px}
+.meter i{display:block;height:100%;background:var(--s-done);border-radius:0 4px 4px 0}
+.meter.warn i{background:var(--accent)}
+.meter.over i{background:var(--danger)}
+.intro{margin:0 0 12px;font-size:13px;color:var(--muted);max-width:70ch}
+.sect .tools{display:flex;gap:8px;flex-wrap:wrap}
+.modal-wrap{position:fixed;inset:0;z-index:65;background:rgba(10,14,12,.45);display:flex;align-items:center;justify-content:center;padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(16px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.modal-box{background:var(--surface);border-radius:12px;width:min(780px,100%);height:min(82vh,760px);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,.3)}
+.modal-box textarea{flex:1;width:100%;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-family:var(--f-mono);font-size:12.5px;line-height:1.7;background:var(--bg);color:var(--ink);resize:none;min-height:200px}
+.mydept{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)}
+.mydept select{border:1px solid var(--line);border-radius:8px;padding:4px 8px;background:var(--surface);color:var(--ink);font-size:13px}
+
 /* ---------- drawer ---------- */
 .scrim{position:fixed;inset:0;background:rgba(10,14,12,.38);z-index:40}
 .drawer{position:fixed;top:0;right:0;bottom:0;width:min(540px,100%);z-index:41;background:var(--surface);box-shadow:-8px 0 30px rgba(0,0,0,.18);display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);padding-right:env(safe-area-inset-right,0px)}
@@ -297,8 +323,11 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
     <nav class="tabs" aria-label="表示切替">
       <a href="#board" id="tab-board">ボード</a>
       <a href="#calendar" id="tab-calendar">カレンダー</a>
+      <a href="#zairyo" id="tab-zairyo">材料</a>
+      <a href="#tehai" id="tab-tehai">手配</a>
       <a href="#keihi" id="tab-keihi">経費</a>
       <a href="#renraku" id="tab-renraku">連絡<span class="b" id="rkBadge" hidden></span></a>
+      <a href="#shiryo" id="tab-shiryo">資料</a>
     </nav>
     <button class="btn primary" id="newBtn" type="button">＋ 新規カード</button>
   </div>
@@ -325,6 +354,44 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
     <div class="cal" id="cal"></div>
     <div class="daylist" id="daylist" hidden></div>
   </section>
+  <section id="view-zairyo" hidden>
+    <div class="cal-head"><h2>材料の拾い出し・発注管理</h2></div>
+    <p class="intro">工事ごとに必要な材料を1行ずつ拾い、発注・納品の状況を管理します。使用日が近いのに未発注のもの、納品遅れ、金額が基準以上で経営の判断が必要なものに印が付きます。</p>
+    <div class="kh-tools">
+      <select id="mtTask" aria-label="案件"></select>
+      <button class="btn primary" id="mtAdd" type="button">＋ 行を追加</button>
+      <button class="btn ai" id="mtScan" type="button">📷 数量表・図面から拾い出す</button>
+      <input type="file" id="mtFiles" accept="image/*" multiple hidden>
+      <span class="progress" id="mtProgress" hidden></span>
+      <button class="btn sp" id="mtCsv" type="button">CSVを書き出す</button>
+    </div>
+    <div class="tiles" id="mtTiles"></div>
+    <div class="panel"><div class="tbl-wrap" id="mtList"></div></div>
+  </section>
+  <section id="view-tehai" hidden>
+    <div class="cal-head">
+      <h2 id="thTitle"></h2>
+      <button class="btn" id="thPrev" type="button" aria-label="前の週">‹ 前週</button>
+      <button class="btn" id="thThis" type="button">今週</button>
+      <button class="btn" id="thNext" type="button" aria-label="次の週">翌週 ›</button>
+      <button class="btn primary" id="crewAdd" type="button">＋ 職人・協力会社を登録</button>
+    </div>
+    <div id="crewForm"></div>
+    <div class="panel"><div class="tbl-wrap" id="thGrid"></div></div>
+    <div class="panel" style="margin-top:14px"><h3>案件別の人工（この週）</h3><div class="tbl-wrap" id="thByTask"></div></div>
+  </section>
+  <section id="view-shiryo" hidden>
+    <div class="cal-head"><h2>資料の仕分け</h2></div>
+    <p class="intro">取り込んだ資料をAIが「有用」「不要」「要確認」に分け、有用なものは入れる先（共通・経理・経営・施工管理・監査役）を決めます。不要と判断しても削除はしません。最終判断は社長が行い、「確定」を押します。</p>
+    <div class="kh-tools">
+      <button class="btn primary" id="dsAdd" type="button">資料を選んで仕分ける</button>
+      <input type="file" id="dsFiles" multiple hidden>
+      <span class="progress" id="dsProgress" hidden></span>
+      <button class="btn sp" id="dsCsv" type="button">CSVを書き出す</button>
+    </div>
+    <div class="tiles" id="dsTiles"></div>
+    <div class="panel"><div class="tbl-wrap" id="dsList"></div></div>
+  </section>
   <section id="view-keihi" hidden>
     <div class="cal-head">
       <h2 id="khTitle"></h2>
@@ -347,11 +414,13 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
       <div class="panel"><h3>案件別</h3><div class="tbl-wrap" id="khProjTbl"></div></div>
     </div>
     <div class="panel"><h3 id="khListTitle">明細</h3><div class="tbl-wrap" id="khList"></div></div>
+    <div class="panel" style="margin-top:14px"><h3>立替精算（未精算・全期間）</h3><div class="tbl-wrap" id="khReimb"></div></div>
   </section>
   <section id="view-renraku" hidden>
     <div class="rk">
       <div class="rk-main">
-        <div class="cal-head"><h2>部署間連絡</h2><button class="btn primary" id="reqNew" type="button">＋ 依頼を出す</button></div>
+        <div class="cal-head"><h2>部署間連絡</h2><button class="btn primary" id="reqNew" type="button">＋ 依頼を出す</button>
+          <label class="mydept" style="margin-left:auto">自分の部署 <select id="myDeptSel"><option value="">未設定</option><option value="keiri">経理</option><option value="keiei">経営</option><option value="sekou">施工管理</option><option value="shacho">社長</option></select></label></div>
         <div class="subnav" id="subnav" role="group" aria-label="依頼の絞り込み"></div>
         <div id="reqForm"></div>
         <div class="req-list" id="reqList"></div>
@@ -370,6 +439,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 
 <div class="scrim" id="scrim" hidden></div>
 <aside class="drawer" id="drawer" hidden aria-label="カード詳細"></aside>
+<div class="modal-wrap" id="modal" hidden></div>
 <div class="lightbox" id="lightbox" hidden><img id="lbImg" alt=""></div>
 <div class="toast" id="toast" hidden role="status"></div>
 
@@ -384,6 +454,7 @@ const STATUSES = [
 ];
 const SMAP = Object.fromEntries(STATUSES.map(s => [s.id, s]));
 const WD = ["日","月","火","水","木","金","土"];
+const VIEWS = ["board","calendar","zairyo","tehai","keihi","renraku","shiryo"];
 const $ = id => document.getElementById(id);
 const DEPTS = [
   {id:"keiri", label:"経理",     scope:"請求書・支払・入金管理・月次の数字・資金繰り・設備投資の資金試算", hint:"月次の売上・入金・支払予定、資金残高の概況、請求の締め日"},
@@ -426,6 +497,9 @@ const S = {
   reqs:new Map(), reqLoaded:false, depts:{}, rkTab:"all", myDept:"", reqFormOpen:false, reqFormTask:null, editReply:null, confirmReq:null,
   prompts:{}, sample:null, drafts:{}, aiBusy:{},
   receipts:new Map(), rcLoaded:false, khMonth:null, khProj:"", rcEdit:null, rcNew:false, rcConfirmDel:false, downloads:null,
+  materials:new Map(), mtTask:"", mtConfirm:null, mtFocus:null,
+  crews:new Map(), assign:new Map(), thWeek:null, crewEdit:null,
+  docsort:new Map(), dsConfirm:null,
 };
 let db = null, user = null, assets = null, loadTimer = null;
 
@@ -512,21 +586,15 @@ function projectNames(){ return [...new Set([...S.tasks.values()].map(t => (t.pr
 /* ---------- render ---------- */
 function render(){
   if (S.dragging){ S.deferred = true; return; }
-  $("tab-board").setAttribute("aria-current", S.view === "board" ? "page" : "false");
-  $("tab-calendar").setAttribute("aria-current", S.view === "calendar" ? "page" : "false");
-  $("view-board").hidden = S.view !== "board";
-  $("view-calendar").hidden = S.view !== "calendar";
-  $("tab-renraku").setAttribute("aria-current", S.view === "renraku" ? "page" : "false");
-  $("view-renraku").hidden = S.view !== "renraku";
-  $("tab-keihi").setAttribute("aria-current", S.view === "keihi" ? "page" : "false");
-  $("view-keihi").hidden = S.view !== "keihi";
-  const rk = S.view === "renraku" || S.view === "keihi";
+  for (const v of VIEWS){ $("tab-"+v).setAttribute("aria-current", S.view === v ? "page" : "false"); $("view-"+v).hidden = S.view !== v; }
+  const rk = S.view !== "board" && S.view !== "calendar";
   $("newBtn").hidden = !S.canWrite || !db || rk;
   $("fMine").setAttribute("aria-pressed", String(S.fMine));
   $("fMine").hidden = !S.myId || rk;
   $("fProject").hidden = rk;
-  const pend = [...S.reqs.values()].filter(r => r.status === "pending").length;
-  $("rkBadge").textContent = String(pend); $("rkBadge").hidden = !pend;
+  const mine = [...S.reqs.values()].filter(r => r.status !== "done" && ((S.myDept && r.to === S.myDept && r.status !== "pending") || (S.canEdit && r.status === "pending"))).length;
+  $("rkBadge").textContent = String(mine); $("rkBadge").hidden = !mine;
+  $("tab-renraku").title = mine ? "自分の部署宛ての未完了" + (S.canEdit ? "と承認待ち" : "") + "：" + mine + "件" : "";
 
   const sel = $("fProject"); const names = projectNames();
   if (S.fProject && !names.includes(S.fProject) && S.loaded) { S.fProject = ""; }
@@ -535,9 +603,8 @@ function render(){
 
   const vis = visibleTasks();
   $("count").textContent = S.tasks.size ? vis.length+" / "+S.tasks.size+" 件" : "";
-  if (S.view === "keihi"){ $("count").textContent = ""; renderKeihi(); }
-  else if (rk){ $("count").textContent = ""; renderRenraku(); }
-  else if (S.view === "board") renderBoard(vis); else renderCalendar(vis);
+  if (rk) $("count").textContent = "";
+  ({board:() => renderBoard(vis), calendar:() => renderCalendar(vis), zairyo:renderZairyo, tehai:renderTehai, keihi:renderKeihi, renraku:renderRenraku, shiryo:renderShiryo})[S.view]();
   renderDrawer();
 }
 
@@ -548,7 +615,8 @@ function cardEl(t){
     t.project ? h("div",{class:"proj",text:t.project}) : null,
     t.cover ? h("img",{class:"cover",src:"/_blob/"+t.cover,alt:"",loading:"lazy",draggable:"false",onerror(){ this.remove(); }}) : null,
     h("div",{class:"ttl"+(t.title?"":" untitled"),text:t.title||"（無題）"}),
-    (di || t.assignee) ? h("div",{class:"meta"},
+    (di || t.assignee || overBudget(t)) ? h("div",{class:"meta"},
+      overBudget(t) ? h("span",{class:"due over",text:"予算超過"}) : null,
       di ? h("span",{class:"due "+di.cls,text:di.txt}) : null,
       t.assignee ? h("span",{class:"who"}, avatarEl(t.assignee), h("span",{text:nameOf(t.assignee)})) : null
     ) : null
@@ -734,6 +802,10 @@ function renderCalendar(vis){
   dl.hidden = false;
   dl.replaceChildren(h("h3",{text:fmtDay(S.selDay)+" の予定 · "+list.length+"件"}),
     list.length ? dayUl(list) : h("p",{class:"muted",style:"margin:0",text:"この日に期間がかかるカードはありません。"}));
+  const asg = [...S.assign.values()].filter(a => a.date === S.selDay && S.crews.has(a.crewId));
+  if (asg.length) dl.append(h("h3",{style:"margin-top:12px",text:"手配 · "+asg.length+"人"}),
+    h("ul",null, asg.map(a => { const c = S.crews.get(a.crewId), t = S.tasks.get(a.taskId);
+      return h("li",{style:"font-size:13px;padding:3px 4px",text:(c.name||"")+"（"+(c.trade||c.kind||"")+"） → "+(t ? (t.project ? t.project+" ／ " : "")+(t.title||"") : "（削除された案件）")}); })));
 }
 function dayUl(list){
   return h("ul",null, list.map(t => { const st = SMAP[t.status]||SMAP.todo; const di = dueInfo(t);
@@ -809,6 +881,12 @@ function renderDrawer(){
   const span = t.start && t.due ? daysBetween(t.start, t.due) + 1 : null;
   const di = dueInfo(t);
 
+  const budgetIn = h("input",{type:"number",id:"fBudget",min:"0",step:"1000",inputmode:"numeric",placeholder:"実行予算",readonly:ro,"data-keep":"1"});
+  budgetIn.value = keepVals.fBudget ?? (t.budget ?? "");
+  budgetIn.addEventListener("change", () => { const v = budgetIn.value === "" ? null : Number(budgetIn.value); if (v !== (t.budget ?? null)) patchTask(t.id,{budget:v}); });
+  const needIn = h("input",{type:"number",id:"fNeed",min:"0",step:"1",inputmode:"numeric",placeholder:"1日あたりの必要人数",readonly:ro,"data-keep":"1"});
+  needIn.value = keepVals.fNeed ?? (t.needCrew ?? "");
+  needIn.addEventListener("change", () => { const v = needIn.value === "" ? null : Number(needIn.value); if (v !== (t.needCrew ?? null)) patchTask(t.id,{needCrew:v}); });
   const desc = h("textarea",{id:"fDesc",placeholder:"作業内容・注意事項など",readonly:ro,"data-keep":"1"});
   desc.value = keepVals.fDesc ?? (t.desc || "");
   desc.addEventListener("change", () => { if (desc.value !== (t.desc||"")) patchTask(t.id,{desc:desc.value}); });
@@ -822,9 +900,12 @@ function renderDrawer(){
       h("span",{class:"lb"},"工期"), h("div",{class:"daterow"}, start, h("span",{class:"muted"},"〜"), due),
       (span || di) ? h("span") : null,
       (span || di) ? h("div",{class:"meta"}, span && span > 0 ? h("span",{text:span+"日間"}) : null, di && di.cls ? h("span",{class:"due "+di.cls,text:di.txt}) : null) : null,
+      h("label",{for:"fBudget"},"予算（円）"), budgetIn,
+      h("label",{for:"fNeed"},"必要人工（人/日）"), needIn,
       h("label",{for:"fDesc"},"メモ"), desc
     ),
     costSection(t),
+    extraSection(t, ro),
     relatedReqs(t, ro),
     notesSection(t, ro, composerText),
     ro ? h("p",{class:"ro-note",text:"閲覧のみの権限です。編集するにはオーナーに共有設定の変更を依頼してください。"}) : dangerZone(t)
@@ -1010,7 +1091,7 @@ function renderRenraku(){
   $("subnav").replaceChildren(...RK_TABS.map(tb => {
     const n = rkFilter(tb.id, false).length;
     return h("button",{type:"button","aria-pressed":String(S.rkTab === tb.id),onclick(){ S.rkTab = tb.id; S.confirmReq = null; saveFilters(); render(); }},
-      tb.label, tb.id === "done" ? null : h("span",{class:"b"+(tb.id === "pending" && n ? " hot" : ""),text:String(n)}));
+      tb.label + (tb.id === S.myDept ? "（自分）" : ""), tb.id === "done" ? null : h("span",{class:"b"+(tb.id === "pending" && n ? " hot" : ""),text:String(n)}));
   }));
   $("reqNew").hidden = ro;
   const formBox = $("reqForm");
@@ -1224,12 +1305,12 @@ async function aiAudit(r){
       round: pass ? 0 : prevFails + 1, at:now, by:"ai"};
     const patch = {audit};
     if (pass){
-      if (audit.level === "important") patch.status = "pending";
+      if (audit.level === "important" || S.prompts.minorToApproval) patch.status = "pending";
       else { patch.status = "done"; patch.doneAt = now; }
     } else if (audit.round >= 3){ audit.level = "recheck"; patch.status = "pending"; }
     else if (r.status === "open") patch.status = "doing";
     await patchReq(r.id, patch);
-    toast(pass ? (audit.level === "important" ? "合格：承認待ちに回しました" : "合格：報告のみとして完了にしました") : audit.level === "recheck" ? "3回不合格：要確認として承認待ちの先頭に置きました" : "不合格：所見と修正案を確認してください");
+    toast(pass ? (patch.status === "pending" ? "合格：承認待ちに回しました" : "合格：報告のみとして完了にしました") : audit.level === "recheck" ? "3回不合格：要確認として承認待ちの先頭に置きました" : "不合格：所見と修正案を確認してください");
   } catch(e){ aiError(e); }
   finally { delete S.aiBusy[r.id]; render(); }
 }
@@ -1237,6 +1318,7 @@ const PROMPT_ITEMS = [
   {k:"common", label:"共通部分（全部署）"},
   {k:"keiri", label:"経理"}, {k:"keiei", label:"経営"}, {k:"sekou", label:"施工管理"},
   {k:"auditor", label:"監査役"},
+  {k:"karteTpl", label:"工事カルテの雛形"},
 ];
 function renderPrompts(){
   const box = $("prompts"), ro = !S.canEdit || !db;
@@ -1256,8 +1338,13 @@ function renderPrompts(){
     const th = h("input",{id:"pr-threshold",type:"number",min:"0",step:"10000","aria-label":"重要の金額基準（円）"});
     th.addEventListener("change", () => save("threshold", Number(th.value) || 500000));
     box.append(h("details",null, h("summary",{text:"重要の金額基準"}), th, h("span",{class:"ai-note",text:" 円以上"})));
+    const mta = h("input",{type:"checkbox",id:"pr-minor"});
+    mta.addEventListener("change", () => save("minorToApproval", mta.checked));
+    box.append(h("details",null, h("summary",{text:"軽微な合格の扱い"}),
+      h("label",{class:"ai-note",style:"display:flex;gap:6px;align-items:center;margin-top:6px"}, mta, "軽微（報告のみ）で合格した回答も、完了にせず承認待ちに並べる")));
   }
-  for (const it of PROMPT_ITEMS){ const ta = $("pr-"+it.k); if (ta !== document.activeElement) ta.value = S.prompts[it.k] || ""; ta.readOnly = ro; }
+  for (const it of PROMPT_ITEMS){ const ta = $("pr-"+it.k); if (ta !== document.activeElement) ta.value = S.prompts[it.k] || (it.k === "karteTpl" ? KARTE_TPL : ""); ta.readOnly = ro; }
+  $("pr-minor").checked = !!S.prompts.minorToApproval; $("pr-minor").disabled = ro;
   const th = $("pr-threshold"); if (th !== document.activeElement) th.value = S.prompts.threshold || 500000; th.readOnly = ro;
 }
 function renderDepts(ro){
@@ -1351,6 +1438,7 @@ function renderKeihi(){
     h("tbody",null, projs.map(([k,o]) => h("tr",null, h("td",{text:k}), h("td",{class:"num",text:String(o.n)}), h("td",{class:"num",text:yen(o.v)}))))) :
     h("p",{class:"muted",style:"margin:0;font-size:13px",text:"案件にひも付いた経費はまだありません。"}));
 
+  renderReimb();
   $("khListTitle").textContent = "明細 · " + list.length + "件";
   $("khList").replaceChildren(list.length ? h("table",{class:"tbl"},
     h("thead",null, h("tr",null, h("th",null,""), h("th",null,"日付"), h("th",null,"取引先・品目"), h("th",null,"勘定科目"), h("th",null,"案件"), h("th",{class:"num"},"税込"), h("th",null,"状態"))),
@@ -1366,7 +1454,8 @@ function renderKeihi(){
         r.status === "checked" ? h("span",{class:"flag ok",text:"確認済み"}) : h("span",{class:"flag uncheck",text:"未確認"}),
         !INV_RE.test(r.invoiceNo||"") ? h("span",{class:"flag bad",text:"インボイス番号なし"}) : null,
         isDup(r) ? h("span",{class:"flag bad",text:"重複の可能性"}) : null,
-        r.ai && r.ai.confidence === "low" ? h("span",{class:"flag bad",text:"読み取り不確か"}) : null)
+        r.ai && r.ai.confidence === "low" ? h("span",{class:"flag bad",text:"読み取り不確か"}) : null,
+        r.payment === "立替（個人）" ? h("span",{class:"flag "+(r.settled ? "ok" : "uncheck"),text: r.settled ? "立替・精算済み" : "立替・未精算"}) : null)
     )))) : h("div",{class:"empty"}, h("strong",{text: !db ? "共有データに接続できません" : !S.rcLoaded ? "読み込み中…" : "この月の経費はまだありません"}),
       ro ? "" : S.sample ? "「📷 レシート・伝票を読み取る」で写真を選ぶと、AIが日付・取引先・金額・勘定科目を読み取って登録します。複数枚まとめて選べます。" : "「＋ 手入力」から登録できます。"));
 }
@@ -1473,24 +1562,433 @@ async function scanReceipts(files){
 function csvCell(x){ const s = String(x ?? ""); return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; }
 async function exportCsv(){
   const list = monthReceipts().slice().reverse();
-  const head = ["日付","種類","取引先","品目","勘定科目","案件","税込金額","消費税10%","消費税8%","インボイス登録番号","支払方法","状態","メモ"];
-  const rows = list.map(r => [r.date||"", r.kind||"", r.vendor||"", r.items||"", r.category||"", rcProject(r), Number(r.total)||0, r.tax10 ?? "", r.tax8 ?? "", r.invoiceNo||"", r.payment||"", r.status === "checked" ? "確認済み" : "未確認", r.memo||""]);
+  const head = ["日付","種類","取引先","品目","勘定科目","案件","税込金額","消費税10%","消費税8%","インボイス登録番号","支払方法","立替精算","状態","メモ"];
+  const rows = list.map(r => [r.date||"", r.kind||"", r.vendor||"", r.items||"", r.category||"", rcProject(r), Number(r.total)||0, r.tax10 ?? "", r.tax8 ?? "", r.invoiceNo||"", r.payment||"",
+    r.payment === "立替（個人）" ? (r.settled ? "精算済み" : "未精算") : "", r.status === "checked" ? "確認済み" : "未確認", r.memo||""]);
   const csv = "﻿" + [head, ...rows].map(row => row.map(csvCell).join(",")).join("\r\n");
   try { await S.downloads.save({filename:"経費_" + S.khMonth + ".csv", data:csv}); }
   catch(e){ if (e && e.code !== "declined") toast("CSVを書き出せませんでした"); }
 }
+function taskSpend(t){ let v = 0; for (const r of S.receipts.values()) if (r.taskId === t.id) v += Number(r.total) || 0; return v; }
+function overBudget(t){ const b = Number(t.budget) || 0; return b > 0 && taskSpend(t) > b; }
 function costSection(t){
   const list = [...S.receipts.values()].filter(r => r.taskId === t.id);
-  if (!list.length) return null;
-  const total = list.reduce((a,r) => a + (Number(r.total)||0), 0);
+  const total = list.reduce((a,r) => a + (Number(r.total)||0), 0), budget = Number(t.budget) || 0;
+  const ordered = mtList(t.id).filter(m => m.status === "発注済" || m.status === "納品済").reduce((a,m) => a + mtCalc(m).amount, 0);
+  if (!list.length && !budget && !ordered) return null;
+  const pct = budget ? Math.round(total / budget * 100) : null;
   const byCat = {}; for (const r of list) byCat[r.category||"未分類"] = (byCat[r.category||"未分類"]||0) + (Number(r.total)||0);
   return h("section",{class:"sect"},
-    h("h3",null,"この案件の経費", h("span",{class:"n",text:list.length+"件 · "+yen(total)})),
-    h("div",{class:"meta",style:"gap:6px 12px"}, Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([c,v]) => h("span",{text:c+" "+yen(v)}))),
-    h("button",{class:"link",type:"button",style:"margin-top:6px",onclick(){ S.khProj = t.id; closeTask(); location.hash = "#keihi"; route(); }},"経費の画面で見る"));
+    h("h3",null,"原価（予算と実績）", h("span",{class:"n",text: pct != null ? "消化率 "+pct+"%" : "予算 未設定"})),
+    budget ? h("div",{class:"meter"+(pct > 100 ? " over" : pct >= 80 ? " warn" : ""),role:"img","aria-label":"予算の消化率 "+pct+"%"}, h("i",{style:"width:"+Math.min(100, pct)+"%"})) : null,
+    h("div",{class:"meta",style:"gap:4px 14px;font-size:13px;color:var(--ink)"},
+      h("span",{text:"予算 "+(budget ? yen(budget) : "未設定")}),
+      h("span",{text:"経費実績 "+yen(total)+"（"+list.length+"件）"}),
+      budget ? h("span",{style: total > budget ? "color:var(--danger);font-weight:700" : "",text:(total > budget ? "超過 " : "残り ")+yen(Math.abs(budget - total))}) : null,
+      ordered ? h("span",{class:"muted",text:"発注済み材料 "+yen(ordered)}) : null),
+    list.length ? h("div",{class:"meta",style:"gap:6px 12px;margin-top:4px"}, Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([c,v]) => h("span",{text:c+" "+yen(v)}))) : null,
+    list.length ? h("button",{class:"link",type:"button",style:"margin-top:6px",onclick(){ S.khProj = t.id; closeTask(); location.hash = "#keihi"; route(); }},"経費の画面で見る") : null);
+}
+
+/* ---------- 共通ヘルパー ---------- */
+async function patchDoc(path, data){
+  if (!db) return;
+  try { await withRetry(() => db.doc(path).update({...data, updatedAt:new Date().toISOString(), updatedBy:S.myId})); }
+  catch(e){ writeError(e); }
+}
+async function saveFile(filename, data){
+  if (!S.downloads){ toast("この表示ではファイルを保存できません"); return; }
+  try { await S.downloads.save({filename, data}); }
+  catch(e){ if (e && e.code !== "declined") toast("ファイルを保存できませんでした"); }
+}
+async function createRequest(data){
+  const now = new Date().toISOString(), ref = db.collection("requests").doc();
+  await withRetry(() => ref.set({date:todayYmd(), from:"sekou", to:null, body:"", due:null, money:false, status:"open", reply:"", taskId:null,
+    createdBy:S.myId, createdAt:now, updatedAt:now, ...data}));
+  return ref.id;
+}
+function taskLabel(t){ return t ? (t.project ? t.project+" ／ " : "")+(t.title||"（無題）") : "（削除された案件）"; }
+function sortedTasks(includeId){
+  return [...S.tasks.values()].filter(t => t.status !== "done" || t.id === includeId)
+    .sort((a,b) => ((a.project||"")+(a.title||"")).localeCompare((b.project||"")+(b.title||""),"ja"));
+}
+function threshold(){ return Number(S.prompts.threshold) || 500000; }
+function showModal(title, text, filename){
+  const m = $("modal");
+  const ta = h("textarea",{id:"modalText","aria-label":title}); ta.value = text;
+  m.replaceChildren(h("div",{class:"modal-box",role:"dialog","aria-label":title},
+    h("div",{class:"d-head"}, h("span",{class:"crumb",style:"font-weight:700;color:var(--ink);font-size:14px",text:title}),
+      h("button",{class:"btn ghost",type:"button",onclick(){ m.hidden = true; }},"閉じる ✕")),
+    h("div",{style:"padding:12px 16px;display:flex;flex-direction:column;gap:10px;min-height:0;flex:1"}, ta,
+      h("div",{style:"display:flex;gap:8px;flex-wrap:wrap"},
+        h("button",{class:"btn primary",type:"button",async onclick(){ try { await navigator.clipboard.writeText(ta.value); toast("コピーしました"); } catch(e){ ta.focus(); ta.select(); toast("選択しました。コピーしてください"); } }},"コピー"),
+        filename && S.downloads ? h("button",{class:"btn",type:"button",onclick(){ saveFile(filename, ta.value); }},"ファイルに保存") : null))));
+  m.hidden = false;
+  return ta;
+}
+function csvOf(head, rows){ return "﻿" + [head, ...rows].map(row => row.map(csvCell).join(",")).join("\r\n"); }
+
+/* ---------- 立替精算 ---------- */
+function renderReimb(){
+  const box = $("khReimb"), ro = !S.canWrite || !db;
+  const by = {};
+  for (const r of S.receipts.values()) if (r.payment === "立替（個人）" && !r.settled){ const k = r.createdBy || "unknown"; (by[k] = by[k] || []).push(r); }
+  const rows = Object.entries(by);
+  if (!rows.length){ box.replaceChildren(h("p",{class:"muted",style:"margin:0;font-size:13px",text:"未精算の立替はありません。支払方法を「立替（個人）」にした伝票がここに人ごとにまとまります。"})); return; }
+  box.replaceChildren(h("table",{class:"tbl"},
+    h("thead",null, h("tr",null, h("th",null,"立て替えた人"), h("th",{class:"num"},"件数"), h("th",{class:"num"},"金額"), h("th",null,"期間"), h("th",null,""))),
+    h("tbody",null, rows.map(([uid, list]) => {
+      const sum = list.reduce((a,r) => a + (Number(r.total)||0), 0), dates = list.map(r => r.date).filter(Boolean).sort();
+      return h("tr",null, h("td",{text: uid === "unknown" ? "（不明）" : nameOf(uid)}), h("td",{class:"num",text:String(list.length)}), h("td",{class:"num",text:yen(sum)}),
+        h("td",{text: dates.length ? fmtDay(dates[0])+" 〜 "+fmtDay(dates[dates.length-1]) : "—"}),
+        h("td",null, !ro && S.canEdit ? h("button",{class:"btn",type:"button",async onclick(){
+          this.disabled = true; const now = new Date().toISOString();
+          for (const r of list) await patchDoc("receipts/"+r.id, {settled:true, settledAt:now, settledBy:S.myId});
+          toast(nameOf(uid)+"さんの立替 "+yen(sum)+" を精算済みにしました");
+        }},"精算済みにする") : h("span",{class:"ai-note",text:"精算は編集者が行います"})));
+    }))));
+}
+
+/* ---------- 材料の拾い出し・発注管理 ---------- */
+const MSTAT = ["未発注","発注済","納品済","不要"];
+function mtCalc(m){ const need = Math.ceil((Number(m.qty)||0) * (1 + (Number(m.loss)||0)/100) * 100) / 100; return {need, amount: Math.round(need * (Number(m.price)||0))}; }
+function mtList(taskId){ return [...S.materials.values()].filter(m => m.taskId === taskId).sort((a,b) => (a.order||0) - (b.order||0)); }
+function mtAlerts(m){
+  const out = [], today = todayYmd(), {amount} = mtCalc(m);
+  if (m.status === "未発注" && m.needDate){ const d = daysBetween(today, m.needDate); if (d < 0) out.push({t:"要発注（使用日を過ぎています）",c:"bad"}); else if (d <= 7) out.push({t:"要発注（使用日まで"+d+"日）",c:"uncheck"}); }
+  if (m.status === "発注済" && m.deliveryDate && m.deliveryDate < today) out.push({t:"納品遅れ",c:"bad"});
+  if ((m.status === "未発注" || m.status === "発注済") && m.deliveryDate && m.needDate && m.deliveryDate > m.needDate) out.push({t:"納品が使用日に間に合わない",c:"bad"});
+  if (m.status === "未発注" && amount >= threshold() && !m.keieiReqId) out.push({t:"要判断（"+yen(threshold())+"以上）",c:"uncheck"});
+  if (/要確認/.test(m.memo||"")) out.push({t:"要確認",c:"uncheck"});
+  return out;
+}
+function renderZairyo(){
+  const ro = !S.canWrite || !db, tasks = sortedTasks(S.mtTask);
+  if (!S.mtTask || !S.tasks.has(S.mtTask)) S.mtTask = (tasks[0] || {}).id || "";
+  const sel = $("mtTask");
+  if (sel !== document.activeElement){
+    sel.replaceChildren(...(tasks.length ? tasks.map(t => h("option",{value:t.id},taskLabel(t))) : [h("option",{value:""},"案件がありません")]));
+    sel.value = S.mtTask;
+  }
+  $("mtAdd").hidden = ro || !S.mtTask; $("mtScan").hidden = ro || !S.mtTask || !S.sample; $("mtCsv").hidden = !S.downloads || !S.mtTask;
+  const list = S.mtTask ? mtList(S.mtTask) : [], live = list.filter(m => m.status !== "不要");
+  const sum = live.reduce((a,m) => a + mtCalc(m).amount, 0), ordered = live.filter(m => m.status !== "未発注").reduce((a,m) => a + mtCalc(m).amount, 0);
+  const nNeed = list.filter(m => mtAlerts(m).some(a => a.t.startsWith("要発注"))).length, nLate = list.filter(m => mtAlerts(m).some(a => a.t.startsWith("納品"))).length;
+  const tile = (k, v, warn) => h("div",{class:"tile"+(warn ? " warn" : "")}, h("div",{class:"k",text:k}), h("div",{class:"v",text:v}));
+  $("mtTiles").replaceChildren(tile("見込み金額", yen(sum)), tile("発注済み金額", yen(ordered)), tile("要発注", nNeed+" 件", nNeed > 0), tile("納品の問題", nLate+" 件", nLate > 0));
+  const box = $("mtList"), ae = document.activeElement;
+  if (ae && box.contains(ae) && /INPUT|SELECT/.test(ae.tagName)) return;
+  if (!S.mtTask){ box.replaceChildren(h("div",{class:"empty"}, h("strong",{text:"案件がありません"}), "ボードで案件カードを作ると、その案件の材料を管理できます。")); return; }
+  if (!list.length){ box.replaceChildren(h("div",{class:"empty"}, h("strong",{text:"まだ材料がありません"}),
+    ro ? "" : "「＋ 行を追加」で1行ずつ入力するか、「📷 数量表・図面から拾い出す」で写真から拾い出します。拾い出した行は「要確認」付きで入るので、数量と根拠を確かめてください。")); return; }
+  const H = ["材料名","規格","設計数量","単位","ロス%","必要数量","単価","金額","使用予定日","仕入先","状態","発注日","納品予定日","図面番号","備考","知らせ",""];
+  box.replaceChildren(h("table",{class:"tbl"},
+    h("thead",null, h("tr",null, H.map((x,i) => h("th",{class:[2,4,5,6,7].includes(i) ? "num" : null,text:x})))),
+    h("tbody",null, list.map(m => mtRow(m, ro)))));
+  if (S.mtFocus){ const el = box.querySelector('[data-mid="'+S.mtFocus+'"] input'); if (el){ el.focus(); S.mtFocus = null; } }
+}
+function mtRow(m, ro){
+  const tr = h("tr",{"data-mid":m.id});
+  const up = (k, v) => { if ((m[k] ?? null) === v || (m[k] ?? "") === v) return; m[k] = v; patchDoc("materials/"+m.id, {[k]:v}); };
+  const needTd = h("td",{class:"num"}), amtTd = h("td",{class:"num"});
+  const vals = {qty:m.qty, loss:m.loss, price:m.price};
+  const refresh = () => { const c = mtCalc(vals); needTd.textContent = c.need ? String(c.need) : ""; amtTd.textContent = c.amount ? yen(c.amount) : ""; };
+  const inp = (k, type, w) => {
+    const e = h("input",{class:"grid-in",type:type||"text",readonly:ro,"aria-label":k,style:w ? "min-width:"+w+"px" : null});
+    e.value = m[k] ?? "";
+    if (type === "number"){ e.step = "any"; e.style.textAlign = "right"; e.addEventListener("input", () => { if (k in vals){ vals[k] = e.value === "" ? null : Number(e.value); refresh(); } }); }
+    e.addEventListener("change", () => up(k, type === "number" ? (e.value === "" ? null : Number(e.value)) : type === "date" ? (e.value || null) : e.value.trim()));
+    return h("td",null,e);
+  };
+  const st = h("select",{class:"grid-in",disabled:ro,"aria-label":"状態"}, MSTAT.map(x => h("option",{value:x},x)));
+  st.value = MSTAT.includes(m.status) ? m.status : "未発注";
+  st.addEventListener("change", () => { const p = {status:st.value}; if (st.value === "発注済" && !m.orderDate) p.orderDate = todayYmd(); patchDoc("materials/"+m.id, p); });
+  refresh();
+  const t = S.tasks.get(m.taskId), {amount, need} = mtCalc(m), alerts = mtAlerts(m), acts = [];
+  if (!ro && m.status === "未発注" && amount >= threshold() && !m.keieiReqId) acts.push(h("button",{class:"btn",type:"button",async onclick(){
+    this.disabled = true;
+    try { const id = await createRequest({from:"sekou", to:"keiei", money:true, taskId:m.taskId, due:m.needDate || null,
+      body:"【発注判断】"+taskLabel(t)+"：「"+(m.name||"")+" "+(m.spec||"")+"」"+need+(m.unit||"")+"、見込み金額 "+yen(amount)+"（単価 "+yen(m.price)+"）。発注してよいか判断をお願いします。"+(m.needDate ? "使用予定日 "+fmtDay(m.needDate)+"。" : "")});
+      await patchDoc("materials/"+m.id, {keieiReqId:id}); toast("経営に発注判断を依頼しました"); } catch(e){ writeError(e); this.disabled = false; }
+  }},"経営に判断を依頼"));
+  if (!ro && (m.status === "発注済" || m.status === "納品済") && amount > 0 && !m.keiriReqId) acts.push(h("button",{class:"btn",type:"button",async onclick(){
+    this.disabled = true;
+    try { const id = await createRequest({from:"sekou", to:"keiri", money:true, taskId:m.taskId,
+      body:"【支払予定】"+taskLabel(t)+"：「"+(m.name||"")+" "+(m.spec||"")+"」"+need+(m.unit||"")+"を"+(m.orderDate ? fmtDay(m.orderDate)+"に" : "")+"発注しました（仕入先 "+(m.supplier||"未記入")+"）。金額 "+yen(amount)+(m.deliveryDate ? "、納品予定 "+fmtDay(m.deliveryDate) : "")+"。支払予定に入れてください。"});
+      await patchDoc("materials/"+m.id, {keiriReqId:id}); toast("経理に支払予定を連絡しました"); } catch(e){ writeError(e); this.disabled = false; }
+  }},"経理に支払予定を連絡"));
+  if (m.keieiReqId) acts.push(h("span",{class:"flag ok",text:"経営に依頼済み"}));
+  if (m.keiriReqId) acts.push(h("span",{class:"flag ok",text:"経理に連絡済み"}));
+  if (!ro){
+    if (S.mtConfirm === m.id) acts.push(h("button",{class:"btn danger",type:"button",async onclick(){ try { await withRetry(() => db.doc("materials/"+m.id).delete()); } catch(e){ writeError(e); } S.mtConfirm = null; }},"削除する"),
+      h("button",{class:"btn",type:"button",onclick(){ S.mtConfirm = null; render(); }},"やめる"));
+    else acts.push(h("button",{class:"btn ghost",type:"button",style:"color:var(--muted)",onclick(){ S.mtConfirm = m.id; render(); }},"削除"));
+  }
+  tr.append(inp("name","text",140), inp("spec","text",120), inp("qty","number",70), inp("unit","text",48), inp("loss","number",56), needTd, inp("price","number",86), amtTd,
+    inp("needDate","date",130), inp("supplier","text",110), h("td",null,st), inp("orderDate","date",130), inp("deliveryDate","date",130), inp("drawingNo","text",80), inp("memo","text",160),
+    h("td",null, alerts.map(a => h("span",{class:"flag "+a.c,text:a.t}))), h("td",null, h("div",{style:"display:flex;gap:6px;flex-wrap:wrap;align-items:center"}, acts)));
+  return tr;
+}
+async function mtAddRow(extra){
+  const now = new Date().toISOString(), ref = db.collection("materials").doc();
+  const last = mtList(S.mtTask).reduce((a,m) => Math.max(a, m.order||0), 0);
+  await withRetry(() => ref.set({taskId:S.mtTask, name:"", spec:"", qty:null, unit:"", loss:0, price:null, needDate:null, supplier:"", status:"未発注",
+    orderDate:null, deliveryDate:null, drawingNo:"", memo:"", order:last + 1000, createdBy:S.myId, createdAt:now, updatedAt:now, ...(extra||{})}));
+  return ref.id;
+}
+async function mtScan(files){
+  const list = [...files]; if (!list.length) return;
+  const prog = $("mtProgress"), t = S.tasks.get(S.mtTask); prog.hidden = false; let n = 0;
+  for (let i = 0; i < list.length; i++){
+    prog.textContent = "拾い出し中 " + (i+1) + " / " + list.length + " 枚…";
+    try {
+      const blob = await shrink(list[i]);
+      const res = await S.sample.json("この画像は建設工事「" + taskLabel(t) + "」の図面・数量表・見積書などです。必要な材料を1行ずつ拾い出し、次のJSONだけを返してください。\n" +
+        '{"items":[{"name":"材料名","spec":"規格・寸法","qty":数量の数値またはnull,"unit":"単位","drawingNo":"図面番号があれば","note":"根拠や不確かな点"}]}\n' +
+        "数量が読み取れないものは qty を null にし、推測で埋めないでください。重複して載っている材料はまとめてください。", {images:[blob], cache:false});
+      const items = Array.isArray(res && res.items) ? res.items.slice(0, 80) : [];
+      for (const it of items){
+        const q = Number(it.qty);
+        await mtAddRow({name:String(it.name||"").slice(0,80), spec:String(it.spec||"").slice(0,80), qty: it.qty == null || isNaN(q) ? null : q, unit:String(it.unit||"").slice(0,12),
+          drawingNo:String(it.drawingNo||"").slice(0,40), memo:"AI拾い出し・要確認" + (it.note ? "：" + String(it.note).slice(0,100) : "")});
+        n++;
+      }
+    } catch(e){ if (e && e.code) aiError(e); else writeError(e); if (e && (e.code === "not_granted" || e.code === "images_unavailable")) break; }
+  }
+  prog.textContent = n + " 行を拾い出しました。数量と根拠を確認し、備考の「要確認」を消してください。";
+  setTimeout(() => { prog.hidden = true; }, 7000);
+}
+function mtCsv(){
+  const t = S.tasks.get(S.mtTask), list = mtList(S.mtTask);
+  const head = ["材料名","規格","設計数量","単位","ロス%","必要数量","単価","金額","使用予定日","仕入先","状態","発注日","納品予定日","図面番号","備考","知らせ"];
+  const rows = list.map(m => { const c = mtCalc(m); return [m.name, m.spec, m.qty ?? "", m.unit, m.loss ?? "", c.need || "", m.price ?? "", c.amount || "", m.needDate||"", m.supplier, m.status, m.orderDate||"", m.deliveryDate||"", m.drawingNo, m.memo, mtAlerts(m).map(a => a.t).join(" / ")]; });
+  saveFile("材料拾い出し・発注管理_" + ((t && (t.project || t.title)) || "案件") + ".csv", csvOf(head, rows));
+}
+
+/* ---------- 職人・協力会社の手配 ---------- */
+function weekStartYmd(d){ const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() - (x.getDay()+6)%7); return ymd(x); }
+function weekDays(){ const s = parseYmd(S.thWeek); return [...Array(7)].map((_,i) => { const d = new Date(s); d.setDate(s.getDate()+i); return ymd(d); }); }
+const CREW_KINDS = ["協力会社","一人親方","自社"];
+function renderTehai(){
+  if (!S.thWeek) S.thWeek = weekStartYmd(new Date());
+  const ro = !S.canWrite || !db, days = weekDays();
+  $("thTitle").textContent = fmtDay(days[0]) + " 〜 " + fmtDay(days[6]) + " の手配";
+  $("crewAdd").hidden = ro;
+  const fb = $("crewForm");
+  if (!S.crewEdit) fb.replaceChildren();
+  else if (!fb.firstChild || fb.dataset.id !== S.crewEdit){ fb.replaceChildren(crewForm()); fb.dataset.id = S.crewEdit; }
+  const crews = [...S.crews.values()].filter(c => c.active !== false).sort((a,b) => (a.kind||"").localeCompare(b.kind||"","ja") || (a.name||"").localeCompare(b.name||"","ja"));
+  const tasks = sortedTasks(), today = todayYmd(), grid = $("thGrid"), ae = document.activeElement;
+  if (!(ae && grid.contains(ae) && ae.tagName === "SELECT")){
+    if (!crews.length) grid.replaceChildren(h("div",{class:"empty"}, h("strong",{text:"まだ職人・協力会社が登録されていません"}),
+      ro ? "" : "「＋ 職人・協力会社を登録」で名前・職種・連絡先を登録すると、週ごとにどの現場へ入るかを割り当てられます。"));
+    else grid.replaceChildren(h("table",{class:"tbl"},
+      h("thead",null, h("tr",null, h("th",null,"職人・協力会社"), days.map(d => h("th",{style: d === today ? "color:var(--accent)" : null,text:fmtDay(d)})))),
+      h("tbody",null, crews.map(c => h("tr",null,
+        h("td",null, h("button",{class:"crew-name",type:"button",disabled:ro,onclick(){ S.crewEdit = c.id; render(); }}, c.name || "（名前なし）"),
+          h("div",{class:"ai-note",text:[c.kind, c.trade].filter(Boolean).join("・")})),
+        days.map(d => {
+          const a = S.assign.get(d+"_"+c.id), sun = parseYmd(d).getDay() === 0;
+          const sel = h("select",{disabled:ro,"aria-label":(c.name||"")+" "+fmtDay(d)+"の現場"}, h("option",{value:""},"—"),
+            tasks.map(t => h("option",{value:t.id},taskLabel(t))),
+            a && !tasks.some(t => t.id === a.taskId) ? h("option",{value:a.taskId},taskLabel(S.tasks.get(a.taskId))) : null);
+          sel.value = a ? a.taskId : "";
+          sel.addEventListener("change", async () => {
+            const id = d+"_"+c.id;
+            try {
+              if (sel.value) await withRetry(() => db.doc("assign/"+id).set({date:d, crewId:c.id, taskId:sel.value, updatedAt:new Date().toISOString(), updatedBy:S.myId}));
+              else await withRetry(() => db.doc("assign/"+id).delete());
+            } catch(e){ writeError(e); }
+          });
+          return h("td",{class:"th-cell"+(a ? " on" : "")+(sun ? " sun" : "")}, sel);
+        }))))));
+  }
+  // 案件別の人工
+  const rows = [];
+  for (const t of S.tasks.values()){
+    const counts = days.map(d => [...S.assign.values()].filter(a => a.date === d && a.taskId === t.id && S.crews.has(a.crewId)).length);
+    const need = Number(t.needCrew) || 0;
+    const inPeriod = d => (!t.start || d >= t.start) && (!t.due || d <= t.due) && (t.start || t.due) && parseYmd(d).getDay() !== 0;
+    const short = need ? days.filter((d,i) => inPeriod(d) && counts[i] < need && t.status !== "done").length : 0;
+    if (counts.some(Boolean) || short) rows.push({t, counts, need, short, total:counts.reduce((a,b) => a+b, 0), inPeriod});
+  }
+  rows.sort((a,b) => b.short - a.short || b.total - a.total);
+  $("thByTask").replaceChildren(rows.length ? h("table",{class:"tbl"},
+    h("thead",null, h("tr",null, h("th",null,"案件"), days.map(d => h("th",{class:"num",text:fmtDay(d)})), h("th",{class:"num"},"合計"), h("th",null,""))),
+    h("tbody",null, rows.map(r => h("tr",null, h("td",{text:taskLabel(r.t)}),
+      r.counts.map((n,i) => h("td",{class:"num",style: r.need && r.inPeriod(days[i]) && n < r.need ? "color:var(--danger);font-weight:700" : null,
+        text: r.need && r.inPeriod(days[i]) ? n+"/"+r.need : (n ? String(n) : "")})),
+      h("td",{class:"num",text:r.total+" 人工"}),
+      h("td",null, r.short ? h("span",{class:"flag bad",text:"人工不足 "+r.short+"日"}) : null))))) :
+    h("p",{class:"muted",style:"margin:0;font-size:13px",text:"この週の手配はまだありません。カードの詳細で「必要人工」を入れると、工期中の不足日が赤く出ます。"}));
+}
+function crewForm(){
+  const c = S.crewEdit === "new" ? {kind:"協力会社", active:true} : S.crews.get(S.crewEdit);
+  if (!c){ S.crewEdit = null; return h("div"); }
+  const f = (id, val, ph) => { const e = h("input",{id, type:"text", placeholder:ph||""}); e.value = val || ""; return e; };
+  const name = f("crName", c.name, "例：山田組、佐藤 一郎"), trade = f("crTrade", c.trade, "例：とび、伐採、重機オペ"), phone = f("crPhone", c.phone, "例：090-0000-0000"), memo = f("crMemo", c.memo, "得意な作業、注意事項など");
+  const kind = h("select",{id:"crKind"}, CREW_KINDS.map(x => h("option",{value:x},x))); kind.value = c.kind || "協力会社";
+  const active = h("input",{type:"checkbox",id:"crActive"}); active.checked = c.active !== false;
+  const close = () => { S.crewEdit = null; S.crewDel = false; $("crewForm").replaceChildren(); render(); };
+  const save = async () => {
+    if (!name.value.trim()){ name.focus(); toast("名前を入れてください"); return; }
+    const data = {name:name.value.trim(), kind:kind.value, trade:trade.value.trim(), phone:phone.value.trim(), memo:memo.value.trim(), active:active.checked, updatedAt:new Date().toISOString(), updatedBy:S.myId};
+    try {
+      if (S.crewEdit === "new"){ const ref = db.collection("crews").doc(); await withRetry(() => ref.set({...data, createdAt:data.updatedAt, createdBy:S.myId})); }
+      else await withRetry(() => db.doc("crews/"+S.crewEdit).update(data));
+      toast("保存しました"); close();
+    } catch(e){ writeError(e); }
+  };
+  return h("div",{class:"req-form"},
+    h("label",null,"名前", name), h("label",null,"区分", kind),
+    h("label",null,"職種", trade), h("label",null,"連絡先", phone),
+    h("label",{class:"full"},"メモ", memo),
+    h("label",{class:"chk full"}, active, "手配表に表示する（取引がなくなったらチェックを外す）"),
+    h("div",{class:"full",style:"display:flex;gap:8px;justify-content:flex-end"},
+      h("button",{class:"btn",type:"button",onclick:close},"やめる"), h("button",{class:"btn primary",type:"button",onclick:save},"保存")));
+}
+
+/* ---------- 資料の仕分け ---------- */
+const DS_VERDICTS = ["有用","不要","要確認"], DS_DESTS = ["共通","経理","経営","施工管理","監査役","なし"];
+function renderShiryo(){
+  const ro = !S.canWrite || !db;
+  $("dsAdd").hidden = ro || !S.sample; $("dsCsv").hidden = !S.downloads || !S.docsort.size;
+  const list = [...S.docsort.values()].sort((a,b) => (b.createdAt||"").localeCompare(a.createdAt||""));
+  const cnt = v => list.filter(d => d.verdict === v).length;
+  const tile = (k, v, warn) => h("div",{class:"tile"+(warn ? " warn" : "")}, h("div",{class:"k",text:k}), h("div",{class:"v",text:v}));
+  $("dsTiles").replaceChildren(tile("有用", cnt("有用")+" 件"), tile("不要", cnt("不要")+" 件"), tile("要確認", cnt("要確認")+" 件", cnt("要確認") > 0), tile("社長の確定待ち", list.filter(d => !d.confirmed).length+" 件", list.some(d => !d.confirmed)));
+  const box = $("dsList"), ae = document.activeElement;
+  if (ae && box.contains(ae) && ae.tagName === "SELECT") return;
+  if (!list.length){ box.replaceChildren(h("div",{class:"empty"}, h("strong",{text:"まだ仕分けた資料はありません"}),
+    ro ? "" : S.sample ? "「資料を選んで仕分ける」で、書類の写真・テキスト・CSVなどを選んでください。写真とテキストは中身を読み、それ以外（PDF・Excelなど）はファイル名から判断して「要確認」にします。" : "この表示ではAI機能を使えません。")); return; }
+  const mk = (d, k, opts) => { const e = h("select",{class:"grid-in",disabled:ro || d.confirmed,"aria-label":k}, opts.map(x => h("option",{value:x},x))); e.value = d[k] || opts[opts.length-1];
+    e.addEventListener("change", () => patchDoc("docsort/"+d.id, {[k]:e.value, editedBy:S.myId})); return e; };
+  box.replaceChildren(h("table",{class:"tbl"},
+    h("thead",null, h("tr",null, h("th",null,"資料名"), h("th",null,"判定"), h("th",null,"入れる先"), h("th",null,"理由"), h("th",null,"状態"), h("th",null,""))),
+    h("tbody",null, list.map(d => h("tr",null,
+      h("td",null, h("div",{text:d.name||""}), h("div",{class:"ai-note",text:(d.readMode === "name" ? "ファイル名のみで判断" : "中身を読んで判断")+" · "+fmtStamp(d.createdAt)})),
+      h("td",null, mk(d,"verdict",DS_VERDICTS)), h("td",null, mk(d,"dest",DS_DESTS)),
+      h("td",{style:"min-width:220px",text:d.reason||""}),
+      h("td",null, d.confirmed ? h("span",{class:"flag ok",text:"確定"}) : h("span",{class:"flag uncheck",text:"確定待ち"})),
+      h("td",null, h("div",{style:"display:flex;gap:6px"},
+        !ro && S.canEdit ? h("button",{class:"btn",type:"button",onclick(){ patchDoc("docsort/"+d.id, d.confirmed ? {confirmed:false} : {confirmed:true, confirmedAt:new Date().toISOString(), confirmedBy:S.myId}); }}, d.confirmed ? "確定を戻す" : "確定") : null,
+        !ro ? (S.dsConfirm === d.id
+          ? h("button",{class:"btn danger",type:"button",async onclick(){ try { await withRetry(() => db.doc("docsort/"+d.id).delete()); } catch(e){ writeError(e); } S.dsConfirm = null; }},"記録を消す")
+          : h("button",{class:"btn ghost",type:"button",style:"color:var(--muted)",onclick(){ S.dsConfirm = d.id; render(); }},"削除")) : null))
+    )))));
+}
+async function dsClassify(files){
+  const list = [...files]; if (!list.length) return;
+  const prog = $("dsProgress"); prog.hidden = false; let n = 0;
+  const rule = "渡された資料を読み、次の基準で仕分けてください。\n- 有用：今も使っている書式、単価・歩掛、過去工事の実績、協力会社の一覧、安全書類の雛形など。\n- 不要：古い版や重複、取引のなくなった相手の資料、中身がほとんど空のもの。\n- 要確認：新旧が分からないもの、個人情報が多いもの、判断に迷うもの。\n有用な資料は、入れる先（共通・経理・経営・施工管理・監査役）も決める。不要・要確認なら入れる先は「なし」でもよい。\n次のJSONだけを返す：{\"verdict\":\"有用|不要|要確認\",\"dest\":\"共通|経理|経営|施工管理|監査役|なし\",\"reason\":\"60字以内の理由\"}\n";
+  for (let i = 0; i < list.length; i++){
+    const f = list[i]; prog.textContent = "仕分け中 " + (i+1) + " / " + list.length + " 件…";
+    try {
+      let res, mode;
+      const meta = "ファイル名：" + f.name + "\nサイズ：" + Math.round(f.size/1024) + "KB\n更新日：" + (f.lastModified ? ymd(new Date(f.lastModified)) : "不明") + "\n";
+      if (/^image\//.test(f.type)){ mode = "image"; res = await S.sample.json(rule + "\n" + meta, {images:[await shrink(f)], cache:false}); }
+      else if (/^text\//.test(f.type) || /\.(txt|csv|md|tsv|json)$/i.test(f.name)){ mode = "text"; const txt = (await f.text()).slice(0, 15000); res = await S.sample.json(rule + "\n" + meta + "\n【中身】\n" + txt, {cache:false}); }
+      else { mode = "name"; res = await S.sample.json(rule + "\n中身は読めていません。ファイル名と更新日だけで判断し、確信がなければ要確認にしてください。\n" + meta, {modelTier:"quick", cache:false}); }
+      const now = new Date().toISOString(), ref = db.collection("docsort").doc();
+      await withRetry(() => ref.set({name:f.name.slice(0,200), size:f.size, type:f.type || "", readMode:mode,
+        verdict: DS_VERDICTS.includes(res && res.verdict) ? res.verdict : "要確認", dest: DS_DESTS.includes(res && res.dest) ? res.dest : "なし",
+        reason:String((res && res.reason) || "").slice(0,300), confirmed:false, createdBy:S.myId, createdAt:now, updatedAt:now}));
+      n++;
+    } catch(e){ if (e && e.code) aiError(e); else writeError(e); if (e && e.code === "not_granted") break; }
+  }
+  prog.textContent = n + " 件を仕分けました。判定を確かめて「確定」を押してください。";
+  setTimeout(() => { prog.hidden = true; }, 7000);
+}
+function dsCsv(){
+  const list = [...S.docsort.values()].sort((a,b) => (a.createdAt||"").localeCompare(b.createdAt||""));
+  saveFile("資料仕分け_" + todayYmd() + ".csv", csvOf(["資料名","判定","入れる先","理由","確定"], list.map(d => [d.name, d.verdict, d.dest, d.reason, d.confirmed ? "確定" : "確定待ち"])));
+}
+
+/* ---------- 写真帳・工事カルテ（カード詳細） ---------- */
+const KARTE_TPL = "# 工事カルテ：<工事名>\n\n- 場所：\n- 元請／施主：\n- 工期：<着工> 〜 <完工>\n- 契約金額：\n- 実際にかかった原価：\n- 工種ごとの単価・歩掛：\n- 使った重機・人工（にんく）：\n- 見積もりと実績のズレと理由：\n\n## メモ\n（追加で残したいことがあればここに書く）";
+function extraSection(t, ro){
+  const mats = mtList(t.id), alerts = mats.reduce((a,m) => a + mtAlerts(m).length, 0);
+  const photoCount = S.notesFor === t.id ? S.notes.reduce((n,x) => n + (x.photos||[]).length, 0) : 0;
+  return h("section",{class:"sect"},
+    h("h3",null,"材料・書類"),
+    h("div",{class:"meta",style:"margin-bottom:8px;font-size:13px"},
+      h("span",{text:"材料 "+mats.length+"品目"}), alerts ? h("span",{class:"flag uncheck",text:"知らせ "+alerts+"件"}) : null,
+      t.karteAt ? h("span",{text:"工事カルテ "+fmtStamp(t.karteAt)}) : null),
+    h("div",{class:"tools"},
+      h("button",{class:"btn",type:"button",onclick(){ S.mtTask = t.id; closeTask(); location.hash = "#zairyo"; route(); }},"材料の発注管理を開く"),
+      S.downloads && photoCount ? h("button",{class:"btn",type:"button",onclick(){ exportAlbum(t, this); }},"写真帳を書き出す（"+photoCount+"枚）") : null,
+      t.karte ? h("button",{class:"btn",type:"button",onclick(){ showModal("工事カルテ："+(t.title||""), t.karte, "工事カルテ_"+(t.title||"案件")+".md"); }},"工事カルテを見る") : null,
+      !ro && S.sample ? h("button",{class:"btn ai",type:"button",onclick(){ makeKarte(t, this); }}, t.karte ? "カルテを作り直す" : "工事カルテを作る") : null));
+}
+function blobToDataUrl(b){ return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(b); }); }
+function escHtml(x){ return String(x ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+async function exportAlbum(t, btn){
+  btn.disabled = true; const label = btn.textContent; btn.textContent = "写真帳を作成中…";
+  try {
+    const snap = await db.doc("tasks/"+t.id).collection("notes").orderBy("createdAt","asc").get();
+    const items = [];
+    for (const d of snap.docs){ const n = d.data(); for (const id of (n.photos||[])) items.push({id, at:n.createdAt, text:n.text||"", author:n.author}); }
+    if (!items.length){ toast("写真がありません"); return; }
+    for (let i = 0; i < items.length; i++){
+      btn.textContent = "写真を読み込み中 " + (i+1) + " / " + items.length;
+      try { const r = await fetch("/_blob/" + items[i].id); items[i].src = r.ok ? await blobToDataUrl(await r.blob()) : ""; } catch(e){ items[i].src = ""; }
+    }
+    const pages = [];
+    for (let i = 0; i < items.length; i += 2) pages.push(items.slice(i, i+2));
+    const html = "<!doctype html><html lang=\"ja\"><meta charset=\"utf-8\"><title>工事写真帳 " + escHtml(taskLabel(t)) + "</title><style>" +
+      "@page{size:A4;margin:12mm}body{font-family:'Hiragino Sans','Yu Gothic','Noto Sans JP',sans-serif;color:#111;margin:0}" +
+      ".pg{page-break-after:always;padding:0}.cover{display:flex;flex-direction:column;justify-content:center;align-items:center;height:260mm;text-align:center}" +
+      ".cover h1{font-size:28pt;margin:0 0 10mm}.cover p{font-size:13pt;margin:2mm}.ph{display:grid;grid-template-columns:118mm 1fr;border:1px solid #333;margin-bottom:8mm;height:125mm}" +
+      ".ph .im{border-right:1px solid #333;display:flex;align-items:center;justify-content:center;background:#fafafa}.ph img{max-width:100%;max-height:123mm;object-fit:contain}" +
+      ".ph table{border-collapse:collapse;width:100%;font-size:10pt}.ph th,.ph td{border-bottom:1px solid #999;padding:2mm;text-align:left;vertical-align:top}.ph th{width:16mm;background:#f2f2f2;white-space:nowrap}" +
+      "</style><body><div class=\"pg cover\"><h1>工事写真帳</h1><p>工事名：" + escHtml(t.project || "") + "</p><p>" + escHtml(t.title || "") + "</p><p>工期：" + escHtml(t.start || "未定") + " 〜 " + escHtml(t.due || "未定") + "</p><p>写真 " + items.length + " 枚 · 作成 " + todayYmd() + "</p></div>" +
+      pages.map((pg, pi) => "<div class=\"pg\">" + pg.map((it, k) => "<div class=\"ph\"><div class=\"im\">" + (it.src ? "<img src=\"" + it.src + "\" alt=\"\">" : "（画像を読み込めませんでした）") + "</div><table>" +
+        "<tr><th>No.</th><td>" + (pi*2 + k + 1) + "</td></tr><tr><th>工事名</th><td>" + escHtml(t.project || t.title || "") + "</td></tr><tr><th>撮影日</th><td>" + escHtml(fmtStamp(it.at)) + "</td></tr>" +
+        "<tr><th>内容</th><td>" + escHtml(it.text).replace(/\n/g,"<br>") + "</td></tr><tr><th>記録者</th><td>" + escHtml(nameOf(it.author)) + "</td></tr></table></div>").join("") + "</div>").join("") +
+      "</body></html>";
+    await saveFile("工事写真帳_" + (t.project || t.title || "案件") + ".html", html);
+  } catch(e){ writeError(e); }
+  finally { btn.disabled = false; btn.textContent = label; }
+}
+async function makeKarte(t, btn){
+  btn.disabled = true;
+  try {
+    const notes = (await db.doc("tasks/"+t.id).collection("notes").orderBy("createdAt","asc").get()).docs.map(d => d.data()).filter(n => n.text).slice(-40);
+    const rc = [...S.receipts.values()].filter(r => r.taskId === t.id), byCat = {};
+    for (const r of rc) byCat[r.category||"未分類"] = (byCat[r.category||"未分類"]||0) + (Number(r.total)||0);
+    const mats = mtList(t.id).filter(m => m.status !== "不要");
+    const crewDays = {}; for (const a of S.assign.values()) if (a.taskId === t.id && S.crews.has(a.crewId)){ const c = S.crews.get(a.crewId); const k = (c.name||"")+"（"+(c.trade||c.kind||"")+"）"; crewDays[k] = (crewDays[k]||0) + 1; }
+    const total = rc.reduce((a,r) => a + (Number(r.total)||0), 0);
+    const rec = "【案件】" + taskLabel(t) + "\n状態：" + (SMAP[t.status]||SMAP.todo).label + "\n工期：" + (t.start||"未定") + " 〜 " + (t.due||"未定") + "\n予算（実行予算）：" + (t.budget ? yen(t.budget) : "未設定") + "\nメモ：" + (t.desc||"") +
+      "\n\n【経費の実績】合計 " + yen(total) + "（" + rc.length + "件）\n" + Object.entries(byCat).map(([c,v]) => "- " + c + "：" + yen(v)).join("\n") +
+      "\n\n【材料】\n" + (mats.length ? mats.map(m => { const c = mtCalc(m); return "- " + (m.name||"") + " " + (m.spec||"") + "：" + c.need + (m.unit||"") + "、単価 " + (m.price ? yen(m.price) : "未記入") + "、金額 " + (c.amount ? yen(c.amount) : "未記入") + "、" + m.status; }).join("\n") : "記録なし") +
+      "\n\n【人工（手配表の延べ日数）】\n" + (Object.keys(crewDays).length ? Object.entries(crewDays).map(([k,v]) => "- " + k + "：" + v + "人工").join("\n") : "記録なし") +
+      "\n\n【現場の記録（古い順）】\n" + (notes.length ? notes.map(n => "- " + fmtStamp(n.createdAt) + "：" + String(n.text).replace(/\n/g," ").slice(0,200)).join("\n") : "記録なし");
+    const input = "完工した工事について、次の記録をもとに「工事カルテ」をマークダウンで作成してください。\n- 雛形の各項目を、分かっている情報で埋める。不明な項目は「（未確認）」と書き、空欄にしない。\n- 予算（見積もり）と実績がずれた工種は、金額差と理由を具体的に書く。理由が記録から分からなければ「理由は未確認」と書く。\n- 単価・歩掛は、材料と人工の記録から分かる範囲で計算して書く。\n- マークダウン本文だけを出力する。\n\n【雛形】\n" + (S.prompts.karteTpl || KARTE_TPL) + "\n\n" + rec;
+    const ta = showModal("工事カルテ（作成中…）", "AIが記録を読んでいます…", null);
+    const {text} = await S.sample(input, {cache:false, onText:({text}) => { ta.value = text; }});
+    await patchTask(t.id, {karte:text, karteAt:new Date().toISOString()});
+    showModal("工事カルテ：" + (t.title||""), text, "工事カルテ_" + (t.title||"案件") + ".md");
+    toast("工事カルテを作成してカードに保存しました。Obsidian にはコピーして貼り付けてください");
+  } catch(e){ $("modal").hidden = true; if (e && e.code) aiError(e); else writeError(e); }
+  finally { btn.disabled = false; }
 }
 
 /* ---------- wiring ---------- */
+$("mtTask").addEventListener("change", e => { S.mtTask = e.target.value; S.mtConfirm = null; render(); });
+$("mtAdd").addEventListener("click", async () => { try { S.mtFocus = await mtAddRow(); render(); } catch(e){ writeError(e); } });
+$("mtScan").addEventListener("click", () => $("mtFiles").click());
+$("mtFiles").addEventListener("change", e => { mtScan(e.target.files).finally(() => { e.target.value = ""; render(); }); });
+$("mtCsv").addEventListener("click", mtCsv);
+$("thPrev").addEventListener("click", () => { const d = parseYmd(S.thWeek); d.setDate(d.getDate()-7); S.thWeek = ymd(d); render(); });
+$("thNext").addEventListener("click", () => { const d = parseYmd(S.thWeek); d.setDate(d.getDate()+7); S.thWeek = ymd(d); render(); });
+$("thThis").addEventListener("click", () => { S.thWeek = weekStartYmd(new Date()); render(); });
+$("crewAdd").addEventListener("click", () => { S.crewEdit = "new"; $("crewForm").replaceChildren(); render(); });
+$("dsAdd").addEventListener("click", () => $("dsFiles").click());
+$("dsFiles").addEventListener("change", e => { dsClassify(e.target.files).finally(() => { e.target.value = ""; render(); }); });
+$("dsCsv").addEventListener("click", dsCsv);
+$("myDeptSel").value = S.myDept || "";
+$("myDeptSel").addEventListener("change", e => { S.myDept = e.target.value; if (DEPTS.some(d => d.id === S.myDept)) S.rkTab = S.myDept; saveFilters(); render(); });
 $("khPrev").addEventListener("click", () => { const [y,m] = S.khMonth.split("-").map(Number); S.khMonth = ym(new Date(y, m-2, 1)); render(); });
 $("khNext").addEventListener("click", () => { const [y,m] = S.khMonth.split("-").map(Number); S.khMonth = ym(new Date(y, m, 1)); render(); });
 $("khThis").addEventListener("click", () => { S.khMonth = ym(new Date()); render(); });
@@ -1502,13 +2000,14 @@ $("khCsv").addEventListener("click", exportCsv);
 $("reqNew").addEventListener("click", () => { S.reqFormOpen = true; S.reqFormTask = null; $("reqForm").replaceChildren(); render(); });
 function route(){
   const v = location.hash.replace("#","");
-  S.view = ["calendar","renraku","keihi"].includes(v) ? v : "board";
+  S.view = VIEWS.includes(v) ? v : "board";
   render();
 }
 window.addEventListener("hashchange", route);
 $("scrim").addEventListener("click", closeTask);
 document.addEventListener("keydown", e => {
   if (e.key !== "Escape") return;
+  if (!$("modal").hidden){ $("modal").hidden = true; return; }
   if (!$("lightbox").hidden){ $("lightbox").click(); return; }
   if (S.picker){ S.picker = false; renderDrawer(); return; }
   if (S.openId) closeTask();
@@ -1562,6 +2061,10 @@ route();
     if (!snap.metadata.fromCache) S.rcLoaded = true;
     render();
   }, err => { S.rcLoaded = true; console.warn(err); render(); });
+  const sub = (col, key) => db.collection(col).onSnapshot(snap => {
+    const m = new Map(); for (const d of snap.docs) m.set(d.id, {id:d.id, ...d.data()}); S[key] = m; render();
+  }, err => console.warn(err));
+  sub("materials","materials"); sub("crews","crews"); sub("assign","assign"); sub("docsort","docsort");
   db.doc("config/prompts").onSnapshot(snap => { S.prompts = (snap.exists && snap.data()) || {}; render(); }, err => console.warn(err));
   db.collection("depts").onSnapshot(snap => {
     const o = {};
