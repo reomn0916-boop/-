@@ -1428,12 +1428,12 @@ const RIBBON = [
     { name: 'その他', items: [C('hatch', 'ハッチング'), C('areafig', '求積図形'), C('north', '方位記号')] },
   ] },
   { tab: '図形編集', groups: [
-    { name: '移動複写', items: [C('move', '移動'), C('copy', '複写'), C('rotate', '回転'), C('mirror', '反転'), C('scale', '拡大縮小'), C('array', '配列複写')] },
+    { name: '移動複写', items: [C('move', '移動'), C('copy', '複写'), C('rotate', '回転'), C('mirror', '反転'), C('scale', '拡大縮小'), C('scalefit', '縮尺合わせ'), C('array', '配列複写')] },
     { name: '修正', items: [C('erase', '削除'), C('stretch', '伸縮'), C('trim', '部分消去'), C('corner', '角作成'), C('chamfer', '面取り'), C('fillet', 'R面取り'), C('break', '分割'), C('join', '結合'), C('explode', '分解')] },
     { name: '計測', items: [C('mdist', '距離'), C('mangle', '角度'), C('marea', '面積'), C('mcoord', '座標')] },
   ] },
   { tab: '土木', groups: [
-    { name: '座標', items: [C('ptable', '座標一覧'), C('regverts', '頂点を点登録'), C('fit', '座標合わせ')] },
+    { name: '座標', items: [C('ptable', '座標一覧'), C('regverts', '頂点を点登録'), C('fit', '座標合わせ'), C('scalefit', '縮尺合わせ')] },
     { name: '作図', items: [C('xsec', '横断図'), C('profile', '縦断図'), C('areatbl', '求積表')] },
     { name: '位置出し', items: [C('nige', '逃げ杭'), C('stakeTable', '杭打ち表')] },
   ] },

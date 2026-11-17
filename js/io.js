@@ -121,6 +121,29 @@ export function parseDXF(text) {
         j = k + 1;
         break;
       }
+      case 'DIMENSION': {
+        // 長さの寸法（回転・平行）だけ寸法線として読む。角度・半径などは未対応
+        const kind = num(70) & 7;
+        if (kind !== 0 && kind !== 1) { warn.add('DIMENSION（角度・半径・直径）'); break; }
+        const p10 = P(num(10), num(20)), p13 = P(num(13), num(23)), p14 = P(num(14), num(24));
+        let dir;
+        if (kind === 1) {
+          const L = Math.hypot(p14.x - p13.x, p14.y - p13.y);
+          if (L < 1e-12) break;
+          dir = { x: (p14.x - p13.x) / L, y: (p14.y - p13.y) / L };
+        } else {
+          const r = (num(50) * Math.PI) / 180; // 東から反時計回り
+          dir = { x: Math.sin(r), y: Math.cos(r) };
+        }
+        const proj = (q) => { const s = (q.x - p10.x) * dir.x + (q.y - p10.y) * dir.y; return { x: p10.x + dir.x * s, y: p10.y + dir.y * s }; };
+        const a = proj(p13), b = proj(p14);
+        if (Math.hypot(b.x - a.x, b.y - a.y) < 1e-12) break;
+        const e = { type: 'dim', layer, a, b, off: 0, pa: p13, pb: p14 };
+        const txt = str(1).replace(/\\P/g, ' ').replace(/\\[A-Za-z][^;]*;/g, '').replace(/[{}]/g, '').trim();
+        if (txt && !txt.includes('<>')) e.txt = txt; // 書き換えた寸法値だけ残す（<> は実測値）
+        out.push(e);
+        break;
+      }
       default:
         if (!['SEQEND', 'VERTEX', 'ATTRIB'].includes(type)) warn.add(type);
     }

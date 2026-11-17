@@ -3,7 +3,7 @@
 //   mode: 'point'（既定）| 'entity'（図形を選ぶ）| 'select'（対象の選択）
 //   onPoint(p, snap) / onPick(e, p) / onSelected(list) / onEnter() / onBack() / preview(R, cursor)
 //   prompt / opts（マルチボックスの設定）/ info（下の欄）/ lastPt（相対入力と直交の基準）
-import { offsetPolyline, orientation } from '../js/cogo.js';
+import { offsetPolyline, orientation, fitTransform, applyTransform } from '../js/cogo.js';
 import { LTYPES, HATCHES, explodeForDxf, dimText } from '../js/draft.js';
 import { alignPoint, alignStakes } from '../js/cogo.js';
 import { xyToLL, toDMS } from '../js/geo.js';
@@ -1072,6 +1072,161 @@ export function commandDefs(K) {
     return c;
   }
 
+  // ------------------------------------------------------------
+  // 縮尺合わせ（2点と実寸／寸法線／座標）
+  // ------------------------------------------------------------
+  const numIn = (t) => { const m = String(t ?? '').replace(/[,，\s]/g, '').match(/-?\d+(?:\.\d+)?/); return m ? Number(m[0]) : NaN; };
+  function scaleFit() {
+    const selAtStart = K.sel;
+    const c = {
+      pts: [], pairs: [], pending: null, src: null,
+      get lastPt() { return c.pending || c.pts[c.pts.length - 1] || null; },
+      buildOpts() {
+        const how = c.o?.how || 'pts';
+        const o = [{ k: 'how', label: '方法', type: 'seg', value: 'pts', options: [['pts', '2点と実寸'], ['dim', '寸法線'], ['coord', '座標']] }];
+        if (how !== 'coord') o.push({ k: 'real', label: '正しい長さ', type: 'num', value: '', unit: lenU });
+        else o.push({ k: 'rot', label: '回転・位置も合わせる', type: 'check', value: true });
+        o.push({ k: 'target', label: '対象', type: 'select', value: selAtStart.length ? 'sel' : 'all', options: [['all', 'すべて（基準点は動かさない）'], ['sel', `選択していた図形（${selAtStart.length} 個）`]] });
+        return o;
+      },
+      reset() { c.pts = []; c.pairs = []; c.pending = null; c.src = null; c.mode = (c.o?.how || 'pts') === 'dim' ? 'entity' : 'point'; },
+      filter: (e) => e.type === 'dim' || e.type === 'line' || (e.type === 'text' && Number.isFinite(numIn(e.text))),
+      cur() { return c.pts.length === 2 ? G.dist(c.pts[0], c.pts[1]) : NaN; },
+      realM() { const v = Number(c.o.real); return v > 0 ? K.inLen(v) : NaN; },
+      prompt() {
+        const how = c.o.how;
+        if (how === 'coord') {
+          if (c.pending) return `図面上の点 ${c.pairs.length + 1} の正しい座標を入力（点名 または X,Y）して Enter`;
+          return c.pairs.length >= 2 ? `次の点を指示するか、［確定］で合わせる（${c.pairs.length} 組）` : `座標が分かっている図面上の点 ${c.pairs.length + 1} を指示（2組以上）`;
+        }
+        if (how === 'dim' && !c.pts.length) return c.src ? '文字が表す長さの始点を指示' : '寸法線・線、または寸法値の文字をクリック';
+        if (c.pts.length === 0) return '長さが分かっている区間の1点目（動かさない基準点）を指示';
+        if (c.pts.length === 1) return '2点目を指示';
+        return `正しい長さを入力して Enter（今の長さ ${K.fmtLen(c.cur())} ${lenU()}${c.realM() > 0 ? `、入力済み ${K.fmtLen(c.realM())}` : ''}）`;
+      },
+      onOpt(k) { if (k === 'how') { c.opts = c.buildOpts(); for (const o of c.opts) if (c.o[o.k] === undefined) c.o[o.k] = o.value; c.reset(); } },
+      onPick(e) {
+        if (e.type === 'text') {
+          c.src = e;
+          const v = numIn(e.text);
+          c.o.real = K.fmtLen(K.dimUnit() === 'mm' ? v / 1000 : v); c.opts = [...c.opts];
+          c.mode = 'point';
+          return;
+        }
+        if (e.type === 'line') c.pts = [{ ...e.a }, { ...e.b }];
+        else {
+          // 測っている長さ（a→b）を、実際の図形の点（補助線の元）から取る
+          c.pts = [{ ...(e.pa || e.a) }, { x: (e.pa || e.a).x + (e.b.x - e.a.x), y: (e.pa || e.a).y + (e.b.y - e.a.y) }];
+          const v = numIn(e.txt);
+          if (e.txt && Number.isFinite(v)) { c.o.real = K.fmtLen(K.dimUnit() === 'mm' ? v / 1000 : v); c.opts = [...c.opts]; }
+        }
+        c.mode = 'point';
+        setTimeout(() => document.getElementById('mbInput')?.focus(), 0);
+      },
+      onPoint(p) {
+        if (c.o.how === 'coord') { c.pending = p; return; }
+        if (c.pts.length >= 2) c.pts = [];
+        if (c.pts.length === 1 && G.dist(c.pts[0], p) < 1e-9) return;
+        c.pts.push(p);
+        if (c.pts.length === 2) setTimeout(() => document.getElementById('mbInput')?.focus(), 0);
+      },
+      onInput(t) {
+        if (c.o.how === 'coord') {
+          if (!c.pending) return false;
+          const pe = K.pointByName(t);
+          let dst = pe ? { ...pe.p } : null;
+          if (!dst) { const m = t.split(',').map((s) => Number(s.trim())); if (m.length === 2 && m.every(Number.isFinite)) dst = { x: m[0], y: m[1] }; }
+          if (!dst) throw new Error(`「${t}」を座標として読めません（点名 または X,Y）`);
+          c.pairs.push({ src: c.pending, dst, label: pe ? pe.name : `${fmt(dst.x)},${fmt(dst.y)}` });
+          c.pending = null;
+          return true;
+        }
+        if (c.pts.length === 2 && Number.isFinite(Number(t))) { c.o.real = t; c.apply(); return true; }
+        return false;
+      },
+      targets() {
+        if (c.o.target === 'sel') return selAtStart.filter((e) => K.ent(e.id));
+        return K.doc.entities.filter((e) => !(e.type === 'point' && K.grpOf(e) === '基準点'));
+      },
+      coordTf() {
+        const P = c.pairs;
+        if (c.o.rot) {
+          const tf = fitTransform(P.map((q) => ({ src: q.src, dst: q.dst })), 'helmert');
+          const f = (p) => applyTransform(tf, p), o = f({ x: 0, y: 0 }), e1 = f({ x: 0, y: 1 });
+          return { f, info: { ang: G.angOf(o, e1), k: tf.scale }, k: tf.scale, rot: tf.rot, res: tf.residuals };
+        }
+        // 回転しない: 縮尺と移動だけ（最小二乗）
+        const n = P.length, sc = { x: 0, y: 0 }, dc = { x: 0, y: 0 };
+        for (const q of P) { sc.x += q.src.x / n; sc.y += q.src.y / n; dc.x += q.dst.x / n; dc.y += q.dst.y / n; }
+        let num = 0, den = 0;
+        for (const q of P) { const s = G.sub(q.src, sc), d = G.sub(q.dst, dc); num += s.x * d.x + s.y * d.y; den += s.x * s.x + s.y * s.y; }
+        const k = den > 1e-12 ? num / den : 1;
+        const f = (p) => ({ x: dc.x + (p.x - sc.x) * k, y: dc.y + (p.y - sc.y) * k });
+        return { f, info: { k }, k, rot: 0, res: P.map((q) => { const r = f(q.src); return { dx: q.dst.x - r.x, dy: q.dst.y - r.y, d: G.dist(r, q.dst) }; }) };
+      },
+      run(f, info, msg) {
+        const list = c.targets();
+        if (!list.length) { K.toast('合わせる図形がありません'); return; }
+        K.begin();
+        for (const e of list) K.replace(e, { ...G.mapEntity(e, f, info), uid: e.uid });
+        K.commit(msg);
+        K.zoomAll();
+        c.done = true;
+      },
+      apply() {
+        if (c.o.how === 'coord') {
+          if (c.pairs.length < 2) { K.toast('縮尺を求めるには、座標の分かっている点が2組以上必要です'); return; }
+          const t = c.coordTf();
+          c.run(t.f, t.info, `縮尺を合わせました（倍率 ${t.k.toFixed(6)}${c.o.rot ? `・回転 ${toDMS(Math.abs(t.rot))}` : ''}・最大のずれ ${fmt(Math.max(...t.res.map((r) => r.d)) * 1000, 1)} mm）`);
+          return;
+        }
+        const L = c.cur(), R = c.realM();
+        if (!(L > 0)) { K.toast('長さを測る2点を指示してください'); return; }
+        if (!(R > 0)) { K.toast('正しい長さを入力してください'); document.getElementById('mbInput')?.focus(); return; }
+        const k = R / L;
+        c.run(G.fScale(c.pts[0], k), { k }, `倍率 ${k.toFixed(6)} で縮尺を合わせました（${K.fmtLen(L)} → ${K.fmtLen(R)} ${lenU()}）。元に戻すときは Ctrl+Z`);
+      },
+      onEnter() {
+        if (c.o.how === 'coord' ? c.pairs.length >= 2 : c.pts.length === 2) c.apply();
+        else c.done = true;
+      },
+      canBack: () => c.pts.length > 0 || c.pairs.length > 0 || !!c.pending || !!c.src,
+      onBack() {
+        if (c.o.how === 'coord') { if (c.pending) c.pending = null; else c.pairs.pop(); return; }
+        if (c.pts.length) c.pts.pop(); else c.src = null;
+        if (!c.pts.length && c.o.how === 'dim' && !c.src) c.mode = 'entity';
+      },
+      info() {
+        if (c.o.how === 'coord') {
+          let h = '<p>図面上の点をクリック → その点の正しい座標（点名か X,Y）を入力、を2組以上。3組以上あると、ずれ（残差）で確かめられます。</p>';
+          if (c.pairs.length >= 2) {
+            const t = c.coordTf();
+            h += `<div class="mb-result">倍率 <b>${t.k.toFixed(6)}</b>${c.o.rot ? `<br>回転 ${toDMS(Math.abs(t.rot))} ${t.rot >= 0 ? '右回り' : '左回り'}` : ''}</div>`;
+            h += '<div class="tbl"><table><tr><th>#</th><th>座標</th><th>ずれ mm</th></tr>' + c.pairs.map((q, i) => `<tr><td>${i + 1}</td><td>${K.esc(q.label)}</td><td class="num">${fmt(t.res[i].d * 1000, 1)}</td></tr>`).join('') + '</table></div>';
+          } else if (c.pairs.length) h += `<div class="mb-result">1組目: ${K.esc(c.pairs[0].label)}</div>`;
+          return h;
+        }
+        let h = '<p>図面上で長さの分かっている区間（寸法の両端など）を指示し、正しい長さを入れると、その比率で図面全体を拡大・縮小します。mm で描かれた DXF（1000 倍の大きさ）もこれで合わせられます。</p>';
+        if (c.pts.length === 2) {
+          const L = c.cur(), R = c.realM();
+          h += `<div class="mb-result">今の長さ <b>${K.fmtLen(L)}</b> ${lenU()}${R > 0 ? `<br>正しい長さ <b>${K.fmtLen(R)}</b> ${lenU()}<br>倍率 <b>${(R / L).toFixed(6)}</b>` : ''}</div>`;
+        }
+        return h;
+      },
+      preview(R, h) {
+        if (c.o.how === 'coord') {
+          c.pairs.forEach((q, i) => { R.mark(q.src); R.text(q.src, `${i + 1}: ${q.label}`, 8, -8); });
+          if (c.pending) { R.mark(c.pending); R.text(c.pending, `${c.pairs.length + 1}: 座標を入力`, 8, -8); }
+          return;
+        }
+        if (c.pts.length === 1) { R.line(c.pts[0], h); R.text(h, `${K.fmtLen(G.dist(c.pts[0], h))} ${lenU()}`); }
+        if (c.pts.length === 2) { R.line(c.pts[0], c.pts[1]); R.mark(c.pts[0]); R.text(c.pts[1], `${K.fmtLen(c.cur())} ${lenU()}`); }
+      },
+    };
+    c.opts = c.buildOpts();
+    return c;
+  }
+
   const T = (title, icon, start, extra = {}) => ({ title, icon, start, ...extra });
   const sel = (title, icon, start, extra = {}) => ({ title, icon, start, needsSel: true, ...extra });
   return {
@@ -1101,6 +1256,7 @@ export function commandDefs(K) {
     rotate: sel('回転', 'rotate', () => transformCmd({ kind: 'rotate' })),
     mirror: sel('反転', 'mirror', () => transformCmd({ kind: 'mirror' })),
     scale: sel('拡大縮小', 'scale', () => transformCmd({ kind: 'scale' })),
+    scalefit: T('縮尺合わせ', 'scalefit', scaleFit, { tip: '2点と実寸・寸法線・座標で、図面の縮尺を正しい大きさに合わせる' }),
     array: sel('配列複写', 'array', arrayCmd),
     erase: T('削除', 'erase', erase),
     stretch: T('伸縮', 'stretch', stretch, { tip: '線の端を基準線まで伸ばす・縮める' }),

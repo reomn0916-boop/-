@@ -57,6 +57,7 @@ export const ICONS = {
   rotate: S('<path d="M20 12a8 8 0 1 1-3-6.2"/><path d="M17 2v4h4"/>' + dot(12, 12, 1.2)),
   mirror: S('<path d="M12 3v18" stroke-dasharray="2 2"/><path d="M9 6L3 18h6zM15 6l6 12h-6z"/>'),
   scale: S('<rect x="3" y="11" width="10" height="10"/><path d="M7 7V3h14v14h-4"/><path d="M13 11l6-6"/>'),
+  scalefit: S('<path d="M3 20h18"/><path d="M3 17v6M21 17v6"/><rect x="6" y="5" width="7" height="7" stroke-dasharray="2 1.5"/><rect x="6" y="3" width="12" height="11"/><path d="M13 8l4-4M15 4h2v2"/>'),
   array: S('<rect x="3" y="3" width="6" height="6"/><rect x="15" y="3" width="6" height="6" stroke-dasharray="2 1.5"/><rect x="3" y="15" width="6" height="6" stroke-dasharray="2 1.5"/><rect x="15" y="15" width="6" height="6" stroke-dasharray="2 1.5"/>'),
   erase: S('<path d="M8 20h12"/><path d="M4 16l9-11 7 6-8 9H8z"/><path d="M8 11l7 6"/>'),
   stretch: S('<path d="M3 20V4"/><path d="M8 12h10"/><path d="M15 9l3 3-3 3"/><path d="M21 4v16" stroke-dasharray="2 2"/>'),
