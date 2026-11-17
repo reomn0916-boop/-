@@ -389,6 +389,7 @@ select.grid-in{border-color:var(--line);background:var(--surface);min-width:88px
   <section id="view-genba" hidden>
     <div class="gb">
       <label class="gb-task">どの現場の記録ですか？<select id="gbTask"></select></label>
+      <div id="gbNew"></div>
       <button class="gb-btn" id="gbPhoto" type="button"><span class="ic" aria-hidden="true">📷</span><span>写真で記録<small>撮ってひとこと添えるだけ</small></span></button>
       <button class="gb-btn" id="gbReceipt" type="button"><span class="ic" aria-hidden="true">🧾</span><span>レシートを撮る<small>撮るだけ。確認は経理がまとめて行います</small></span></button>
       <button class="gb-btn sec" id="gbToday" type="button"><span class="ic" aria-hidden="true">👷</span><span>今日の手配と予定</span></button>
@@ -1694,7 +1695,7 @@ async function createRequest(data){
     createdBy:S.myId, createdAt:now, updatedAt:now, ...data}));
   return ref.id;
 }
-function taskLabel(t){ return t ? (t.project ? t.project+" ／ " : "")+(t.title||"（無題）") : "（削除された案件）"; }
+function taskLabel(t){ return t ? (t.project && t.project !== t.title ? t.project+" ／ " : "")+(t.title||"（無題）") : "（削除された案件）"; }
 function sortedTasks(includeId){
   return [...S.tasks.values()].filter(t => t.status !== "done" || t.id === includeId)
     .sort((a,b) => ((a.project||"")+(a.title||"")).localeCompare((b.project||"")+(b.title||""),"ja"));
@@ -2154,6 +2155,30 @@ function renderGenba(){
   }
   $("gbPhoto").disabled = ro || !S.gbTask || !assets || S.gbBusy;
   $("gbReceipt").disabled = ro || !assets || S.gbBusy;
+  $("gbTask").hidden = !tasks.length;
+  const nb = $("gbNew"), why = !db ? "共有データに接続できません。claude.ai にサインインして開き直してください。"
+    : ro ? "閲覧のみの権限のため記録できません。オーナーに「Contributor」以上の権限をもらってください。"
+    : !assets ? "この表示では写真を保存できません。オーナーに「Contributor」以上の権限をもらうか、claude.ai で開き直してください。" : "";
+  if (!tasks.length && !ro && db){
+    if (!nb.firstChild){
+      const inp = h("input",{type:"text",id:"gbNewName",placeholder:"例：〇〇公園 伐採工事",enterkeyhint:"done",style:"font-size:16px;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);width:100%"});
+      const add = async () => {
+        const name = inp.value.trim(); if (!name){ inp.focus(); return; }
+        const now = new Date().toISOString(), ref = tasksCol().doc();
+        try {
+          await withRetry(() => ref.set({title:name, project:name, status:"doing", order:Date.now(), assignee:S.myId, start:todayYmd(), due:null, desc:"", cover:null,
+            createdAt:now, createdBy:S.myId, updatedAt:now, updatedBy:S.myId}));
+          S.gbTask = ref.id; try { localStorage.setItem("anken-gbtask", ref.id); } catch(_) {}
+          nb.replaceChildren(); $("gbStatus").textContent = "「" + name + "」を登録しました。写真で記録できます。";
+        } catch(e){ writeError(e); }
+      };
+      inp.addEventListener("keydown", e => { if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229){ e.preventDefault(); add(); } });
+      nb.replaceChildren(h("div",{class:"gb-panel"},
+        h("p",{style:"margin:0;font-size:14px",text:"まだ現場が登録されていません。現場名を入れて登録すると、写真で記録できるようになります。"}),
+        inp, h("button",{class:"btn primary big",type:"button",onclick:add},"この現場を登録する")));
+    }
+  } else nb.replaceChildren();
+  if (why && !S.gbBusy && !$("gbStatus").textContent) $("gbStatus").textContent = why;
   const panel = $("gbPanel");
   if (S.gbMode === "photo" && S.gbFiles.length){
     if (panel.dataset.mode !== "photo"){
