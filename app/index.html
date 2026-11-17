@@ -267,6 +267,38 @@ select.grid-in{border-color:var(--line);background:var(--surface);min-width:88px
 .report .sum{margin:6px 0 0;font-size:13.5px}
 .report pre{margin:8px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--f-body);font-size:13px;line-height:1.7;background:var(--bg);border-radius:8px;padding:10px 12px}
 
+/* ---------- 今日・現場 ---------- */
+.td-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.td-head h2{font-family:var(--f-head);font-size:20px;margin:0}
+.td-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start}
+@media (max-width:820px){.td-grid{grid-template-columns:minmax(0,1fr)}}
+.td-grid .panel h3{display:flex;align-items:center;gap:8px}
+.td-grid .panel h3 .n{font-family:var(--f-body);font-size:12px;color:var(--muted);font-weight:400}
+.td-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.td-list button{width:100%;display:flex;align-items:center;gap:8px;text-align:left;background:transparent;border:0;padding:7px 6px;border-radius:6px;font-size:13.5px;color:var(--ink)}
+.td-list button:hover{background:var(--bg)}
+.td-list .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.td-list .sub{color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:42%;flex:0 1 auto}
+.td-list .flag,.td-list .due{flex:none}
+.td-more{margin-top:6px}
+.td-hint{font-size:12.5px;color:var(--muted);margin:0}
+.chips{display:flex;gap:4px;flex-wrap:wrap}
+.chip{font-size:11px;padding:1px 6px;border-radius:4px;background:var(--sunken);color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.chip.warn{background:var(--accent-soft);color:var(--accent)}
+.chip.bad{background:var(--danger);color:var(--surface)}
+.gb{max-width:520px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
+.gb-task{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+.gb-task select{font-size:16px;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);width:100%}
+.gb-btn{display:flex;align-items:center;gap:16px;width:100%;min-height:84px;padding:16px 20px;border-radius:14px;border:0;background:var(--accent);color:var(--accent-ink);font-size:22px;font-weight:700;font-family:var(--f-head);text-align:left;box-shadow:var(--shadow)}
+.gb-btn.sec{background:var(--surface);color:var(--ink);border:2px solid var(--line)}
+.gb-btn .ic{font-size:30px;line-height:1}
+.gb-btn small{display:block;font-size:12.5px;font-weight:400;font-family:var(--f-body);opacity:.85}
+.gb-btn:active{transform:scale(.98)}
+.gb-panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.gb-panel textarea{width:100%;min-height:80px;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:16px;background:var(--bg);color:var(--ink)}
+.gb-panel .big{min-height:56px;font-size:18px;justify-content:center}
+.gb-status{font-size:14px;color:var(--accent);text-align:center;min-height:1.4em}
+
 /* ---------- drawer ---------- */
 .scrim{position:fixed;inset:0;background:rgba(10,14,12,.38);z-index:40}
 .drawer{position:fixed;top:0;right:0;bottom:0;width:min(540px,100%);z-index:41;background:var(--surface);box-shadow:-8px 0 30px rgba(0,0,0,.18);display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);padding-right:env(safe-area-inset-right,0px)}
@@ -328,6 +360,8 @@ select.grid-in{border-color:var(--line);background:var(--surface);min-width:88px
   <div class="top-in gutter">
     <div class="brand"><h1>案件ボード</h1><small id="who"></small></div>
     <nav class="tabs" aria-label="表示切替">
+      <a href="#today" id="tab-today">今日</a>
+      <a href="#genba" id="tab-genba">現場</a>
       <a href="#board" id="tab-board">ボード</a>
       <a href="#calendar" id="tab-calendar">カレンダー</a>
       <a href="#zairyo" id="tab-zairyo">材料</a>
@@ -348,7 +382,23 @@ select.grid-in{border-color:var(--line);background:var(--surface);min-width:88px
 
 <main class="gutter">
   <p class="banner" id="banner" hidden></p>
-  <section id="view-board">
+  <section id="view-today" hidden>
+    <div class="td-head" id="tdHead"></div>
+    <div class="td-grid" id="tdGrid"></div>
+  </section>
+  <section id="view-genba" hidden>
+    <div class="gb">
+      <label class="gb-task">どの現場の記録ですか？<select id="gbTask"></select></label>
+      <button class="gb-btn" id="gbPhoto" type="button"><span class="ic" aria-hidden="true">📷</span><span>写真で記録<small>撮ってひとこと添えるだけ</small></span></button>
+      <button class="gb-btn" id="gbReceipt" type="button"><span class="ic" aria-hidden="true">🧾</span><span>レシートを撮る<small>撮るだけ。確認は経理がまとめて行います</small></span></button>
+      <button class="gb-btn sec" id="gbToday" type="button"><span class="ic" aria-hidden="true">👷</span><span>今日の手配と予定</span></button>
+      <input type="file" id="gbPhotoIn" accept="image/*" capture="environment" multiple hidden>
+      <input type="file" id="gbRcIn" accept="image/*" capture="environment" multiple hidden>
+      <p class="gb-status" id="gbStatus" role="status"></p>
+      <div id="gbPanel"></div>
+    </div>
+  </section>
+  <section id="view-board" hidden>
     <div class="board-scroll" id="boardScroll"><div class="board" id="board"></div></div>
   </section>
   <section id="view-calendar" hidden>
@@ -462,7 +512,7 @@ const STATUSES = [
 ];
 const SMAP = Object.fromEntries(STATUSES.map(s => [s.id, s]));
 const WD = ["日","月","火","水","木","金","土"];
-const VIEWS = ["board","calendar","zairyo","tehai","keihi","renraku","shiryo"];
+const VIEWS = ["today","genba","board","calendar","zairyo","tehai","keihi","renraku","shiryo"];
 const $ = id => document.getElementById(id);
 const DEPTS = [
   {id:"keiri", label:"経理",     scope:"請求書・支払・入金管理・月次の数字・資金繰り・設備投資の資金試算", hint:"月次の売上・入金・支払予定、資金残高の概況、請求の締め日"},
@@ -509,7 +559,9 @@ const S = {
   crews:new Map(), assign:new Map(), thWeek:null, crewEdit:null,
   docsort:new Map(), dsConfirm:null,
   reports:new Map(), reportSel:"", reportOpen:false,
+  gbTask:"", gbFiles:[], gbMode:null, gbBusy:false,
 };
+try { S.gbTask = localStorage.getItem("anken-gbtask") || ""; } catch(e) {}
 let db = null, user = null, assets = null, loadTimer = null;
 
 try { const p = JSON.parse(localStorage.getItem("anken-filters") || "{}"); S.fProject = p.fProject || ""; S.fMine = !!p.fMine; S.rkTab = p.rkTab || "all"; S.myDept = p.myDept || ""; } catch(e) {}
@@ -613,7 +665,7 @@ function render(){
   const vis = visibleTasks();
   $("count").textContent = S.tasks.size ? vis.length+" / "+S.tasks.size+" 件" : "";
   if (rk) $("count").textContent = "";
-  ({board:() => renderBoard(vis), calendar:() => renderCalendar(vis), zairyo:renderZairyo, tehai:renderTehai, keihi:renderKeihi, renraku:renderRenraku, shiryo:renderShiryo})[S.view]();
+  ({today:renderToday, genba:renderGenba, board:() => renderBoard(vis), calendar:() => renderCalendar(vis), zairyo:renderZairyo, tehai:renderTehai, keihi:renderKeihi, renraku:renderRenraku, shiryo:renderShiryo})[S.view]();
   renderDrawer();
 }
 
@@ -624,8 +676,8 @@ function cardEl(t){
     t.project ? h("div",{class:"proj",text:t.project}) : null,
     t.cover ? h("img",{class:"cover",src:"/_blob/"+t.cover,alt:"",loading:"lazy",draggable:"false",onerror(){ this.remove(); }}) : null,
     h("div",{class:"ttl"+(t.title?"":" untitled"),text:t.title||"（無題）"}),
-    (di || t.assignee || overBudget(t)) ? h("div",{class:"meta"},
-      overBudget(t) ? h("span",{class:"due over",text:"予算超過"}) : null,
+    cardChips(t),
+    (di || t.assignee) ? h("div",{class:"meta"},
       di ? h("span",{class:"due "+di.cls,text:di.txt}) : null,
       t.assignee ? h("span",{class:"who"}, avatarEl(t.assignee), h("span",{text:nameOf(t.assignee)})) : null
     ) : null
@@ -1145,6 +1197,14 @@ function reqForm(){
     .sort((a,b) => ((a.project||"")+(a.title||"")).localeCompare((b.project||"")+(b.title||""), "ja"));
   const task = h("select",{id:"rqTask"}, h("option",{value:""},"なし"), tasks.map(t => h("option",{value:t.id},(t.project ? t.project+" ／ " : "")+(t.title||"（無題）"))));
   task.value = S.reqFormTask || "";
+  const tpl = h("select",{id:"rqTpl"}, h("option",{value:""},"使わない（自由に書く）"), REQ_TEMPLATES.map((x,i) => h("option",{value:String(i)},x.label)));
+  tpl.addEventListener("change", () => {
+    const x = REQ_TEMPLATES[Number(tpl.value)]; if (!x) return;
+    const t = S.tasks.get(task.value), mo = (new Date().getMonth()+1) + "月";
+    from.value = x.from; to.value = x.to; money.checked = !!x.money;
+    body.value = x.body.replace(/\{案件\}/g, t ? taskLabel(t) : "（案件名）").replace(/\{月\}/g, mo);
+    body.focus(); const i = body.value.indexOf("（"); if (i >= 0) body.setSelectionRange(i, body.value.indexOf("）", i) + 1);
+  });
   const submit = h("button",{class:"btn primary",type:"submit"},"依頼を登録");
   const close = () => { S.reqFormOpen = false; S.reqFormTask = null; $("reqForm").replaceChildren(); render(); };
   const form = h("form",{class:"req-form",async onsubmit(e){
@@ -1162,6 +1222,7 @@ function reqForm(){
       close();
     } catch(err){ submit.disabled = false; writeError(err); }
   }},
+    h("label",{class:"full"},"定型文から作る", tpl),
     h("label",null,"差出", from), h("label",null,"宛先", to),
     h("label",{class:"full"},"内容", body),
     h("label",null,"期限", due), h("label",null,"関連する案件", task),
@@ -1548,9 +1609,9 @@ function rcForm(){
         h("button",{class:"btn primary",type:"button",onclick(){ save(true); }},"確認済みにして保存")),
       ro ? h("div",{class:"full"}, h("button",{class:"btn",type:"button",onclick:close},"閉じる")) : null));
 }
-async function scanReceipts(files){
+async function scanReceipts(files, progEl){
   const list = [...files]; if (!list.length) return;
-  const prog = $("khProgress"); prog.hidden = false;
+  const prog = progEl || $("khProgress"); prog.hidden = false;
   let ok = 0;
   const task = S.tasks.get(S.khProj);
   for (let i = 0; i < list.length; i++){
@@ -1581,8 +1642,8 @@ async function scanReceipts(files){
       if (e && e.code) aiError(e); else writeError(e);
     }
   }
-  prog.textContent = ok + " 枚を登録しました。内容を確認して「確認済み」にしてください。";
-  setTimeout(() => { prog.hidden = true; }, 6000);
+  prog.textContent = ok + " 枚を登録しました。" + (progEl ? "確認は経理がまとめて行います。" : "内容を確認して「確認済み」にしてください。");
+  if (!progEl) setTimeout(() => { prog.hidden = true; }, 6000);
   render();
 }
 function csvCell(x){ const s = String(x ?? ""); return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; }
@@ -2000,7 +2061,172 @@ async function makeKarte(t, btn){
   finally { btn.disabled = false; }
 }
 
+/* ---------- 定型文 ---------- */
+const REQ_TEMPLATES = [
+  {label:"出来高報告 → 請求のお願い（施工管理→経理）", from:"sekou", to:"keiri", money:true, body:"【出来高報告】{案件}の{月}の出来高は（　）%です。請求書の作成をお願いします。根拠：（出来高の内訳・写真など）"},
+  {label:"支払予定の連絡（施工管理→経理）", from:"sekou", to:"keiri", money:true, body:"【支払予定】{案件}で（材料・外注先）に（　）円の支払いが発生します。支払予定日は（　）です。支払予定に入れてください。"},
+  {label:"発注の判断のお願い（施工管理→経営）", from:"sekou", to:"keiei", money:true, body:"【発注判断】{案件}：（材料名・数量）、見込み金額（　）円。発注してよいか判断をお願いします。使用予定日は（　）です。"},
+  {label:"工程の遅れ報告（施工管理→経営）", from:"sekou", to:"keiei", money:false, body:"【工程の遅れ】{案件}：（理由）により、工程が（　）日遅れる見込みです。対応方針の判断をお願いします。"},
+  {label:"追加工事の発生（施工管理→経営）", from:"sekou", to:"keiei", money:true, body:"【追加工事】{案件}で（内容）の追加工事が発生しました。概算（　）円、元請・施主との協議が必要です。対応方針の判断をお願いします。"},
+  {label:"安全上の問題・ヒヤリハット（施工管理→経営）", from:"sekou", to:"keiei", money:false, body:"【安全】{案件}で（いつ・どこで・何が）ありました。けが人（なし／あり）。再発防止策は（　）です。確認をお願いします。"},
+  {label:"資金繰りの警告（経理→経営）", from:"keiri", to:"keiei", money:true, body:"【資金繰り】（　）月に約（　）円の資金不足が見込まれます。主な原因は（入金の遅れ・大きな支払いなど）です。対応の判断をお願いします。"},
+  {label:"設備投資の判断のお願い（経理→経営）", from:"keiri", to:"keiei", money:true, body:"【設備投資】（重機・車両名）の（購入／リース）について試算しました。毎月の返済（　）円、期間（　）か月。運転資金への影響は（　）です。判断をお願いします。"},
+  {label:"数量・手間の確認（経営→施工管理）", from:"keiei", to:"sekou", money:false, body:"【数量確認】{案件}の見積もりで、（工種）の数量と手間の確認をお願いします。図面は（　）です。（　）までに回答をお願いします。"},
+  {label:"方針の連絡（経営→全体）", from:"keiei", to:"sekou", money:false, body:"【方針】（決まったこと）。理由は（　）です。（いつから）この方針で進めてください。"},
+];
+
+/* ---------- カードの進み具合 ---------- */
+function cardChips(t){
+  const out = [], budget = Number(t.budget) || 0;
+  if (budget){ const pct = Math.round(taskSpend(t) / budget * 100); out.push(h("span",{class:"chip"+(pct > 100 ? " bad" : pct >= 80 ? " warn" : ""),title:"予算の消化率",text:(pct > 100 ? "予算超過 " : "予算 ")+pct+"%"})); }
+  const mats = mtList(t.id).filter(m => m.status === "未発注");
+  if (mats.length){ const urgent = mats.some(m => mtAlerts(m).some(a => a.t.startsWith("要発注"))); out.push(h("span",{class:"chip"+(urgent ? " warn" : ""),title:"未発注の材料",text:"未発注 "+mats.length})); }
+  if ([...S.materials.values()].some(m => m.taskId === t.id && mtAlerts(m).some(a => a.t.startsWith("納品")))) out.push(h("span",{class:"chip bad",text:"納品の問題"}));
+  const reqs = [...S.reqs.values()].filter(r => r.taskId === t.id && r.status !== "done");
+  if (reqs.length) out.push(h("span",{class:"chip"+(reqs.some(r => r.due && r.due < todayYmd()) ? " bad" : ""),title:"未完了の依頼",text:"依頼 "+reqs.length}));
+  const today = todayYmd(), crew = [...S.assign.values()].filter(a => a.taskId === t.id && a.date === today && S.crews.has(a.crewId)).length;
+  if (crew) out.push(h("span",{class:"chip",title:"今日の手配",text:"今日 "+crew+"人"}));
+  return out.length ? h("div",{class:"chips"}, out) : null;
+}
+
+/* ---------- 今日やること ---------- */
+function goTo(hash, prep){ if (prep) prep(); if (location.hash === hash) route(); else location.hash = hash; }
+function renderToday(){
+  const today = todayYmd(), tmr = ymd(new Date(Date.now() + 864e5));
+  const isSoon = d => d && d <= tmr;
+  const myTasks = [...S.tasks.values()].filter(t => S.myId && t.assignee === S.myId && t.status !== "done")
+    .sort((a,b) => (a.due||"9999").localeCompare(b.due||"9999"));
+  const myReqs = [...S.reqs.values()].filter(r => r.status !== "done" && ((S.myDept && r.to === S.myDept && r.status !== "pending") || (S.canEdit && r.status === "pending")))
+    .sort((a,b) => (b.status === "pending") - (a.status === "pending") || (a.due||"9999").localeCompare(b.due||"9999"));
+  const asg = [...S.assign.values()].filter(a => a.date === today && S.crews.has(a.crewId));
+  const mtIssues = [...S.materials.values()].map(m => ({m, al:mtAlerts(m).filter(a => a.t.startsWith("要発注") || a.t.startsWith("納品") || a.t.startsWith("要判断"))})).filter(x => x.al.length);
+  const unchecked = [...S.receipts.values()].filter(r => r.status !== "checked");
+  const soonTasks = [...S.tasks.values()].filter(t => t.status !== "done" && isSoon(t.due));
+  const soonReqs = [...S.reqs.values()].filter(r => r.status !== "done" && isSoon(r.due));
+  const name = S.myId ? nameOf(S.myId) : "";
+  const total = myTasks.length + myReqs.length;
+  $("tdHead").replaceChildren(h("h2",{text:fmtDay(today)+" の今日やること"}),
+    h("span",{class:"muted",style:"font-size:13px",text:(name && name !== "自分" ? name+"さん · " : "")+"担当 "+myTasks.length+"件 · 依頼 "+myReqs.length+"件 · 期限が近いもの "+(soonTasks.length + soonReqs.length)+"件"}));
+  const li = (main, sub, onclick, flag) => h("li",null, h("button",{type:"button",onclick}, flag || null, h("span",{class:"t",text:main}), sub ? h("span",{class:"sub",text:sub}) : null));
+  const panel = (title, n, body, more) => h("div",{class:"panel"}, h("h3",null,title, h("span",{class:"n",text:n})), body, more || null);
+  const dueChip = d => { if (!d) return null; const x = dueInfo({due:d, status:"open"}); return h("span",{class:"due "+x.cls,text:x.txt}); };
+  const report = [...S.reports.keys()].sort().reverse()[0];
+  const kids = [];
+  if (report) kids.push(panel("今朝の報告", fmtDay(report), h("p",{class:"td-hint",style:"color:var(--ink);font-size:13.5px",text:(S.reports.get(report).summary || "")}),
+    h("button",{class:"link td-more",type:"button",onclick(){ goTo("#renraku", () => { S.reportSel = report; S.reportOpen = true; }); }},"全文を見る")));
+  kids.push(panel("期限が近いもの（今日・明日）", (soonTasks.length + soonReqs.length)+"件",
+    soonTasks.length + soonReqs.length ? h("ul",{class:"td-list"},
+      soonTasks.map(t => li(taskLabel(t), null, () => openTask(t.id), dueChip(t.due))),
+      soonReqs.map(r => li(deptLabel(r.from)+" → "+(r.to ? deptLabel(r.to) : "未振り分け")+"："+(r.body||""), null, () => goTo("#renraku", () => { S.rkTab = r.to || "none"; }), dueChip(r.due)))) :
+      h("p",{class:"td-hint",text:"今日・明日が期限のカードや依頼はありません。"})));
+  kids.push(panel("自分の担当", myTasks.length+"件",
+    !S.myId ? h("p",{class:"td-hint",text:"サインインすると、自分が担当のカードがここに並びます。"}) :
+    myTasks.length ? h("ul",{class:"td-list"}, myTasks.slice(0,8).map(t => li(taskLabel(t), (SMAP[t.status]||SMAP.todo).label, () => openTask(t.id), dueChip(t.due)))) :
+      h("p",{class:"td-hint",text:"担当のカードはありません。カードの詳細で「自分にする」を押すとここに出ます。"}),
+    myTasks.length > 8 ? h("button",{class:"link td-more",type:"button",onclick(){ goTo("#board", () => { S.fMine = true; saveFilters(); }); }},"すべて見る（"+myTasks.length+"件）") : null));
+  kids.push(panel(S.myDept ? deptLabel(S.myDept)+"宛ての依頼"+(S.canEdit ? "・承認待ち" : "") : "自分宛ての依頼", myReqs.length+"件",
+    !S.myDept && !S.canEdit ? h("p",{class:"td-hint",text:"「連絡」タブの右上で自分の部署を選ぶと、自部署宛ての依頼がここに並びます。"}) :
+    myReqs.length ? h("ul",{class:"td-list"}, myReqs.slice(0,8).map(r => li((r.status === "pending" ? "【承認待ち】" : "")+(r.body||""), deptLabel(r.from)+"から",
+      () => goTo("#renraku", () => { S.rkTab = r.status === "pending" ? "pending" : (r.to || "all"); }), r.due ? dueChip(r.due) : null))) :
+      h("p",{class:"td-hint",text:"対応が必要な依頼はありません。"})));
+  kids.push(panel("今日の手配", asg.length+"人",
+    asg.length ? h("ul",{class:"td-list"}, asg.map(a => { const c = S.crews.get(a.crewId), t = S.tasks.get(a.taskId);
+      return li((c.name||"")+" → "+taskLabel(t), c.trade || c.kind || "", () => t ? openTask(t.id) : goTo("#tehai")); })) :
+      h("p",{class:"td-hint",text:"今日の手配は登録されていません。"}),
+    h("button",{class:"link td-more",type:"button",onclick(){ goTo("#tehai"); }},"手配表を開く")));
+  kids.push(panel("材料の知らせ", mtIssues.length+"件",
+    mtIssues.length ? h("ul",{class:"td-list"}, mtIssues.slice(0,8).map(({m, al}) => li((m.name||"（材料名なし）")+" "+(m.spec||""), taskLabel(S.tasks.get(m.taskId)),
+      () => goTo("#zairyo", () => { S.mtTask = m.taskId; }), h("span",{class:"flag "+al[0].c,text:al[0].t})))) :
+      h("p",{class:"td-hint",text:"要発注・納品遅れ・判断待ちの材料はありません。"})));
+  kids.push(panel("未確認の伝票", unchecked.length+"件",
+    h("p",{class:"td-hint",text: unchecked.length ? "合計 "+yen(unchecked.reduce((a,r) => a + (Number(r.total)||0), 0))+"。現場で撮ったレシートは、経理が中身を確かめて「確認済み」にします。" : "確認待ちの伝票はありません。"}),
+    unchecked.length ? h("button",{class:"link td-more",type:"button",onclick(){ goTo("#keihi", () => { const d = unchecked.map(r => rcMonth(r)).filter(Boolean).sort()[0]; if (d) S.khMonth = d; }); }},"経費を開く") : null));
+  $("tdGrid").replaceChildren(...kids);
+}
+
+/* ---------- 現場モード ---------- */
+function renderGenba(){
+  const sel = $("gbTask"), tasks = sortedTasks(S.gbTask), ro = !S.canWrite || !db;
+  if (!S.gbTask || !S.tasks.has(S.gbTask)) S.gbTask = (tasks.find(t => t.assignee === S.myId) || tasks[0] || {}).id || "";
+  if (sel !== document.activeElement){
+    sel.replaceChildren(...(tasks.length ? tasks.map(t => h("option",{value:t.id},taskLabel(t))) : [h("option",{value:""},"案件がありません")]));
+    sel.value = S.gbTask;
+  }
+  $("gbPhoto").disabled = ro || !S.gbTask || !assets || S.gbBusy;
+  $("gbReceipt").disabled = ro || !assets || S.gbBusy;
+  const panel = $("gbPanel");
+  if (S.gbMode === "photo" && S.gbFiles.length){
+    if (panel.dataset.mode !== "photo"){
+      const ta = h("textarea",{id:"gbText",placeholder:"ひとこと（任意）例：No.5〜8 伐採完了。根株は明日処理"});
+      panel.replaceChildren(h("div",{class:"gb-panel"},
+        h("div",{class:"thumbs"}, S.gbFiles.map(f => h("div",{class:"th"}, h("img",{src:f.url,alt:"撮った写真"})))), ta,
+        h("button",{class:"btn primary big",type:"button",onclick(){ genbaPost(ta.value.trim()); }},"この現場に記録する"),
+        h("button",{class:"btn big",type:"button",onclick(){ gbReset(); render(); }},"やめる")));
+      panel.dataset.mode = "photo";
+    }
+  } else if (S.gbMode === "today"){
+    const today = todayYmd(), asg = [...S.assign.values()].filter(a => a.date === today && S.crews.has(a.crewId));
+    const tasksToday = [...S.tasks.values()].filter(t => t.status !== "done" && (t.start||t.due) && (!t.start || t.start <= today) && (!t.due || t.due >= today));
+    panel.replaceChildren(h("div",{class:"gb-panel"},
+      h("h3",{style:"margin:0;font-family:var(--f-head)",text:fmtDay(today)+" の手配"}),
+      asg.length ? h("ul",{class:"td-list"}, asg.map(a => { const c = S.crews.get(a.crewId); return h("li",{style:"padding:6px;font-size:15px",text:(c.name||"")+"（"+(c.trade||c.kind||"")+"） → "+taskLabel(S.tasks.get(a.taskId))}); })) : h("p",{class:"td-hint",text:"今日の手配は登録されていません。"}),
+      h("h3",{style:"margin:6px 0 0;font-family:var(--f-head)",text:"今日 工期中の現場"}),
+      tasksToday.length ? h("ul",{class:"td-list"}, tasksToday.map(t => h("li",{style:"padding:6px;font-size:15px",text:taskLabel(t)}))) : h("p",{class:"td-hint",text:"工期中の現場はありません。"}),
+      h("button",{class:"btn big",type:"button",onclick(){ S.gbMode = null; render(); }},"閉じる")));
+    panel.dataset.mode = "today";
+  } else { panel.replaceChildren(); panel.dataset.mode = ""; }
+}
+function gbReset(){ S.gbFiles.forEach(f => URL.revokeObjectURL(f.url)); S.gbFiles = []; S.gbMode = null; $("gbPanel").dataset.mode = ""; }
+async function genbaPost(text){
+  if (S.gbBusy) return; S.gbBusy = true; const st = $("gbStatus"); render();
+  try {
+    const photos = [];
+    for (let i = 0; i < S.gbFiles.length; i++){
+      st.textContent = "写真を送信中 " + (i+1) + " / " + S.gbFiles.length;
+      const blob = await shrink(S.gbFiles[i].file);
+      photos.push((await withRetry(() => assets.upload(blob, blob.type ? undefined : {type:"image/jpeg"}))).id);
+    }
+    const now = new Date().toISOString();
+    await withRetry(() => db.doc("tasks/"+S.gbTask).collection("notes").doc().set({text, photos, author:S.myId, createdAt:now}));
+    await patchTask(S.gbTask, {lastNoteAt:now, ...(photos.length ? {cover:photos[0]} : {})});
+    st.textContent = "記録しました（写真 " + photos.length + " 枚）";
+    gbReset();
+  } catch(e){ st.textContent = "送信できませんでした。電波の良い場所でもう一度お試しください。"; console.warn(e); }
+  finally { S.gbBusy = false; render(); }
+}
+async function genbaReceipt(files){
+  const list = [...files]; if (!list.length) return;
+  S.gbBusy = true; render(); const st = $("gbStatus");
+  try {
+    if (S.sample){ S.khProj = S.gbTask; await scanReceipts(list, st); }
+    else {
+      let n = 0; const t = S.tasks.get(S.gbTask);
+      for (let i = 0; i < list.length; i++){
+        st.textContent = "レシートを送信中 " + (i+1) + " / " + list.length;
+        const blob = await shrink(list[i]);
+        const photo = (await withRetry(() => assets.upload(blob, blob.type ? undefined : {type:"image/jpeg"}))).id;
+        const now = new Date().toISOString(), ref = db.collection("receipts").doc();
+        await withRetry(() => ref.set({kind:"レシート", date:todayYmd(), vendor:"", items:"", total:0, tax10:null, tax8:null, invoiceNo:"", category:"雑費", payment:"不明",
+          taskId: t ? t.id : null, project: t ? (t.project||"") : "", memo:"現場で撮影（未入力）", photo, status:"unchecked", createdBy:S.myId, createdAt:now, updatedAt:now}));
+        n++;
+      }
+      st.textContent = n + " 枚を送りました。中身は経理が入力・確認します。";
+    }
+  } catch(e){ st.textContent = "送信できませんでした。電波の良い場所でもう一度お試しください。"; console.warn(e); }
+  finally { S.gbBusy = false; render(); }
+}
+
 /* ---------- wiring ---------- */
+$("gbTask").addEventListener("change", e => { S.gbTask = e.target.value; try { localStorage.setItem("anken-gbtask", S.gbTask); } catch(_) {} });
+$("gbPhoto").addEventListener("click", () => { $("gbStatus").textContent = ""; $("gbPhotoIn").click(); });
+$("gbPhotoIn").addEventListener("change", e => {
+  for (const f of e.target.files) S.gbFiles.push({file:f, url:URL.createObjectURL(f)});
+  e.target.value = ""; if (S.gbFiles.length){ S.gbMode = "photo"; $("gbPanel").dataset.mode = ""; } render();
+  setTimeout(() => { const t = $("gbText"); if (t) t.focus(); }, 50);
+});
+$("gbReceipt").addEventListener("click", () => { $("gbStatus").textContent = ""; $("gbRcIn").click(); });
+$("gbRcIn").addEventListener("change", e => { const f = [...e.target.files]; e.target.value = ""; genbaReceipt(f); });
+$("gbToday").addEventListener("click", () => { const open = S.gbMode === "today"; gbReset(); S.gbMode = open ? null : "today"; render(); });
 $("mtTask").addEventListener("change", e => { S.mtTask = e.target.value; S.mtConfirm = null; render(); });
 $("mtAdd").addEventListener("click", async () => { try { S.mtFocus = await mtAddRow(); render(); } catch(e){ writeError(e); } });
 $("mtScan").addEventListener("click", () => $("mtFiles").click());
@@ -2026,7 +2252,7 @@ $("khCsv").addEventListener("click", exportCsv);
 $("reqNew").addEventListener("click", () => { S.reqFormOpen = true; S.reqFormTask = null; $("reqForm").replaceChildren(); render(); });
 function route(){
   const v = location.hash.replace("#","");
-  S.view = VIEWS.includes(v) ? v : "board";
+  S.view = VIEWS.includes(v) ? v : "today";
   render();
 }
 window.addEventListener("hashchange", route);
