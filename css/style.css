@@ -240,3 +240,31 @@ input.mini { width: 80px; height: 34px; font-size: 15px; padding: 0 8px; border:
   #printArea .tbl table { font-size: 9pt; }
   #printArea .tbl th, #printArea .tbl td { border: 1px solid #999; padding: 2px 6px; }
 }
+
+/* ---------- 位置出し・逃げ ---------- */
+.mini-label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.mini-label select, #nigeMode {
+  height: 36px; font-size: 15px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); padding: 0 6px;
+}
+#nigeMode { flex: 1; min-width: 0; }
+#nigeRow input.mini, #ptRow input.mini { margin-left: 0; width: 64px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.chip-btn { border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 999px; padding: 5px 12px; font-size: 13px; }
+.chip-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tag { display: inline-block; font-size: 10px; padding: 0 5px; border-radius: 4px; margin-left: 4px; vertical-align: 1px; color: #fff; }
+.tag.g-基準点 { background: #2563eb; } .tag.g-位置出し { background: #334155; } .tag.g-逃げ { background: #ea580c; } .tag.g-その他 { background: #94a3b8; }
+.fit-pair { border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; margin: 8px 0; }
+.fit-pair h4 { margin: 2px 0; font-size: 13px; }
+.fit-pair .field { margin: 6px 0; }
+#fitResult { margin: 8px 0; line-height: 1.6; }
+#simaGroups .toggle { padding: 6px 4px; }
+.help ol li { font-size: 14px; line-height: 1.6; margin-bottom: 4px; }
+
+/* 11 個のツールを1行に収める */
+#tools { gap: 0; padding-left: 2px; padding-right: 2px; overflow-x: hidden; }
+.tool { min-width: 0; padding: 4px 0; font-size: 10.5px; overflow: hidden; }
+.tool span { font-size: 19px; }
+/* ダイアログ内のチェックボックス */
+.modal { overflow-y: auto; max-height: 92vh; }
+.modal label.toggle { display: flex; align-items: center; gap: 10px; color: var(--fg); }
+.modal .toggle input { display: inline-block; width: 20px; height: 20px; margin: 0; flex: 0 0 auto; }

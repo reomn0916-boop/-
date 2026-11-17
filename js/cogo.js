@@ -304,3 +304,69 @@ export function invertTransform(tf, p) {
   const x = p.x - tf.tx, y = p.y - tf.ty;
   return { x: (tf.a * x + tf.b * y) / k, y: (-tf.b * x + tf.a * y) / k };
 }
+
+// ============================================================
+// 逃げ（オフセット）
+// ============================================================
+/** 多角形の向き: 正 = 時計回り（図面上で右回り＝内側が右） */
+export function orientation(pts) {
+  let s = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i], q = pts[(i + 1) % pts.length];
+    s += p.x * q.y - q.x * p.y;
+  }
+  return s;
+}
+
+/**
+ * 連続線・多角形を w（進行方向の右 +・左 −）だけ平行移動した頂点列。
+ * 角は隣り合う辺の平行線の交点（留め）にする。
+ */
+export function offsetPolyline(pts, w, closed = false) {
+  const n = pts.length;
+  const segs = [];
+  const m = closed ? n : n - 1;
+  for (let i = 0; i < m; i++) {
+    const a = pts[i], b = pts[(i + 1) % n];
+    const L = dist(a, b);
+    if (L < 1e-12) { segs.push(null); continue; }
+    const nr = { x: -(b.y - a.y) / L, y: (b.x - a.x) / L };
+    segs.push({ a: { x: a.x + w * nr.x, y: a.y + w * nr.y }, b: { x: b.x + w * nr.x, y: b.y + w * nr.y } });
+  }
+  const out = [];
+  for (let j = 0; j < n; j++) {
+    const prev = closed ? segs[(j - 1 + m) % m] : segs[j - 1];
+    const next = closed ? segs[j % m] : segs[j];
+    let p = null;
+    if (prev && next) {
+      const r = intersect(prev.a, prev.b, next.a, next.b);
+      p = r ? r.p : next.a;
+    } else if (next) p = next.a;
+    else if (prev) p = prev.b;
+    out.push(p || { ...pts[j] });
+  }
+  return out;
+}
+
+/** 点 p から、方向 from→p の延長上に d 進んだ点 */
+export function extendFrom(from, p, d) {
+  const L = dist(from, p);
+  return { x: p.x + ((p.x - from.x) / L) * d, y: p.y + ((p.y - from.y) / L) * d };
+}
+
+/** 変換を図形に適用（位置合わせ用）。角度は DXF 形式（東から反時計回り・度） */
+export function transformEntity(e, tf) {
+  const T = (p) => { const q = applyTransform(tf, p); return { ...p, x: q.x, y: q.y }; };
+  const k = tf.scale ?? Math.hypot(tf.a, tf.b);
+  const rot = Math.atan2(tf.b, tf.a) * R2D;
+  switch (e.type) {
+    case 'point': e.p = T(e.p); break;
+    case 'line': case 'dim': e.a = T(e.a); e.b = T(e.b); break;
+    case 'poly': e.pts = e.pts.map(T); break;
+    case 'circle': e.c = T(e.c); e.r *= k; break;
+    case 'arc': e.c = T(e.c); e.r *= k; e.a0 = norm360(e.a0 - rot); e.a1 = norm360(e.a1 - rot); break;
+    case 'text': e.p = T(e.p); if (e.h) e.h *= k; break;
+    case 'align': e.ips = e.ips.map(T); e.radii = (e.radii || []).map((r) => r * k); break;
+  }
+  return e;
+}

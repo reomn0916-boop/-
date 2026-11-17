@@ -46,7 +46,27 @@
 
   <div id="cmdbar" hidden>
     <div id="cmdHint"></div>
-    <div class="row">
+    <div class="row" id="ptRow" hidden>
+      <label class="mini-label">種別
+        <select id="ptGrp">
+          <option value="位置出し">位置出し</option>
+          <option value="基準点">基準点</option>
+          <option value="逃げ">逃げ</option>
+          <option value="その他">その他</option>
+        </select>
+      </label>
+      <label class="mini-label">頭文字 <input id="ptPrefix" type="text" class="mini" maxlength="8"></label>
+    </div>
+    <div class="row" id="nigeRow" hidden>
+      <select id="nigeMode">
+        <option value="corner">角・交点（辺の延長）</option>
+        <option value="ext">線の延長（両端）</option>
+        <option value="par">平行（外側/内側）</option>
+      </select>
+      <label class="mini-label">距離 <input id="nigeDist" type="text" class="mini" placeholder="1"></label>
+      <span class="small">m</span>
+    </div>
+    <div class="row" id="cmdRow">
       <input id="cmd" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="">
       <button id="cmdOk" class="btn primary">入力</button>
     </div>
@@ -65,6 +85,7 @@
     <button data-tool="measure" class="tool"><span>↔</span>距離</button>
     <button data-tool="angle" class="tool"><span>∠</span>角度</button>
     <button data-tool="area" class="tool"><span>▱</span>面積</button>
+    <button data-tool="nige" class="tool"><span>⇉</span>逃げ</button>
     <button id="btnCalc" class="tool"><span>∑</span>計算</button>
     <button id="btnGps" class="tool"><span>⌖</span>GPS</button>
     <button id="btnUndo" class="tool"><span>↶</span>戻す</button>
@@ -76,6 +97,12 @@
     <div class="menu-group">
       <button data-act="new">新規作成</button>
       <button data-act="rename">名前を変更</button>
+    </div>
+    <div class="menu-group">
+      <h3>現場（位置出し）</h3>
+      <button data-act="openFit">図面を現場の座標に合わせる</button>
+      <button data-act="toolNige">逃げ杭を作る</button>
+      <button data-act="openSima">SIMA で書き出す・送る</button>
     </div>
     <div class="menu-group">
       <h3>計算・帳票</h3>
@@ -93,7 +120,7 @@
     <div class="menu-group">
       <h3>書き出し</h3>
       <button data-act="saveDxf">DXF で書き出す</button>
-      <button data-act="saveSima">座標を SIMA で書き出す</button>
+      <button data-act="openSima">座標を SIMA で書き出す</button>
       <button data-act="saveCsv">座標を CSV で書き出す</button>
       <button data-act="saveJson">プロジェクトを保存（.json）</button>
     </div>
@@ -119,9 +146,16 @@
     <h2>座標一覧</h2>
     <p class="small" id="listInfo"></p>
     <div id="ptList"></div>
+    <div class="chips" id="listFilter">
+      <button class="chip-btn active" data-grp="">すべて</button>
+      <button class="chip-btn" data-grp="基準点">基準点</button>
+      <button class="chip-btn" data-grp="位置出し">位置出し</button>
+      <button class="chip-btn" data-grp="逃げ">逃げ</button>
+      <button class="chip-btn" data-grp="その他">その他</button>
+    </div>
     <div class="row">
       <button class="btn" data-act="saveCsv">CSV</button>
-      <button class="btn" data-act="saveSima">SIMA</button>
+      <button class="btn primary" data-act="openSima">SIMA</button>
       <button class="btn" data-close>閉じる</button>
     </div>
   </dialog>
@@ -191,6 +225,35 @@
     </div>
   </dialog>
 
+  <!-- 図面の位置合わせ -->
+  <dialog id="fitDialog" class="modal tall">
+    <h2>図面を現場の座標に合わせる</h2>
+    <p class="small">図面上の点と、それに対応する現場の点（座標が分かっている点・GPS）を指定すると、図面を移動・回転して現場の座標に合わせます。1組で移動のみ、2組で移動＋回転。<b>種別が「基準点」の点と GPS で取った点は動きません。</b></p>
+    <div id="fitPairs"></div>
+    <label class="toggle"><input type="checkbox" id="fitScale"> 縮尺も合わせる（通常はオフ）</label>
+    <div id="fitResult" class="small"></div>
+    <div class="row">
+      <button class="btn" id="fitCheck">確認</button>
+      <button class="btn primary" id="fitApply">合わせる</button>
+      <button class="btn" data-close>閉じる</button>
+    </div>
+  </dialog>
+
+  <!-- SIMA 出力 -->
+  <dialog id="simaDialog" class="modal tall">
+    <h2>SIMA で書き出す</h2>
+    <label>ファイル名 <input id="simaName" type="text"></label>
+    <p class="small">書き出す点の種別</p>
+    <div id="simaGroups"></div>
+    <label class="toggle"><input type="checkbox" id="simaArea"> 閉じた図形を区画（画地）として出力</label>
+    <p class="small" id="simaInfo"></p>
+    <div class="row">
+      <button class="btn" data-close>閉じる</button>
+      <button class="btn" id="simaShare" hidden>共有（メール・LINE など）</button>
+      <button class="btn primary" id="simaSave">保存</button>
+    </div>
+  </dialog>
+
   <!-- 系の選択 -->
   <dialog id="zoneDialog" class="modal">
     <h2>平面直角座標系</h2>
@@ -210,6 +273,14 @@
     <label>X（北）m <input id="ptX" type="text"></label>
     <label>Y（東）m <input id="ptY" type="text"></label>
     <label>Z（高さ）m <input id="ptZ" type="text"></label>
+    <label>種別
+      <select id="ptGrpEdit">
+        <option value="位置出し">位置出し</option>
+        <option value="基準点">基準点</option>
+        <option value="逃げ">逃げ</option>
+        <option value="その他">その他</option>
+      </select>
+    </label>
     <div class="row">
       <button class="btn" data-close>キャンセル</button>
       <button class="btn primary" id="ptOk">保存</button>
@@ -233,6 +304,14 @@
         <li><code>@5&lt;45-30-15</code> … 角度は 度-分-秒 でも可</li>
         <li>円ツールで中心を決めた後、数字だけ入力すると半径</li>
       </ul>
+      <h3>現場での位置出し → 逃げ → SIMA</h3>
+      <ol>
+        <li>メニュー「図面を読み込む」で DXF を入れる。基準点・境界杭の座標は「座標を読み込む」で SIMA/CSV から（種別「基準点」になります）。</li>
+        <li>図面が任意座標なら、メニュー「図面を現場の座標に合わせる」で、図面上の点と現場の点を1〜2組指定して合わせる。</li>
+        <li>「点」ツールで図面の角・交点をタップして位置出し点を登録（種別・頭文字を指定可）。</li>
+        <li>「逃げ」ツールで逃げ杭を作る：<b>角・交点</b>（辺の延長上）／<b>線の延長</b>（両端の先）／<b>平行</b>（図形をタップ → 逃げる側をタップ）。距離は <code>1</code> や <code>1,2</code>（2本ずつ）。点名は「K1-1」のように元の点名に番号が付きます。</li>
+        <li>メニュー「SIMA で書き出す・送る」で、種別を選んで保存・共有。TS やほかの CAD に取り込めます。</li>
+      </ol>
       <h3>計算（∑ ボタン）</h3>
       <ul>
         <li><b>座標計算</b>：逆計算・放射・杭打ち（TS の夾角と距離）・交点・距離交会（引照点から杭の復元）・垂線・幅杭</li>

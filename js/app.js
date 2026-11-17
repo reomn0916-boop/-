@@ -1,6 +1,6 @@
 import { llToXY, xyToLL, guessZone, toDMS, parseAngle, azimuth, ZONES, ZONE_AREAS } from './geo.js';
-import { decodeText, parseDXF, toDXF, parseSIMA, toSIMA, parseCSV, toCSV } from './io.js';
-import { buildAlignment, alignPoint, alignStation, alignStakes, fmtStation, intersect, fitTransform, applyTransform, invertTransform } from './cogo.js';
+import { decodeText, parseDXF, toDXF, parseSIMA, toSIMA, parseCSV, toCSV, encodeSJIS } from './io.js';
+import { buildAlignment, alignPoint, alignStation, alignStakes, fmtStation, intersect, fitTransform, applyTransform, invertTransform, orientation, offsetPolyline, extendFrom, transformEntity } from './cogo.js';
 import { initCalc, reportHtml, reportsCSV } from './calc.js';
 
 // ============================================================
@@ -21,7 +21,7 @@ const doc = {
   gpsCal: { mode: 'rigid', pairs: [] }, // GPS 基準点補正
 };
 const view = { x: 0, y: 0, s: 10 }; // 画面中心のワールド座標と拡大率 (px/m)
-const settings = { snap: true, onLine: true, showLen: true, showNames: true, dark: false, prefix: 'P', stakes: true };
+const settings = { snap: true, onLine: true, showLen: true, showNames: true, dark: false, prefix: 'P', stakes: true, ptGrp: '位置出し', nigeMode: 'corner', nigeDist: '1' };
 
 let tool = 'select';
 let temp = [];          // 作図中の点
@@ -32,6 +32,12 @@ let hover = null;       // マウスホバー位置 / 最後のタップ位置�
 let overlay = null;     // 計算結果の表示 {lines, pts, align}
 let picker = null;      // 図から点を選ぶモード {cb, multi, done}
 let calTf = null;       // GPS 補正の変換
+let nigePending = null; // 平行逃げ: 図形を選んだ後、側を待つ {e}
+
+// 点の種別
+const GROUPS = ['基準点', '位置出し', '逃げ', 'その他'];
+const grpOf = (e) => (GROUPS.includes(e.grp) ? e.grp : 'その他');
+const GRP_COLOR = { 基準点: '#2563eb', 逃げ: '#ea580c' };
 const undoStack = [];
 const redoLimit = 60;
 
@@ -479,14 +485,27 @@ function drawEntity(e, isSel) {
   switch (e.type) {
     case 'point': {
       const s = toS(e.p);
-      ctx.beginPath(); ctx.moveTo(s.sx - 6, s.sy); ctx.lineTo(s.sx + 6, s.sy); ctx.moveTo(s.sx, s.sy - 6); ctx.lineTo(s.sx, s.sy + 6); ctx.stroke();
-      ctx.beginPath(); ctx.arc(s.sx, s.sy, 3, 0, Math.PI * 2); ctx.stroke();
-      if (settings.showNames && e.name) label(e.name, s.sx + 7, s.sy - 6, color);
+      const g = grpOf(e);
+      const col = isSel ? color : (GRP_COLOR[g] || color);
+      ctx.strokeStyle = col; ctx.fillStyle = col;
+      if (g === '基準点') {
+        ctx.beginPath(); ctx.moveTo(s.sx, s.sy - 8); ctx.lineTo(s.sx + 7, s.sy + 5); ctx.lineTo(s.sx - 7, s.sy + 5); ctx.closePath(); ctx.stroke();
+        ctx.beginPath(); ctx.arc(s.sx, s.sy, 1.8, 0, Math.PI * 2); ctx.fill();
+      } else if (g === '逃げ') {
+        ctx.beginPath(); ctx.arc(s.sx, s.sy, 5, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(s.sx - 3.5, s.sy - 3.5); ctx.lineTo(s.sx + 3.5, s.sy + 3.5); ctx.moveTo(s.sx + 3.5, s.sy - 3.5); ctx.lineTo(s.sx - 3.5, s.sy + 3.5); ctx.stroke();
+      } else {
+        ctx.beginPath(); ctx.moveTo(s.sx - 6, s.sy); ctx.lineTo(s.sx + 6, s.sy); ctx.moveTo(s.sx, s.sy - 6); ctx.lineTo(s.sx, s.sy + 6); ctx.stroke();
+        ctx.beginPath(); ctx.arc(s.sx, s.sy, 3, 0, Math.PI * 2); ctx.stroke();
+      }
+      if (settings.showNames && e.name) label(e.name, s.sx + 7, s.sy - 6, col);
       break;
     }
     case 'line': {
       const a = toS(e.a), b = toS(e.b);
+      if (e.dash) { ctx.strokeStyle = isSel ? color : '#ea580c'; ctx.setLineDash([5, 4]); ctx.lineWidth = isSel ? 2.5 : 1.2; }
       ctx.beginPath(); ctx.moveTo(a.sx, a.sy); ctx.lineTo(b.sx, b.sy); ctx.stroke();
+      ctx.setLineDash([]);
       if (settings.showLen && !e.layer) segLabel(e.a, e.b, color);
       break;
     }
@@ -505,10 +524,12 @@ function drawEntity(e, isSel) {
       ctx.beginPath();
       e.pts.forEach((p, i) => { const s = toS(p); i ? ctx.lineTo(s.sx, s.sy) : ctx.moveTo(s.sx, s.sy); });
       if (e.closed) ctx.closePath();
+      if (e.dash) { ctx.strokeStyle = isSel ? color : '#ea580c'; ctx.setLineDash([5, 4]); ctx.lineWidth = isSel ? 2.5 : 1.2; }
       if (e.area) {
         ctx.save(); ctx.globalAlpha = isSel ? 0.18 : 0.08; ctx.fill(); ctx.restore();
       }
       ctx.stroke();
+      ctx.setLineDash([]);
       if (settings.showLen && !e.layer) for (const [a, b] of segments(e)) segLabel(a, b, color);
       if (e.area) {
         let cx = 0, cy = 0; e.pts.forEach((p) => { cx += p.x; cy += p.y; });
@@ -723,20 +744,20 @@ function entityInfo(e) {
   const layer = e.layer ? [['画層', esc(e.layer)]] : [];
   switch (e.type) {
     case 'point':
-      return `<h4>点 ${esc(e.name || '')}</h4>` + kv([
+      return `<h4>点 ${esc(e.name || '')}<span class="tag g-${grpOf(e)}">${grpOf(e)}</span></h4>` + kv([
         ['X（北）', fmt(e.p.x), 'big'], ['Y（東）', fmt(e.p.y), 'big'], ['Z', fmt(e.z || 0)], ...llRows(e.p), ...guideRows(e.p), ...layer,
       ]) + `<div class="panel-actions"><button class="btn" data-act="editPoint">編集</button>${del}</div>`;
     case 'line': case 'dim':
       return `<h4>${e.type === 'dim' ? '寸法線' : '線'}</h4>` + kv([
         ['長さ', fmt(dist(e.a, e.b)) + ' m', 'big'], ['方向角', toDMS(azimuth(e.a, e.b))],
         ['始点', `${fmt(e.a.x)}, ${fmt(e.a.y)}`], ['終点', `${fmt(e.b.x)}, ${fmt(e.b.y)}`], ...layer,
-      ]) + `<div class="panel-actions"><button class="btn" data-act="regVerts">端点を点登録</button>${del}</div>`;
+      ]) + `<div class="panel-actions"><button class="btn" data-act="regVerts">端点を点登録</button><button class="btn" data-act="nigeExtSel">両端に延長逃げ</button>${del}</div>`;
     case 'poly': {
       const rows = [['頂点数', e.pts.length], ['延長', fmt(polyLen(e.pts, e.closed)) + ' m', e.closed ? '' : 'big']];
       if (e.closed) rows.unshift(['面積', fmt(polyArea(e.pts), 3) + ' ㎡', 'big']);
       if (e.closed) rows.push(['（坪）', fmt(polyArea(e.pts) / 3.305785, 2) + ' 坪']);
       return `<h4>${e.closed ? '閉じた図形' : '連続線'}</h4>` + kv([...rows, ...layer]) +
-        `<div class="panel-actions">${e.closed ? '<button class="btn primary" data-act="areaTable">求積表</button>' : ''}<button class="btn" data-act="regVerts">頂点を点登録</button>${del}</div>`;
+        `<div class="panel-actions">${e.closed ? '<button class="btn primary" data-act="areaTable">求積表</button>' : ''}<button class="btn" data-act="regVerts">頂点を点登録</button><button class="btn" data-act="nigeCornersSel">全部の角に逃げ</button>${del}</div>`;
     }
     case 'align': {
       const g = alignGeom(e);
@@ -775,11 +796,18 @@ const HINTS = {
   measure: ['始点をタップ', 'X,Y'],
   angle: ['1点目をタップ（頂点は2点目）', 'X,Y'],
   area: ['頂点を順にタップ → 完了', '座標 X,Y / @ΔX,ΔY / @距離<方向角'],
+  nige: ['', ''],
+};
+const NIGE_HINT = {
+  corner: '角・交点をタップ → 各辺の延長上に逃げを作ります',
+  ext: '線をタップ → 両端の延長上に逃げを作ります',
+  par: '線・図形をタップ → 逃げる側をタップ（平行に逃がす）',
 };
 
 function setTool(t) {
   tool = t;
   temp = [];
+  nigePending = null;
   result = null;
   if (t !== 'select') { selected = null; selPoint = null; }
   document.querySelectorAll('[data-tool]').forEach((b) => b.classList.toggle('active', b.dataset.tool === t));
@@ -800,9 +828,14 @@ function updateCmd() {
   if (tool === 'angle' && temp.length === 1) hint = '頂点（角の中心）をタップ';
   if (tool === 'angle' && temp.length === 2) hint = '3点目をタップ';
   if (tool === 'area' && temp.length) hint = `頂点 ${temp.length} 点・面積 ${fmt(temp.length > 2 ? polyArea(temp) : 0, 2)}㎡ → 完了で確定`;
+  if (tool === 'nige') hint = nigePending ? '逃げる側（外側・内側）をタップ' : NIGE_HINT[settings.nigeMode];
+  $('#ptRow').hidden = tool !== 'point';
+  $('#nigeRow').hidden = tool !== 'nige';
+  $('#cmdRow').hidden = tool === 'nige';
   $('#cmdHint').textContent = hint;
   $('#cmd').placeholder = tool === 'circle' && temp.length ? '半径（m）' : ph;
   $('#cmdUndoPt').hidden = !['line', 'area', 'angle', 'measure', 'circle'].includes(tool);
+  if (tool === 'nige') $('#cmdUndoPt').hidden = true;
   $('#cmdClose').hidden = tool !== 'line';
   $('#cmdDone').hidden = !['line', 'area'].includes(tool);
   $('#cmdBtns').hidden = $('#cmdUndoPt').hidden && $('#cmdDone').hidden;
@@ -813,8 +846,8 @@ function place(p, kind) {
   switch (tool) {
     case 'point': {
       snapshot();
-      const e = addEntity({ type: 'point', p, name: nextPointName(), z: 0 }, { snap: false });
-      toast(`${e.name}  X ${fmt(p.x)}  Y ${fmt(p.y)}`);
+      const e = addEntity({ type: 'point', p, name: nextPointName(), z: 0, grp: settings.ptGrp }, { snap: false });
+      toast(`${e.name}（${e.grp}）  X ${fmt(p.x)}  Y ${fmt(p.y)}`);
       save();
       break;
     }
@@ -1013,7 +1046,7 @@ function onTap(sx, sy) {
     else if (picker.multi) {
       const e = addEntity({ type: 'point', p: sn.p, name: nextPointName(), z: 0 });
       val = e.name; save();
-    } else val = `${sn.p.x.toFixed(3)},${sn.p.y.toFixed(3)}`;
+    } else val = `${sn.p.x.toFixed(4)},${sn.p.y.toFixed(4)}`;
     hover = sn; updateHud(sn.p, sn.kind);
     picker.cb(val);
     if (picker.multi) { picker.count = (picker.count || 0) + 1; $('#pickMsg').textContent = `${picker.count} 点選択済み（${val}）→ 続けてタップ / 完了`; draw(); }
@@ -1030,9 +1063,168 @@ function onTap(sx, sy) {
     renderPanel(); draw();
     return;
   }
+  if (tool === 'nige') { nigeTap(sx, sy); return; }
   const sn = snapAt(sx, sy);
   updateHud(sn.p, sn.kind);
   place(sn.p, sn.kind);
+}
+
+// ============================================================
+// 逃げ杭
+// ============================================================
+function nigeDistances() {
+  const ds = String(settings.nigeDist || '1').split(/[,、\s]+/).filter(Boolean).map(Number);
+  if (!ds.length || ds.some((d) => !Number.isFinite(d) || d === 0)) { toast('逃げ距離を数値で入力してください（例 1 または 1,2）'); return null; }
+  return ds;
+}
+const EPS = 1e-4;
+const GRP_RANK = { 位置出し: 0, その他: 1, 逃げ: 2, 基準点: 3 };
+/** その位置にある点（重なっている場合は 位置出し > その他 > 逃げ > 基準点 の順） */
+function pointEntAt(p) {
+  let best = null;
+  for (const e of doc.entities) {
+    if (e.type !== 'point' || dist(e.p, p) >= EPS) continue;
+    if (!best || GRP_RANK[grpOf(e)] < GRP_RANK[grpOf(best)]) best = e;
+  }
+  return best;
+}
+/** その位置の点名（なければ位置出し点として登録） */
+function ensurePoint(p) {
+  const e = pointEntAt(p);
+  if (e) return e.name;
+  return addEntity({ type: 'point', p: { x: p.x, y: p.y }, name: nextPointName(), z: 0, grp: '位置出し' }, { snap: false }).name;
+}
+function nigeName(base) {
+  const used = new Set(doc.entities.filter((e) => e.type === 'point').map((e) => e.name));
+  let i = 1;
+  while (used.has(`${base}-${i}`)) i++;
+  return `${base}-${i}`;
+}
+function addNige(base, p) {
+  if (pointEntAt(p)) return null; // 同じ位置に既にある
+  return addEntity({ type: 'point', p: { x: p.x, y: p.y }, name: nigeName(base), z: 0, grp: '逃げ' }, { snap: false });
+}
+function addNigeLine(a, b) { addEntity({ type: 'line', a: { ...a }, b: { ...b }, layer: '逃げ', dash: true }, { snap: false }); }
+/** 逃げ杭を作る元になる線分（逃げ・寸法・路線は除く） */
+function baseSegments(only) {
+  const out = [];
+  for (const e of only ? [only] : doc.entities) {
+    if (!visible(e) || e.layer === '逃げ' || e.type === 'dim' || e.type === 'align') continue;
+    for (const s of segments(e)) if (dist(s[0], s[1]) > EPS) out.push(s);
+  }
+  return out;
+}
+/** 角・交点 P での逃げ方向（単位ベクトル）の一覧 */
+function cornerDirs(P, segs) {
+  const dirs = [];
+  const add = (u) => { if (!dirs.some((v) => Math.abs(v.x - u.x) < 1e-6 && Math.abs(v.y - u.y) < 1e-6)) dirs.push(u); };
+  for (const [a, b] of segs) {
+    const L = dist(a, b), u = { x: (b.x - a.x) / L, y: (b.y - a.y) / L };
+    if (dist(P, a) < EPS) add({ x: -u.x, y: -u.y });
+    else if (dist(P, b) < EPS) add(u);
+    else if (dist(projectOnSeg(P, a, b).q, P) < EPS) { add(u); add({ x: -u.x, y: -u.y }); }
+  }
+  return dirs;
+}
+function nigeCorner(P, segs, ds) {
+  const dirs = cornerDirs(P, segs);
+  if (!dirs.length) return 0;
+  const base = ensurePoint(P);
+  let n = 0;
+  for (const u of dirs) {
+    let far = null;
+    for (const d of ds) {
+      const q = { x: P.x + u.x * d, y: P.y + u.y * d };
+      if (addNige(base, q)) n++;
+      if (!far || Math.abs(d) > far.d) far = { q, d: Math.abs(d) };
+    }
+    addNigeLine(P, far.q);
+  }
+  return n;
+}
+function nigeExt(a, b, ds) {
+  let n = 0;
+  for (const [from, end] of [[b, a], [a, b]]) {
+    const base = ensurePoint(end);
+    let far = null;
+    for (const d of ds) { const q = extendFrom(from, end, d); if (addNige(base, q)) n++; if (!far || Math.abs(d) > far.d) far = { q, d: Math.abs(d) }; }
+    addNigeLine(end, far.q);
+  }
+  return n;
+}
+/** 平行逃げ: 図形 e を、tap 位置のある側へ d だけ */
+function nigeParallel(e, tapW, ds) {
+  let pts, closed;
+  if (e.type === 'line') { pts = [e.a, e.b]; closed = false; }
+  else if (e.type === 'poly') { pts = e.pts; closed = !!e.closed && e.pts.length > 2; }
+  else { toast('線か連続線・多角形を選んでください'); return 0; }
+  let side;
+  if (closed) {
+    const inside = pointInPoly(tapW, pts);
+    const cw = orientation(pts) > 0; // 時計回りなら内側が右
+    side = (inside === cw) ? 1 : -1;
+  } else {
+    // 一番近い辺に対してどちら側か
+    let best = null;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const { q } = projectOnSeg(tapW, pts[i], pts[i + 1]);
+      const d = dist(q, tapW);
+      if (!best || d < best.d) best = { d, a: pts[i], b: pts[i + 1] };
+    }
+    const cr = -(tapW.x - best.a.x) * (best.b.y - best.a.y) + (tapW.y - best.a.y) * (best.b.x - best.a.x);
+    side = cr >= 0 ? 1 : -1;
+  }
+  let n = 0;
+  const bases = pts.map((p) => ensurePoint(p));
+  for (const d of ds) {
+    const off = offsetPolyline(pts, side * Math.abs(d), closed);
+    off.forEach((q, i) => { if (addNige(bases[i], q)) n++; });
+    if (closed) addEntity({ type: 'poly', pts: off, closed: true, layer: '逃げ', dash: true }, { snap: false });
+    else addEntity({ type: 'poly', pts: off, closed: false, layer: '逃げ', dash: true }, { snap: false });
+  }
+  return n;
+}
+function nigeDone(n, what) {
+  if (n) toast(`${what}：逃げ杭 ${n} 本を作りました`);
+  else toast('作れる逃げがありませんでした（同じ位置に点があるか、線が見つかりません）');
+  renderNames(); changed(); updateCmd();
+}
+function nigeTap(sx, sy) {
+  const ds = nigeDistances(); if (!ds) return;
+  const mode = settings.nigeMode;
+  if (mode === 'corner') {
+    const sn = snapAt(sx, sy, { ignoreTemp: true });
+    if (!sn.kind || sn.kind === '線上' || sn.kind === '円周上') { toast('線の端点・角・交点をタップしてください'); return; }
+    hover = sn; updateHud(sn.p, sn.kind);
+    const segs = baseSegments();
+    if (!cornerDirs(sn.p, segs).length) { toast('この点につながる線がありません'); return; }
+    snapshot();
+    nigeDone(nigeCorner(sn.p, segs, ds), '角・交点');
+    return;
+  }
+  const e = hitTest(sx, sy);
+  if (mode === 'ext') {
+    if (!e || !['line', 'poly'].includes(e.type) || e.layer === '逃げ') { toast('線をタップしてください'); return; }
+    const w = toW(sx, sy);
+    let best = null;
+    for (const [a, b] of segments(e)) { const d = dist(projectOnSeg(w, a, b).q, w); if (!best || d < best.d) best = { d, a, b }; }
+    snapshot();
+    nigeDone(nigeExt(best.a, best.b, ds), '線の延長');
+    return;
+  }
+  // 平行
+  if (!nigePending) {
+    if (!e || !['line', 'poly'].includes(e.type) || e.layer === '逃げ') { toast('線・図形をタップしてください'); return; }
+    nigePending = { id: e.id };
+    selected = e.id;
+    updateCmd(); draw();
+    return;
+  }
+  const tgt = getEnt(nigePending.id);
+  nigePending = null; selected = null;
+  if (!tgt) { updateCmd(); return; }
+  snapshot();
+  nigeDone(nigeParallel(tgt, toW(sx, sy), ds), '平行');
 }
 
 // ============================================================
@@ -1133,8 +1325,8 @@ function openCal() {
 // ============================================================
 // ファイル
 // ============================================================
-function download(name, text, type = 'text/plain') {
-  const blob = new Blob([text], { type });
+function download(name, data, type = 'text/plain') {
+  const blob = data instanceof Blob ? data : new Blob([data], { type });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = name;
@@ -1177,7 +1369,7 @@ $('#fileDxf').addEventListener('change', async (ev) => {
     if (!entities.length) { toast('読み込める図形がありませんでした'); return; }
     snapshot();
     for (const e of entities) {
-      if (e.type === 'point' && !e.name) e.name = nextPointName();
+      if (e.type === 'point') { if (!e.name) e.name = nextPointName(); e.grp = 'その他'; }
       addEntity(e, { snap: false });
     }
     if (doc.name === '無題') { doc.name = f.name.replace(/\.dxf$/i, ''); updateTitle(); }
@@ -1191,9 +1383,9 @@ $('#filePts').addEventListener('change', async (ev) => {
   const pts = /\.sim$/i.test(f.name) || /^A01,/m.test(f.text) ? parseSIMA(f.text) : parseCSV(f.text);
   if (!pts.length) { toast('座標が見つかりませんでした'); return; }
   snapshot();
-  for (const q of pts) addEntity({ type: 'point', p: { x: q.x, y: q.y }, z: q.z, name: q.name || nextPointName() }, { snap: false });
+  for (const q of pts) addEntity({ type: 'point', p: { x: q.x, y: q.y }, z: q.z, name: q.name || nextPointName(), grp: '基準点' }, { snap: false });
   changed(); fitAll();
-  toast(`${pts.length} 点を読み込みました`);
+  toast(`${pts.length} 点を「基準点」として読み込みました（座標一覧で種別を変更できます）`);
 });
 
 $('#fileJson').addEventListener('change', async (ev) => {
@@ -1231,11 +1423,12 @@ function openPointDialog(e) {
   $('#ptX').value = e.p.x.toFixed(3);
   $('#ptY').value = e.p.y.toFixed(3);
   $('#ptZ').value = (e.z || 0).toFixed(3);
+  $('#ptGrpEdit').value = grpOf(e);
   $('#ptOk').onclick = () => {
     const x = Number($('#ptX').value), y = Number($('#ptY').value), z = Number($('#ptZ').value || 0);
     if (!Number.isFinite(x) || !Number.isFinite(y)) { toast('数値を入力してください'); return; }
     snapshot();
-    e.name = $('#ptName').value.trim(); e.p = { x, y }; e.z = Number.isFinite(z) ? z : 0;
+    e.name = $('#ptName').value.trim(); e.p = { x, y }; e.z = Number.isFinite(z) ? z : 0; e.grp = $('#ptGrpEdit').value;
     $('#ptDialog').close(); changed();
   };
   $('#ptDialog').showModal();
@@ -1255,15 +1448,22 @@ $('#zoneOk').addEventListener('click', () => {
   $('#zoneDialog').close(); renderPanel(); draw();
 });
 
+let listGrp = '';
 function renderList() {
-  const pts = doc.entities.filter((e) => e.type === 'point');
-  $('#listInfo').textContent = `${pts.length} 点` + (doc.zone ? ` ・ ${doc.zone}系` : '');
+  const all = doc.entities.filter((e) => e.type === 'point');
+  const pts = listGrp ? all.filter((e) => grpOf(e) === listGrp) : all;
+  document.querySelectorAll('#listFilter [data-grp]').forEach((b) => b.classList.toggle('active', b.dataset.grp === listGrp));
+  $('#listInfo').textContent = `${pts.length} 点` + (listGrp ? `（全 ${all.length} 点）` : '') + (doc.zone ? ` ・ ${doc.zone}系` : '');
   $('#ptList').innerHTML = pts.length
     ? '<table><thead><tr><th>点名</th><th>X（北）</th><th>Y（東）</th></tr></thead><tbody>' +
-      pts.map((e) => `<tr data-id="${e.id}"><td>${esc(e.name)}</td><td class="num">${fmt(e.p.x)}</td><td class="num">${fmt(e.p.y)}</td></tr>`).join('') +
+      pts.map((e) => `<tr data-id="${e.id}"><td>${esc(e.name)}<span class="tag g-${grpOf(e)}">${grpOf(e).slice(0, 2)}</span></td><td class="num">${fmt(e.p.x)}</td><td class="num">${fmt(e.p.y)}</td></tr>`).join('') +
       '</tbody></table>'
     : '<p class="small">まだ点がありません。「点」ツールや GPS で追加できます。</p>';
 }
+$('#listFilter').addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-grp]'); if (!b) return;
+  listGrp = b.dataset.grp; renderList();
+});
 $('#ptList').addEventListener('click', (ev) => {
   const tr = ev.target.closest('tr[data-id]'); if (!tr) return;
   const e = getEnt(Number(tr.dataset.id)); if (!e) return;
@@ -1288,10 +1488,23 @@ const actions = {
   openDxf() { $('#fileDxf').click(); },
   openPts() { $('#filePts').click(); },
   openJson() { $('#fileJson').click(); },
-  saveDxf() { download(safeName() + '.dxf', toDXF(exportEntities()), 'application/dxf'); },
-  saveSima() {
-    const pts = pointList(); if (!pts.length) { toast('点がありません'); return; }
-    download(safeName() + '.sim', toSIMA(pts, doc.name));
+  saveDxf() { download(safeName() + '.dxf', encodeSJIS(toDXF(exportEntities())), 'application/dxf'); },
+  openSima() { openSima(); },
+  openFit() { openFit(); },
+  toolNige() { setTool('nige'); },
+  nigeCornersSel() {
+    const e = getEnt(selected); const ds = nigeDistances(); if (!e || !ds) return;
+    const segs = baseSegments(e);
+    snapshot();
+    let n = 0;
+    const verts = e.type === 'poly' ? e.pts : [e.a, e.b];
+    for (const p of verts) n += nigeCorner(p, segs, ds);
+    nigeDone(n, `全部の角（${verts.length}）`);
+  },
+  nigeExtSel() {
+    const e = getEnt(selected); const ds = nigeDistances(); if (!e || !ds || e.type !== 'line') return;
+    snapshot();
+    nigeDone(nigeExt(e.a, e.b, ds), '線の延長');
   },
   saveCsv() {
     const pts = pointList(); if (!pts.length) { toast('点がありません'); return; }
@@ -1308,7 +1521,7 @@ const actions = {
   editPoint() { const e = getEnt(selected); if (e) openPointDialog(e); },
   regPoint() {
     if (!selPoint) return;
-    const e = addEntity({ type: 'point', p: selPoint.p, name: nextPointName(), z: 0 });
+    const e = addEntity({ type: 'point', p: selPoint.p, name: nextPointName(), z: 0, grp: settings.ptGrp });
     selected = e.id; selPoint = null; toast(`${e.name} を登録しました`); changed();
   },
   regVerts() {
@@ -1317,7 +1530,7 @@ const actions = {
     const pts = verts(e).filter((p) => !existing.some((q) => dist(q.p, p) < 1e-4));
     if (!pts.length) { toast('すべて登録済みです'); return; }
     snapshot();
-    for (const p of pts) addEntity({ type: 'point', p: { ...p }, name: nextPointName(), z: 0 }, { snap: false });
+    for (const p of pts) addEntity({ type: 'point', p: { ...p }, name: nextPointName(), z: 0, grp: settings.ptGrp }, { snap: false });
     toast(`${pts.length} 点を登録しました`); changed();
   },
   keepDim() {
@@ -1328,14 +1541,14 @@ const actions = {
   clearResult() { result = null; temp = []; updateCmd(); renderPanel(); draw(); },
   gpsAvg() {
     startAvg((r) => {
-      const e = addEntity({ type: 'point', p: r.p, name: nextPointName(), z: 0, gps: { acc: r.acc, n: r.n } });
+      const e = addEntity({ type: 'point', p: r.p, name: nextPointName(), z: 0, grp: 'その他', gps: { acc: r.acc, n: r.n } });
       toast(`${e.name} を登録（${r.n}回平均・精度目安 ±${fmt(r.acc, 1)}m）`);
       changed();
     }, '平均中');
   },
   gpsAdd() {
     if (!gps.fix) return;
-    const e = addEntity({ type: 'point', p: { ...gps.fix.p }, name: nextPointName(), z: 0, gps: { acc: gps.fix.acc, n: 1 } });
+    const e = addEntity({ type: 'point', p: { ...gps.fix.p }, name: nextPointName(), z: 0, grp: 'その他', gps: { acc: gps.fix.acc, n: 1 } });
     toast(`${e.name} を登録（精度目安 ±${fmt(gps.fix.acc, 1)}m）`); changed();
   },
   openCal() { openCal(); },
@@ -1455,7 +1668,7 @@ function addPoints(list) {
   snapshot();
   let first = null;
   for (const q of list) {
-    const e = addEntity({ type: 'point', p: { x: q.p.x, y: q.p.y }, z: q.z || 0, name: uniqueName(q.name || nextPointName()) }, { snap: false });
+    const e = addEntity({ type: 'point', p: { x: q.p.x, y: q.p.y }, z: q.z || 0, name: uniqueName(q.name || nextPointName()), grp: q.grp || 'その他' }, { snap: false });
     first = first || e;
   }
   toast(list.length === 1 ? `${first.name} を登録しました` : `${list.length} 点を登録しました`);
@@ -1482,7 +1695,7 @@ function showOverlay(ov) {
 }
 const calc = initCalc({
   resolve: resolvePt,
-  allPoints: () => doc.entities.filter((e) => e.type === 'point' && visible(e)).map((e) => ({ p: { ...e.p }, z: e.z || 0, label: e.name })),
+  allPoints: (grp) => doc.entities.filter((e) => e.type === 'point' && visible(e) && (!grp || grpOf(e) === grp)).map((e) => ({ p: { ...e.p }, z: e.z || 0, label: e.name })),
   selectedVerts: () => {
     const e = getEnt(selected);
     if (!e || e.type !== 'poly') return null;
@@ -1567,9 +1780,127 @@ $('#calClear').addEventListener('click', () => {
   doc.gpsCal.pairs = []; recomputeCal(); save(); renderCal(); renderPanel(); draw();
 });
 
+// ---------- SIMA 出力 ----------
+function simaData() {
+  const groups = [...document.querySelectorAll('#simaGroups input:checked')].map((i) => i.value);
+  const ents = doc.entities.filter((e) => e.type === 'point' && groups.includes(grpOf(e)));
+  const pts = ents.map((e) => ({ name: e.name, x: e.p.x, y: e.p.y, z: e.z || 0 }));
+  const areas = [];
+  if ($('#simaArea').checked) {
+    let k = 0;
+    for (const e of doc.entities) {
+      if (e.type !== 'poly' || !e.closed || e.layer === '逃げ' || !visible(e)) continue;
+      k++;
+      const idx = e.pts.map((p, i) => {
+        let j = pts.findIndex((q) => Math.abs(q.x - p.x) < EPS && Math.abs(q.y - p.y) < EPS);
+        if (j < 0) { pts.push({ name: `区画${k}-${i + 1}`, x: p.x, y: p.y, z: 0 }); j = pts.length - 1; }
+        return j;
+      });
+      areas.push({ name: `区画${k}`, idx });
+    }
+  }
+  return { pts, areas };
+}
+function updateSimaInfo() {
+  const { pts, areas } = simaData();
+  $('#simaInfo').textContent = `${pts.length} 点` + (areas.length ? `・区画 ${areas.length}` : '') + ' を Shift_JIS で書き出します。';
+}
+function openSima() {
+  const counts = Object.fromEntries(GROUPS.map((g) => [g, 0]));
+  for (const e of doc.entities) if (e.type === 'point') counts[grpOf(e)]++;
+  $('#simaGroups').innerHTML = GROUPS.map((g) => `<label class="toggle"><input type="checkbox" value="${g}" ${counts[g] ? 'checked' : ''}> <span class="tag g-${g}">${g}</span> ${counts[g]} 点</label>`).join('');
+  $('#simaName').value = safeName();
+  $('#simaShare').hidden = !(navigator.canShare && navigator.canShare({ files: [new File(['x'], 'a.sim', { type: 'text/plain' })] }));
+  updateSimaInfo();
+  $('#simaDialog').showModal();
+}
+function simaFile() {
+  const { pts, areas } = simaData();
+  if (!pts.length) { toast('書き出す点がありません'); return null; }
+  const name = ($('#simaName').value.trim() || safeName()).replace(/[\\/:*?"<>|]/g, '_').replace(/\.sim$/i, '') + '.sim';
+  return new File([encodeSJIS(toSIMA(pts, doc.name, areas))], name, { type: 'text/plain' });
+}
+$('#simaGroups').addEventListener('change', updateSimaInfo);
+$('#simaArea').addEventListener('change', updateSimaInfo);
+$('#simaSave').addEventListener('click', () => { const f = simaFile(); if (f) { download(f.name, f); toast(`${f.name} を保存しました`); } });
+$('#simaShare').addEventListener('click', async () => {
+  const f = simaFile(); if (!f) return;
+  try { await navigator.share({ files: [f], title: f.name }); } catch (err) { if (err.name !== 'AbortError') toast('共有できませんでした: ' + err.message); }
+});
+
+// ---------- 図面の位置合わせ ----------
+const fitState = [{ src: '', dst: '' }, { src: '', dst: '' }];
+function renderFit() {
+  $('#fitPairs').innerHTML = fitState.map((q, i) => `
+    <div class="fit-pair"><h4>${i + 1}組目${i ? '（向きを合わせる）' : '（移動の基準）'}</h4>
+      <label class="field"><span>図面上の点</span><div class="in"><input data-fit="${i}" data-side="src" value="${esc(q.src)}" list="ptNames" autocomplete="off" autocapitalize="off" placeholder="点名 / X,Y"><button class="pick" data-fpick="${i}" data-side="src">📍</button></div></label>
+      <label class="field"><span>現場の点（座標が分かっている点・GPS）</span><div class="in"><input data-fit="${i}" data-side="dst" value="${esc(q.dst)}" list="ptNames" autocomplete="off" autocapitalize="off" placeholder="点名 / X,Y / GPS"><button class="pick" data-fpick="${i}" data-side="dst">📍</button></div></label>
+    </div>`).join('');
+}
+function fitCompute() {
+  const pairs = [];
+  for (const q of fitState) {
+    if (!q.src.trim() && !q.dst.trim()) continue;
+    if (!q.src.trim() || !q.dst.trim()) throw new Error('図面上の点と現場の点を組で入力してください');
+    pairs.push({ src: resolvePt(q.src).p, dst: resolvePt(q.dst).p, sl: q.src, dl: q.dst });
+  }
+  if (!pairs.length) throw new Error('1組以上入力してください');
+  const tf = fitTransform(pairs, pairs.length < 2 ? 'shift' : $('#fitScale').checked ? 'helmert' : 'rigid');
+  const shift = applyTransform(tf, pairs[0].src);
+  let html = `1組目の移動量：ΔX ${fmt(shift.x - pairs[0].src.x)} / ΔY ${fmt(shift.y - pairs[0].src.y)} m`;
+  if (pairs.length >= 2) {
+    const dS = dist(pairs[0].src, pairs[1].src), dD = dist(pairs[0].dst, pairs[1].dst);
+    html += `<br>回転：${toDMS(tf.rot, 1)}${$('#fitScale').checked ? `・縮尺 ${tf.scale.toFixed(6)}` : ''}`;
+    html += `<br>2点間の距離：図面 ${fmt(dS)} m ／ 現場 ${fmt(dD)} m（差 <b>${fmt(Math.round((dD - dS) * 1000) || 0, 0)} mm</b>）`;
+    html += `<br>合わせた後のずれ：${tf.residuals.map((r, i) => `${i + 1}組目 ${fmt(Math.round(r.d * 1000) || 0, 0)} mm`).join('・')}`;
+  }
+  return { tf, html };
+}
+function openFit() { renderNames(); renderFit(); $('#fitResult').innerHTML = ''; $('#fitDialog').showModal(); }
+$('#fitPairs').addEventListener('input', (ev) => {
+  const i = ev.target.dataset.fit; if (i == null) return;
+  fitState[Number(i)][ev.target.dataset.side] = ev.target.value;
+});
+$('#fitPairs').addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-fpick]'); if (!b) return;
+  ev.preventDefault();
+  const i = Number(b.dataset.fpick), side = b.dataset.side;
+  $('#fitDialog').close();
+  pick((v) => { fitState[i][side] = v; }, false, () => { renderFit(); $('#fitDialog').showModal(); });
+});
+$('#fitCheck').addEventListener('click', () => {
+  try { $('#fitResult').innerHTML = fitCompute().html; } catch (err) { $('#fitResult').innerHTML = `<span class="err">${esc(err.message)}</span>`; }
+});
+$('#fitApply').addEventListener('click', () => {
+  let r;
+  try { r = fitCompute(); } catch (err) { $('#fitResult').innerHTML = `<span class="err">${esc(err.message)}</span>`; return; }
+  snapshot();
+  let n = 0;
+  for (const e of doc.entities) {
+    if (e.type === 'point' && (grpOf(e) === '基準点' || e.gps)) continue;
+    transformEntity(e, r.tf); n++;
+  }
+  // 形状キャッシュはオブジェクト単位なので、路線は作り直す
+  doc.entities = doc.entities.map((e) => (e.type === 'align' ? { ...e } : e));
+  fitState.forEach((q) => { q.src = ''; q.dst = ''; });
+  $('#fitDialog').close();
+  changed(); fitAll();
+  toast(`図面を現場の座標に合わせました（${n} 個の図形・元に戻す可）`);
+});
+
+// ---------- 点ツール・逃げツールの設定 ----------
+$('#ptGrp').value = settings.ptGrp;
+$('#ptGrp').addEventListener('change', () => { settings.ptGrp = $('#ptGrp').value; saveSettings(); });
+$('#ptPrefix').value = settings.prefix || 'P';
+$('#ptPrefix').addEventListener('change', () => { settings.prefix = $('#ptPrefix').value.trim() || 'P'; $('#optPrefix').value = settings.prefix; saveSettings(); });
+$('#nigeMode').value = settings.nigeMode;
+$('#nigeMode').addEventListener('change', () => { settings.nigeMode = $('#nigeMode').value; nigePending = null; selected = null; saveSettings(); updateCmd(); draw(); });
+$('#nigeDist').value = settings.nigeDist;
+$('#nigeDist').addEventListener('change', () => { settings.nigeDist = $('#nigeDist').value.trim() || '1'; saveSettings(); });
+
 // 設定
 $('#optPrefix').value = settings.prefix || 'P';
-$('#optPrefix').addEventListener('change', () => { settings.prefix = $('#optPrefix').value.trim() || 'P'; saveSettings(); });
+$('#optPrefix').addEventListener('change', () => { settings.prefix = $('#optPrefix').value.trim() || 'P'; $('#ptPrefix').value = settings.prefix; saveSettings(); });
 const optMap = { optSnap: 'snap', optOnLine: 'onLine', optLen: 'showLen', optNames: 'showNames', optDark: 'dark', optStakes: 'stakes' };
 for (const [id, key] of Object.entries(optMap)) {
   const el = document.getElementById(id);

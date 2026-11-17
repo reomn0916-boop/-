@@ -114,7 +114,7 @@ export function toDXF(entities) {
   const w = (c, v) => { L.push(String(c), String(v)); };
   const f = (v) => Number(v).toFixed(4);
   const xy = (p, base = 10) => { w(base, f(p.y)); w(base + 10, f(p.x)); w(base + 20, '0.0'); };
-  w(0, 'SECTION'); w(2, 'HEADER'); w(9, '$ACADVER'); w(1, 'AC1009'); w(0, 'ENDSEC');
+  w(0, 'SECTION'); w(2, 'HEADER'); w(9, '$ACADVER'); w(1, 'AC1009'); w(9, '$DWGCODEPAGE'); w(3, 'ANSI_932'); w(0, 'ENDSEC');
   w(0, 'SECTION'); w(2, 'ENTITIES');
   for (const e of entities) {
     const layer = e.layer || (e.type === 'point' ? 'POINT' : e.type === 'dim' ? 'DIM' : '0');
@@ -166,13 +166,55 @@ export function parseSIMA(text) {
   return out;
 }
 
-export function toSIMA(points, title = 'MobileCAD') {
-  const L = ['G00,01,' + title + ',', 'Z00,座標データ,', 'A00,'];
+/**
+ * SIMA 座標データ（＋任意で区画データ）
+ * points: [{name, x, y, z}]
+ * areas:  [{name, idx: [points の番号(0始まり)…]}]
+ */
+export function toSIMA(points, title = 'MobileCAD', areas = []) {
+  const L = ['G00,01,' + title + ',', 'Z00,座標ﾃﾞｰﾀ,', 'A00,'];
   points.forEach((p, i) => {
     L.push(`A01,${i + 1},${p.name || 'P' + (i + 1)},${p.x.toFixed(3)},${p.y.toFixed(3)},${(p.z || 0).toFixed(3)},`);
   });
   L.push('A99,');
+  if (areas.length) {
+    L.push('Z00,区画ﾃﾞｰﾀ,');
+    areas.forEach((a, k) => {
+      L.push(`D00,${k + 1},${a.name || '区画' + (k + 1)},1,`);
+      for (const i of a.idx) L.push(`B01,${i + 1},${points[i].name},`);
+      L.push('D99,');
+    });
+  }
   return L.join('\r\n') + '\r\n';
+}
+
+// ---------------- Shift_JIS 変換 ----------------
+let sjisMap = null;
+/** 文字列 → Shift_JIS のバイト列（変換できない文字は "?"） */
+export function encodeSJIS(str) {
+  if (!sjisMap) {
+    sjisMap = new Map();
+    const dec = new TextDecoder('shift_jis');
+    for (let b = 0xa1; b <= 0xdf; b++) sjisMap.set(dec.decode(new Uint8Array([b])), [b]); // 半角カナ
+    const leads = [];
+    for (let b = 0x81; b <= 0x9f; b++) leads.push(b);
+    for (let b = 0xe0; b <= 0xfc; b++) leads.push(b);
+    for (const l of leads) {
+      for (let t = 0x40; t <= 0xfc; t++) {
+        if (t === 0x7f) continue;
+        const ch = dec.decode(new Uint8Array([l, t]));
+        if (ch.length === 1 && ch !== '\uFFFD' && !sjisMap.has(ch)) sjisMap.set(ch, [l, t]);
+      }
+    }
+  }
+  const out = [];
+  for (const ch of str) {
+    const c = ch.codePointAt(0);
+    if (c < 0x80) { out.push(c); continue; }
+    const m = sjisMap.get(ch);
+    if (m) out.push(...m); else out.push(0x3f);
+  }
+  return new Uint8Array(out);
 }
 
 /** CSV: 「点名,X,Y[,Z]」 または 「X,Y」。見出し行は自動で読み飛ばす */

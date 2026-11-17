@@ -44,7 +44,7 @@ function defs(api) {
     },
     {
       id: 'stakeout', group: '座標計算', title: '杭打ち計算（TS）', desc: '器械点・後視点から各点の夾角と距離',
-      fields: [pt('o', '器械点'), pt('bs', '後視点'), { k: 'targets', label: '杭打ちする点', type: 'pts', def: '全点', hint: '点名をカンマ区切り。「全点」で全部' }],
+      fields: [pt('o', '器械点'), pt('bs', '後視点'), { k: 'targets', label: '杭打ちする点', type: 'pts', def: '全点', hint: '点名をカンマ区切り。「全点」や「逃げ」「位置出し」など種別名でも可' }],
       run: ({ o, bs, targets }) => {
         const list = targets.filter((t) => t.label !== o.label && t.label !== bs.label);
         const r = G.stakeout(o.p, bs.p, list.map((t) => ({ name: t.label, p: t.p })));
@@ -296,6 +296,7 @@ export function initCalc(api) {
         case 'pt': v[f.k] = raw ? api.resolve(raw) : null; break;
         case 'pts': {
           if (raw === '全点') { v[f.k] = api.allPoints(); break; }
+          if (['基準点', '位置出し', '逃げ', 'その他'].includes(raw)) { v[f.k] = api.allPoints(raw); if (!v[f.k].length) throw new Error(`種別「${raw}」の点がありません`); break; }
           if (raw === '選択') { v[f.k] = api.selectedVerts(); if (!v[f.k]) throw new Error('図形が選択されていません'); break; }
           v[f.k] = raw.split(/[,、\s]+/).filter(Boolean).map((t) => api.resolve(t));
           break;
