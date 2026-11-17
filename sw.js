@@ -1,8 +1,10 @@
 // オフライン用キャッシュ。ファイルを更新したら VERSION を上げる
-const VERSION = 'genbacad-v4';
+const VERSION = 'genbacad-v5';
 const FILES = [
   './', './index.html', './css/style.css', './js/app.js', './js/geo.js', './js/io.js', './js/cogo.js', './js/calc.js', './js/sheet.js',
+  './js/draft.js', './js/sync.js',
   './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png',
+  './pc/', './pc/index.html', './pc/pc.css', './pc/main.js', './pc/geom.js', './pc/icons.js', './pc/commands.js', './pc/civil.js', './pc/link.js', './pc/manifest.webmanifest',
 ];
 
 self.addEventListener('install', (e) => {
@@ -28,6 +30,6 @@ self.addEventListener('fetch', (e) => {
         }
         return res;
       })
-      .catch(() => caches.match(e.request, { ignoreSearch: true }).then((r) => r || caches.match('./index.html'))),
+      .catch(() => caches.match(e.request, { ignoreSearch: true }).then((r) => r || caches.match(new URL(e.request.url).pathname.includes('/pc/') ? './pc/index.html' : './index.html'))),
   );
 });

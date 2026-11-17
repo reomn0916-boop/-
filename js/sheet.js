@@ -1,6 +1,9 @@
 // 施工図: 図面枠・表題欄・座標表のレイアウト、描画、PDF / DXF 出力
 // 用紙座標は mm（左上原点・下向き）。図面（モデル）座標は x = X(北), y = Y(東) [m]。
 import { alignPoint, alignStakes } from './cogo.js';
+import { dimGeom, dimText, dimLabel, LTYPES, hatchSegments } from './draft.js';
+
+export { dimGeom, dimText };
 
 export const PAPERS = { A4: [297, 210], A3: [420, 297], A2: [594, 420], A1: [841, 594] };
 export const SCALES = [10, 20, 25, 50, 100, 150, 200, 250, 300, 400, 500, 600, 1000, 1200, 1500, 2000, 2500, 3000, 5000, 10000];
@@ -88,9 +91,6 @@ const niceLen = (target) => {
   return 10 * p;
 };
 
-export function dimText(d, unit) {
-  return unit === 'mm' ? Math.round(d * 1000).toLocaleString('en-US') : d.toFixed(3);
-}
 
 // ------------------------------------------------------------
 // 枠・表題欄・座標表など（用紙上の図形 = prims）
@@ -192,7 +192,7 @@ export function buildPrims(cfg, L, info) {
 // ------------------------------------------------------------
 // Canvas への描画
 // ------------------------------------------------------------
-function symbol(ctx, g, p, k = 1) {
+export function symbol(ctx, g, p, k = 1) {
   ctx.save();
   ctx.lineWidth = 0.2;
   ctx.strokeStyle = GRP_COLOR[g] || '#000'; ctx.fillStyle = ctx.strokeStyle;
@@ -211,7 +211,7 @@ function symbol(ctx, g, p, k = 1) {
   ctx.restore();
 }
 
-function ptext(ctx, t, x, y, size, { align = 'left', bold = false, mono = false, color = '#000', angle = 0, bg = false } = {}) {
+export function ptext(ctx, t, x, y, size, { align = 'left', bold = false, mono = false, color = '#000', angle = 0, bg = false } = {}) {
   ctx.save();
   ctx.translate(x, y);
   if (angle) ctx.rotate(-angle);
@@ -227,7 +227,7 @@ function ptext(ctx, t, x, y, size, { align = 'left', bold = false, mono = false,
   ctx.restore();
 }
 
-function drawPrims(ctx, prims) {
+export function drawPrims(ctx, prims) {
   for (const q of prims) {
     ctx.strokeStyle = '#000'; ctx.fillStyle = '#000';
     switch (q.t) {
@@ -277,8 +277,10 @@ function drawModel(ctx, cfg, L, X, data) {
 
   const lineW = 0.3;
   for (const e of entities) {
-    const g = e.type === 'point' ? grpOf(e) : null;
-    ctx.strokeStyle = '#000'; ctx.fillStyle = '#000'; ctx.lineWidth = lineW; ctx.setLineDash([]);
+    // 色・線幅・線種（data.style があればそれに従う）
+    const st = data.style ? data.style(e) : {};
+    const col = st.color || e.color || '#000';
+    ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = st.lw || e.lw || lineW; ctx.setLineDash(LTYPES[st.ltype || e.ltype]?.pat || []);
     if (e.dash) { ctx.strokeStyle = '#c2410c'; ctx.lineWidth = 0.18; ctx.setLineDash([1.6, 1]); }
     switch (e.type) {
       case 'point': break; // 点は最後（上に重ねる）
@@ -310,10 +312,21 @@ function drawModel(ctx, cfg, L, X, data) {
         const p = X.toP(e.p);
         const size = e.hmm || mm(e.h || 1) * 1.25;
         if (size < 0.6) break;
-        ptext(ctx, e.text, p.x, p.y, size, { angle: e.hmm ? 0 : ((cfg.rot || 0) + (e.rot || 0)) * D2R, align: e.align || 'left' });
+        ptext(ctx, e.text, p.x, p.y, size, { angle: (e.hmm ? (e.rot || 0) : (cfg.rot || 0) + (e.rot || 0)) * D2R, align: e.align || 'left', color: col });
         break;
       }
-      case 'dim': drawDim(ctx, e, X, unit); break;
+      case 'dim': ctx.setLineDash([]); drawDim(ctx, e, X, unit, col); break;
+      case 'hatch': {
+        if (e.pts.length < 3) break;
+        const path = () => { ctx.beginPath(); e.pts.forEach((q, i) => { const t = X.toP(q); i ? ctx.lineTo(t.x, t.y) : ctx.moveTo(t.x, t.y); }); ctx.closePath(); };
+        if (e.pattern === 'solid') { path(); ctx.save(); ctx.globalAlpha = 0.35; ctx.fill(); ctx.restore(); }
+        ctx.setLineDash([]); ctx.lineWidth = 0.13;
+        ctx.beginPath();
+        for (const [a, b] of hatchSegments(e, cfg.scaleN)) { const p = X.toP(a), q = X.toP(b); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); }
+        ctx.stroke();
+        if (e.border !== false) { ctx.lineWidth = st.lw || e.lw || 0.18; path(); ctx.stroke(); }
+        break;
+      }
       case 'leader': {
         const a = X.toP(e.a), b = X.toP(e.b);
         ctx.lineWidth = 0.18;
@@ -321,7 +334,7 @@ function drawModel(ctx, cfg, L, X, data) {
         const sh = { x: b.x + (right ? 1 : -1) * 2.5, y: b.y };
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.lineTo(sh.x, sh.y); ctx.stroke();
         ctx.beginPath(); ctx.arc(a.x, a.y, 0.6, 0, 7); ctx.fill();
-        ptext(ctx, e.text, right ? b.x + 0.5 : b.x - 0.5, b.y - 0.8, e.hmm || 2.5, { align: right ? 'left' : 'right' });
+        ptext(ctx, e.text, right ? b.x + 0.5 : b.x - 0.5, b.y - 0.8, e.hmm || 2.5, { align: right ? 'left' : 'right', color: col });
         break;
       }
       case 'align': {
@@ -368,18 +381,11 @@ function segLen(ctx, a, b, X, unit) {
   ptext(ctx, dimText(Math.hypot(b.x - a.x, b.y - a.y), unit), m.x, m.y, 2.2, { align: 'center', angle: ang });
 }
 
-/** 寸法線（離れ off: 右 +） */
-export function dimGeom(e) {
-  const L = Math.hypot(e.b.x - e.a.x, e.b.y - e.a.y) || 1;
-  const n = { x: -(e.b.y - e.a.y) / L, y: (e.b.x - e.a.x) / L };
-  const off = e.off || 0;
-  return { L, n, a2: { x: e.a.x + n.x * off, y: e.a.y + n.y * off }, b2: { x: e.b.x + n.x * off, y: e.b.y + n.y * off } };
-}
 
-function drawDim(ctx, e, X, unit) {
+function drawDim(ctx, e, X, unit, col = '#000') {
   const g = dimGeom(e);
-  const a = X.toP(e.a), b = X.toP(e.b), a2 = X.toP(g.a2), b2 = X.toP(g.b2);
-  ctx.lineWidth = 0.18; ctx.strokeStyle = '#000';
+  const a = X.toP(g.ea), b = X.toP(g.eb), a2 = X.toP(g.a2), b2 = X.toP(g.b2);
+  ctx.lineWidth = 0.18; ctx.strokeStyle = col; ctx.fillStyle = col;
   const ext = (p, q) => {
     const d = Math.hypot(q.x - p.x, q.y - p.y);
     if (d < 0.5) return;
@@ -388,15 +394,25 @@ function drawDim(ctx, e, X, unit) {
   };
   ext(a, a2); ext(b, b2);
   ctx.beginPath(); ctx.moveTo(a2.x, a2.y); ctx.lineTo(b2.x, b2.y); ctx.stroke();
-  // 端部の斜線
   const d = Math.hypot(b2.x - a2.x, b2.y - a2.y) || 1, u = { x: (b2.x - a2.x) / d, y: (b2.y - a2.y) / d };
-  const t = { x: (u.x - u.y) * 0.9, y: (u.y + u.x) * 0.9 };
-  ctx.lineWidth = 0.3;
-  for (const p of [a2, b2]) { ctx.beginPath(); ctx.moveTo(p.x - t.x, p.y - t.y); ctx.lineTo(p.x + t.x, p.y + t.y); ctx.stroke(); }
+  if (e.term === 'arrow') {
+    // 矢印（塗り）
+    for (const [p, s] of [[a2, 1], [b2, -1]]) {
+      const q = { x: p.x + u.x * 2.5 * s, y: p.y + u.y * 2.5 * s }, nx = -u.y * 0.6, ny = u.x * 0.6;
+      ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x + nx, q.y + ny); ctx.lineTo(q.x - nx, q.y - ny); ctx.closePath(); ctx.fill();
+    }
+  } else if (e.term === 'dot') {
+    for (const p of [a2, b2]) { ctx.beginPath(); ctx.arc(p.x, p.y, 0.5, 0, 7); ctx.fill(); }
+  } else {
+    // 端部の斜線
+    const t = { x: (u.x - u.y) * 0.9, y: (u.y + u.x) * 0.9 };
+    ctx.lineWidth = 0.3;
+    for (const p of [a2, b2]) { ctx.beginPath(); ctx.moveTo(p.x - t.x, p.y - t.y); ctx.lineTo(p.x + t.x, p.y + t.y); ctx.stroke(); }
+  }
   let ang = Math.atan2(-(b2.y - a2.y), b2.x - a2.x);
   if (ang > Math.PI / 2) ang -= Math.PI; if (ang <= -Math.PI / 2) ang += Math.PI;
   const m = { x: (a2.x + b2.x) / 2 - Math.sin(ang) * 0.8, y: (a2.y + b2.y) / 2 - Math.cos(ang) * 0.8 };
-  ptext(ctx, dimText(g.L, unit), m.x, m.y, 2.5, { align: 'center', angle: ang });
+  ptext(ctx, dimLabel(e, unit), m.x, m.y, e.hmm || 2.5, { align: 'center', angle: ang, color: col });
 }
 
 /** 線分 a-b が矩形 r に入る最初の点 */

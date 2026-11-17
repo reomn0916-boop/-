@@ -1,5 +1,6 @@
 // ファイル入出力: DXF / SIMA / CSV
 // 内部の座標: x = X(北), y = Y(東)。DXF では DXF-X = 東(Y), DXF-Y = 北(X) として扱う。
+import { LTYPES, aciToHex, hexToAci, trueColorHex } from './draft.js';
 
 /** バイト列を文字列へ（UTF-8 で化ける場合は Shift_JIS） */
 export function decodeText(buf) {
@@ -18,6 +19,23 @@ export function parseDXF(text) {
   for (let i = 0; i + 1 < lines.length; i += 2) {
     pairs.push([parseInt(lines[i].trim(), 10), lines[i + 1]]);
   }
+  // 画層の表（色・線種）
+  const layers = [];
+  const ltByDxf = Object.fromEntries(Object.entries(LTYPES).map(([k, v]) => [v.dxf, k]));
+  const ltOf = (name) => { const n = String(name || '').trim().toUpperCase(); if (!n || n === 'BYLAYER' || n === 'BYBLOCK') return null; return ltByDxf[n] || (/DASH|HIDDEN|破線/.test(n) ? 'dash' : /CENTER|CHAIN|DASHDOT|一点/.test(n) ? 'chain' : /PHANTOM|二点/.test(n) ? 'chain2' : /DOT|点線/.test(n) ? 'dot' : null); };
+  for (let k = 0; k < pairs.length; k++) {
+    if (pairs[k][0] !== 0 || pairs[k][1].trim() !== 'LAYER') continue;
+    const L = { name: '', color: null, ltype: null, hidden: false };
+    for (let m = k + 1; m < pairs.length && pairs[m][0] !== 0; m++) {
+      const [c, v] = pairs[m];
+      if (c === 2) L.name = v.trim();
+      else if (c === 62) { const n = parseInt(v, 10); L.hidden = n < 0; L.color = aciToHex(Math.abs(n)); }
+      else if (c === 420) L.color = trueColorHex(v);
+      else if (c === 6) L.ltype = ltOf(v);
+    }
+    if (L.name && !layers.some((q) => q.name === L.name)) layers.push(L);
+  }
+
   // ENTITIES セクションを探す（BLOCKS は対象外）
   let i = 0;
   let inEntities = false;
@@ -39,6 +57,7 @@ export function parseDXF(text) {
     const str = (code) => { const p = g.find((q) => q[0] === code); return p ? p[1] : ''; };
     const layer = str(8).trim() || '0';
     const P = (e, nn) => ({ x: nn, y: e }); // DXF(東, 北) → 内部(北, 東)
+    const n0 = out.length;
 
     switch (type) {
       case 'LINE':
@@ -105,6 +124,16 @@ export function parseDXF(text) {
       default:
         if (!['SEQEND', 'VERTEX', 'ATTRIB'].includes(type)) warn.add(type);
     }
+    // 図形ごとの色・線種（BYLAYER は画層に従う）
+    if (out.length > n0) {
+      const e = out[out.length - 1];
+      const tc = g.find((q) => q[0] === 420);
+      const ci = g.find((q) => q[0] === 62);
+      if (tc) e.color = trueColorHex(tc[1]);
+      else if (ci) { const n = parseInt(ci[1], 10); if (n > 0 && n < 256) e.color = aciToHex(n); }
+      const lt = ltOf(str(6));
+      if (lt && lt !== 'solid') e.ltype = lt;
+    }
     i = j;
   }
   // 本アプリが書き出した点名（POINT_NAME 画層の文字）を点に戻す
@@ -114,46 +143,77 @@ export function parseDXF(text) {
     const pt = out.find((e) => e.type === 'point' && !e.name && Math.abs(e.p.x - t.p.x) < 1e-3 && Math.abs(e.p.y - t.p.y) < 1e-3);
     if (pt) { pt.name = t.text; used.add(t); }
   }
-  return { entities: out.filter((e) => !used.has(e)), skipped: [...warn] };
+  return { entities: out.filter((e) => !used.has(e)), skipped: [...warn], layers };
 }
 
 // ---------------- DXF 書き出し (R12 ASCII) ----------------
-export function toDXF(entities) {
+/**
+ * @param entities 線・連続線・円・円弧・文字・点・寸法（寸法は線と文字に簡略化）
+ * @param opt {layers:[{name,color,ltype}], scaleN} 画層の色・線種、線種のピッチ用の縮尺
+ */
+export function toDXF(entities, opt = {}) {
   const L = [];
   const w = (c, v) => { L.push(String(c), String(v)); };
   const f = (v) => Number(v).toFixed(4);
   const xy = (p, base = 10) => { w(base, f(p.y)); w(base + 10, f(p.x)); w(base + 20, '0.0'); };
+  const k = (opt.scaleN || 100) / 1000; // 用紙 mm → m
+  const layerOf = (e) => e.layer || (e.type === 'point' ? 'POINT' : e.type === 'dim' ? 'DIM' : '0');
+  const defs = new Map((opt.layers || []).map((l) => [l.name, l]));
+  const names = new Set(['0']);
+  for (const e of entities) { names.add(layerOf(e)); if (e.type === 'point' && e.name) names.add('POINT_NAME'); }
   w(0, 'SECTION'); w(2, 'HEADER'); w(9, '$ACADVER'); w(1, 'AC1009'); w(9, '$DWGCODEPAGE'); w(3, 'ANSI_932'); w(0, 'ENDSEC');
+  // 線種と画層の表
+  w(0, 'SECTION'); w(2, 'TABLES');
+  const lts = Object.values(LTYPES);
+  w(0, 'TABLE'); w(2, 'LTYPE'); w(70, lts.length);
+  for (const t of lts) {
+    w(0, 'LTYPE'); w(2, t.dxf); w(70, 0); w(3, t.name); w(72, 65); w(73, t.pat.length);
+    w(40, f(t.pat.reduce((a, b) => a + b, 0) * k));
+    t.pat.forEach((d, i) => w(49, f((i % 2 ? -d : d) * k)));
+  }
+  w(0, 'ENDTAB');
+  w(0, 'TABLE'); w(2, 'LAYER'); w(70, names.size);
+  for (const n of names) {
+    const d = defs.get(n) || {};
+    w(0, 'LAYER'); w(2, n); w(70, 0); w(62, (d.hidden ? -1 : 1) * hexToAci(d.color)); w(6, LTYPES[d.ltype]?.dxf || 'CONTINUOUS');
+  }
+  w(0, 'ENDTAB');
+  w(0, 'ENDSEC');
   w(0, 'SECTION'); w(2, 'ENTITIES');
+  const head = (type, e, layer = layerOf(e)) => {
+    w(0, type); w(8, layer);
+    if (e.color) w(62, hexToAci(e.color));
+    const lt = e.dash ? 'dash' : e.ltype;
+    if (lt && lt !== 'solid' && LTYPES[lt]) w(6, LTYPES[lt].dxf);
+  };
   for (const e of entities) {
-    const layer = e.layer || (e.type === 'point' ? 'POINT' : e.type === 'dim' ? 'DIM' : '0');
     switch (e.type) {
       case 'point':
-        w(0, 'POINT'); w(8, layer); xy(e.p);
+        head('POINT', e); xy(e.p);
         if (e.name) { w(0, 'TEXT'); w(8, 'POINT_NAME'); xy({ x: e.p.x, y: e.p.y }); w(40, '0.5'); w(1, e.name); }
         break;
       case 'line':
-        w(0, 'LINE'); w(8, layer); xy(e.a, 10); xy(e.b, 11);
+        head('LINE', e); xy(e.a, 10); xy(e.b, 11);
         break;
       case 'dim': {
-        w(0, 'LINE'); w(8, layer); xy(e.a, 10); xy(e.b, 11);
+        head('LINE', e); xy(e.a, 10); xy(e.b, 11);
         const m = { x: (e.a.x + e.b.x) / 2, y: (e.a.y + e.b.y) / 2 };
-        w(0, 'TEXT'); w(8, layer); xy(m); w(40, '0.5'); w(1, Math.hypot(e.b.x - e.a.x, e.b.y - e.a.y).toFixed(3));
+        head('TEXT', e); xy(m); w(40, '0.5'); w(1, Math.hypot(e.b.x - e.a.x, e.b.y - e.a.y).toFixed(3));
         break;
       }
       case 'poly':
-        w(0, 'POLYLINE'); w(8, layer); w(66, 1); xy({ x: 0, y: 0 }); w(70, e.closed ? 1 : 0);
-        for (const p of e.pts) { w(0, 'VERTEX'); w(8, layer); xy(p); }
-        w(0, 'SEQEND'); w(8, layer);
+        head('POLYLINE', e); w(66, 1); xy({ x: 0, y: 0 }); w(70, e.closed ? 1 : 0);
+        for (const p of e.pts) { w(0, 'VERTEX'); w(8, layerOf(e)); xy(p); }
+        w(0, 'SEQEND'); w(8, layerOf(e));
         break;
       case 'circle':
-        w(0, 'CIRCLE'); w(8, layer); xy(e.c); w(40, f(e.r));
+        head('CIRCLE', e); xy(e.c); w(40, f(e.r));
         break;
       case 'arc':
-        w(0, 'ARC'); w(8, layer); xy(e.c); w(40, f(e.r)); w(50, f(e.a0)); w(51, f(e.a1));
+        head('ARC', e); xy(e.c); w(40, f(e.r)); w(50, f(e.a0)); w(51, f(e.a1));
         break;
       case 'text':
-        w(0, 'TEXT'); w(8, layer); xy(e.p); w(40, f(e.h || 1)); w(1, e.text);
+        head('TEXT', e); xy(e.p); w(40, f(e.h || 1)); w(1, e.text);
         if (e.rot) w(50, f(e.rot));
         if (e.align === 'center' || e.align === 'right') { w(72, e.align === 'center' ? 1 : 2); xy(e.p, 11); }
         break;

@@ -103,6 +103,11 @@
       <button data-act="rename">名前を変更</button>
     </div>
     <div class="menu-group">
+      <h3>パソコン連携</h3>
+      <button data-act="sendPc">パソコンへ送る（.gcad）</button>
+      <button data-act="recvPc">パソコンから受け取る</button>
+    </div>
+    <div class="menu-group">
       <h3>現場（位置出し）</h3>
       <button data-act="openFit">図面を現場の座標に合わせる</button>
       <button data-act="toolNige">逃げ杭を作る</button>
@@ -120,14 +125,14 @@
       <h3>読み込み</h3>
       <button data-act="openDxf">図面を読み込む（DXF）</button>
       <button data-act="openPts">座標を読み込む（SIMA / CSV）</button>
-      <button data-act="openJson">プロジェクトを開く（.json）</button>
+      <button data-act="openJson">プロジェクトを開く（.gcad / .json）</button>
     </div>
     <div class="menu-group">
       <h3>書き出し</h3>
       <button data-act="saveDxf">DXF で書き出す</button>
       <button data-act="openSima">座標を SIMA で書き出す</button>
       <button data-act="saveCsv">座標を CSV で書き出す</button>
-      <button data-act="saveJson">プロジェクトを保存（.json）</button>
+      <button data-act="saveJson">プロジェクトを保存（.gcad）</button>
     </div>
     <div class="menu-group">
       <h3>設定</h3>
@@ -263,6 +268,16 @@
   </dialog>
 
   <!-- 文字の入力 -->
+  <dialog id="linkDialog" class="modal">
+    <h2>パソコンから受け取る</h2>
+    <p id="linkMsg" class="small"></p>
+    <div class="row" style="flex-wrap:wrap">
+      <button class="btn" data-close>やめる</button>
+      <button class="btn" id="linkOpen">開く（置き換え）</button>
+      <button class="btn primary" id="linkMerge">取り込む（差分）</button>
+    </div>
+  </dialog>
+
   <dialog id="textDialog" class="modal">
     <h2 id="textTitle">文字</h2>
     <label>内容 <input id="textVal" type="text" autocomplete="off"></label>
@@ -407,7 +422,8 @@
 
   <input type="file" id="fileDxf" accept=".dxf,.DXF" hidden>
   <input type="file" id="filePts" accept=".sim,.SIM,.csv,.CSV,.txt" hidden>
-  <input type="file" id="fileJson" accept=".json,application/json" hidden>
+  <input type="file" id="fileJson" hidden>
+  <input type="file" id="fileGcad" hidden>
 
   <div id="printArea"></div>
   <script type="module" src="js/app.js"></script>

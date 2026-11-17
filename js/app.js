@@ -2,6 +2,8 @@ import { llToXY, xyToLL, guessZone, toDMS, parseAngle, azimuth, ZONES, ZONE_AREA
 import { decodeText, parseDXF, toDXF, parseSIMA, toSIMA, parseCSV, toCSV, encodeSJIS } from './io.js';
 import { buildAlignment, alignPoint, alignStation, alignStakes, fmtStation, intersect, fitTransform, applyTransform, invertTransform, orientation, offsetPolyline, extendFrom, transformEntity } from './cogo.js';
 import { initCalc, reportHtml, reportsCSV } from './calc.js';
+import { makeTracker, packProject, unpackProject, mergeProjects, mergeSummary, EXT } from './sync.js';
+import { explodeForDxf, dimLabel, hatchSegments, LTYPES } from './draft.js';
 import { SCALES, defaultSheet, layout as sheetLayout, makeXf, fitRange, autoScale, renderSheet, makePdf, sheetFrameEntities, sheetInfo, inViewport, dimGeom, dimText } from './sheet.js';
 
 // ============================================================
@@ -21,7 +23,11 @@ const doc = {
   reports: [],        // 計算書
   gpsCal: { mode: 'rigid', pairs: [] }, // GPS 基準点補正
   sheet: null,        // 施工図の設定
+  pid: null,          // プロジェクト ID（パソコン版との連携用）
+  layers: [],         // 画層の色など（パソコン版で設定）
+  tomb: [],           // 削除した図形（差分取り込み用）
 };
+const tracker = makeTracker();
 const view = { x: 0, y: 0, s: 10 }; // 画面中心のワールド座標と拡大率 (px/m)
 const settings = { snap: true, onLine: true, showLen: true, showNames: true, dark: false, prefix: 'P', stakes: true, ptGrp: '位置出し', nigeMode: 'corner', nigeDist: '1', dimUnit: 'm', lineKind: 'line', measKind: 'measure' };
 
@@ -69,6 +75,7 @@ function readColors() {
 // 保存・読み込み
 // ============================================================
 function save() {
+  tracker.track(doc);
   try { localStorage.setItem(STORE_KEY, JSON.stringify({ doc, view })); } catch { /* 容量不足など */ }
 }
 function load() {
@@ -174,7 +181,7 @@ function verts(e) {
   switch (e.type) {
     case 'point': return [e.p];
     case 'line': case 'dim': case 'leader': return [e.a, e.b];
-    case 'poly': return e.pts;
+    case 'poly': case 'hatch': return e.pts;
     case 'circle': return [e.c];
     case 'arc': return [e.c, arcPt(e, e.a0), arcPt(e, e.a1)];
     case 'text': return [e.p];
@@ -230,10 +237,10 @@ function segments(e) {
     if (g.poly) for (let i = 0; i + 1 < g.poly.length; i++) s.push([g.poly[i], g.poly[i + 1]]);
     return s;
   }
-  if (e.type === 'poly') {
+  if (e.type === 'poly' || e.type === 'hatch') {
     const s = [];
     for (let i = 0; i + 1 < e.pts.length; i++) s.push([e.pts[i], e.pts[i + 1]]);
-    if (e.closed && e.pts.length > 2) s.push([e.pts[e.pts.length - 1], e.pts[0]]);
+    if ((e.closed || e.type === 'hatch') && e.pts.length > 2) s.push([e.pts[e.pts.length - 1], e.pts[0]]);
     return s;
   }
   return [];
@@ -406,8 +413,10 @@ function draw() {
     ctx.strokeStyle = isSel ? sel : (e.type === 'dim' ? C.accent : e.type === 'align' ? '#16a34a' : ent);
     ctx.fillStyle = ctx.strokeStyle;
     ctx.lineWidth = isSel ? 3 : 1.5;
+    ctx.setLineDash([]);
     drawEntity(e, isSel);
   }
+  ctx.setLineDash([]);
 
   // 作図中
   if (temp.length) {
@@ -484,7 +493,16 @@ function segLabel(a, b, color) {
   label(fmt(dist(a, b), 3), (s1.sx + s2.sx) / 2, (s1.sy + s2.sy) / 2 - 4, color, 'center');
 }
 
+const LT_PX = { dash: [8, 5], dot: [2, 4], chain: [14, 4, 2, 4], chain2: [14, 4, 2, 4, 2, 4] };
 function drawEntity(e, isSel) {
+  // パソコン版で付けた色・線種（画層の設定も含む）
+  if (!isSel && e.type !== 'point') {
+    const L = layerStyle(e);
+    const c = e.color || L.color;
+    if (c && !/^#(000000|000|ffffff|fff)$/i.test(c)) { ctx.strokeStyle = c; ctx.fillStyle = c; }
+    const lt = e.dash ? null : (e.ltype || L.ltype);
+    if (lt && LT_PX[lt]) ctx.setLineDash(LT_PX[lt]);
+  }
   const color = ctx.strokeStyle;
   switch (e.type) {
     case 'point': {
@@ -515,9 +533,10 @@ function drawEntity(e, isSel) {
     }
     case 'dim': {
       const g = dimGeom(e);
-      const a = toS(e.a), b = toS(e.b), a2 = toS(g.a2), b2 = toS(g.b2);
+      const a = toS(g.ea), b = toS(g.eb), a2 = toS(g.a2), b2 = toS(g.b2);
       ctx.lineWidth = isSel ? 2.5 : 1;
-      if (e.off) {
+      ctx.setLineDash([]);
+      if (e.off || e.pa || e.pb) {
         ctx.beginPath(); ctx.moveTo(a.sx, a.sy); ctx.lineTo(a2.sx, a2.sy); ctx.moveTo(b.sx, b.sy); ctx.lineTo(b2.sx, b2.sy); ctx.stroke();
       }
       ctx.lineWidth = isSel ? 2.5 : 1.5;
@@ -525,7 +544,7 @@ function drawEntity(e, isSel) {
       const d = Math.hypot(b2.sx - a2.sx, b2.sy - a2.sy) || 1, ux = (b2.sx - a2.sx) / d, uy = (b2.sy - a2.sy) / d;
       const tx = (ux - uy) * 5, ty = (uy + ux) * 5;
       for (const p of [a2, b2]) { ctx.beginPath(); ctx.moveTo(p.sx - tx, p.sy - ty); ctx.lineTo(p.sx + tx, p.sy + ty); ctx.stroke(); }
-      label(dimText(g.L, settings.dimUnit), (a2.sx + b2.sx) / 2, (a2.sy + b2.sy) / 2 - 5, color, 'center');
+      label(dimLabel(e, settings.dimUnit), (a2.sx + b2.sx) / 2, (a2.sy + b2.sy) / 2 - 5, color, 'center');
       break;
     }
     case 'leader': {
@@ -556,6 +575,23 @@ function drawEntity(e, isSel) {
         let cx = 0, cy = 0; e.pts.forEach((p) => { cx += p.x; cy += p.y; });
         const c = toS({ x: cx / e.pts.length, y: cy / e.pts.length });
         label(fmt(polyArea(e.pts), 2) + '㎡', c.sx, c.sy, color, 'center');
+      }
+      break;
+    }
+    case 'hatch': {
+      if (e.pts.length < 3) break;
+      ctx.beginPath();
+      e.pts.forEach((p, i) => { const s = toS(p); i ? ctx.lineTo(s.sx, s.sy) : ctx.moveTo(s.sx, s.sy); });
+      ctx.closePath();
+      ctx.save(); ctx.globalAlpha = e.pattern === 'solid' ? 0.35 : 0.12; ctx.fill(); ctx.restore();
+      if (e.border !== false || isSel) ctx.stroke();
+      if (e.pattern !== 'solid') {
+        const segs = hatchSegments(e, doc.sheet?.scaleN || 100);
+        if (segs.length < 3000) {
+          ctx.save(); ctx.lineWidth = 0.8; ctx.setLineDash([]); ctx.beginPath();
+          for (const [p, q] of segs) { const s1 = toS(p), s2 = toS(q); ctx.moveTo(s1.sx, s1.sy); ctx.lineTo(s2.sx, s2.sy); }
+          ctx.stroke(); ctx.restore();
+        }
       }
       break;
     }
@@ -600,7 +636,12 @@ function drawEntity(e, isSel) {
     }
     case 'text': {
       const s = toS(e.p);
-      if (e.hmm) { ctx.font = `${Math.round(e.hmm * 4.5)}px sans-serif`; ctx.fillStyle = color; ctx.fillText(e.text, s.sx, s.sy); break; }
+      if (e.hmm) {
+        ctx.save(); ctx.translate(s.sx, s.sy); if (e.rot) ctx.rotate((-e.rot * Math.PI) / 180);
+        ctx.font = `${Math.round(e.hmm * 4.5)}px sans-serif`; ctx.textAlign = e.align || 'left'; ctx.fillStyle = color;
+        String(e.text).split('\n').forEach((l, i) => ctx.fillText(l, 0, i * e.hmm * 5.6));
+        ctx.restore(); break;
+      }
       // DXF の文字高さ（≒大文字の高さ）を実寸で。小さすぎるときは描かない
       const px = (e.h || 1) * view.s * 1.25;
       if (px < 3) break;
@@ -1455,47 +1496,9 @@ function download(name, data, type = 'text/plain') {
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
-/** DXF 用: 路線を線・円弧・文字に展開 */
+/** DXF 用: 寸法線・引出線・ハッチング・路線を線・円弧・文字に展開 */
 function exportEntities(ents = doc.entities, scaleN = doc.sheet?.scaleN || 100, sheetRot = 0) {
-  const out = [];
-  const angDxf = (c, p) => (Math.atan2(p.x - c.x, p.y - c.y) * 180) / Math.PI;
-  const k = scaleN / 1000; // 用紙 mm → m
-  // 文字の向き: 用紙（図の回転 sheetRot）に対して読める向きにする
-  const textAng = (a, b) => { let t = angDxf(a, b) + sheetRot; t = ((t % 360) + 360) % 360; if (t > 90 && t <= 270) t -= 180; if (t > 270) t -= 360; return t - sheetRot; };
-  const annRot = -sheetRot; // 注記は用紙に水平
-  const th = (sheetRot * Math.PI) / 180, Rv = { x: -Math.sin(th), y: Math.cos(th) }; // 用紙の右方向
-  for (const e of ents) {
-    if (e.type === 'dim') {
-      const g = dimGeom(e), layer = e.layer || '寸法';
-      if (e.off) { out.push({ type: 'line', layer, a: e.a, b: g.a2 }, { type: 'line', layer, a: e.b, b: g.b2 }); }
-      out.push({ type: 'line', layer, a: g.a2, b: g.b2 });
-      const m = { x: (g.a2.x + g.b2.x) / 2, y: (g.a2.y + g.b2.y) / 2 };
-      const t = textAng(g.a2, g.b2), r = (t * Math.PI) / 180;
-      out.push({ type: 'text', layer, p: { x: m.x + Math.cos(r) * 0.8 * k, y: m.y - Math.sin(r) * 0.8 * k }, h: 2.5 * k, text: dimText(g.L, settings.dimUnit), rot: t, align: 'center' });
-      continue;
-    }
-    if (e.type === 'leader') {
-      const layer = e.layer || '注記';
-      const right = (e.b.x - e.a.x) * Rv.x + (e.b.y - e.a.y) * Rv.y >= 0;
-      const up = { x: Math.cos(th), y: Math.sin(th) }; // 用紙の上方向
-      out.push({ type: 'line', layer, a: e.a, b: e.b });
-      out.push({ type: 'text', layer, p: { x: e.b.x + up.x * 0.8 * k, y: e.b.y + up.y * 0.8 * k }, h: (e.hmm || 2.5) * k, text: e.text, align: right ? 'left' : 'right', rot: annRot });
-      continue;
-    }
-    if (e.type === 'text' && e.hmm) { out.push({ ...e, layer: e.layer || '注記', h: e.hmm * k, rot: annRot }); continue; }
-    if (e.type !== 'align') { out.push(e); continue; }
-    const g = alignGeom(e); if (g.err) continue;
-    const layer = `路線_${e.name}`;
-    for (const el of g.al.elems) {
-      if (el.type === 'line') out.push({ type: 'line', layer, a: el.a, b: alignPoint(g.al, el.s + el.len).p });
-      else {
-        const end = el.curve.EC, a0 = angDxf(el.c, el.sign > 0 ? end : el.a), a1 = angDxf(el.c, el.sign > 0 ? el.a : end);
-        out.push({ type: 'arc', layer, c: el.c, r: el.R, a0: (a0 + 360) % 360, a1: (a1 + 360) % 360 });
-      }
-    }
-    for (const q of alignStakes(g.al, { pitch: g.pitch })) out.push({ type: 'text', layer, p: q.p, h: 1, text: q.station + (q.label ? ` ${q.label}` : '') });
-  }
-  return out;
+  return explodeForDxf(ents, { scaleN, sheetRot, unit: settings.dimUnit, alignGeom, alignPoint, alignStakes });
 }
 const safeName = () => (doc.name || 'genbacad').replace(/[\\/:*?"<>|]/g, '_');
 const pointList = () => doc.entities.filter((e) => e.type === 'point').map((e) => ({ name: e.name, x: e.p.x, y: e.p.y, z: e.z || 0 }));
@@ -1533,22 +1536,63 @@ $('#filePts').addEventListener('change', async (ev) => {
   toast(`${pts.length} 点を「基準点」として読み込みました（座標一覧で種別を変更できます）`);
 });
 
+/** プロジェクト（.gcad / .json）で今の図面を置き換える */
+function openProject(d) {
+  snapshot();
+  for (const k of Object.keys(doc)) delete doc[k];
+  Object.assign(doc, {
+    name: d.name || '無題', zone: d.zone || null, entities: d.entities, seq: d.seq || 1, nextId: d.nextId || 1,
+    hiddenLayers: d.hiddenLayers || [], reports: d.reports || [], gpsCal: d.gpsCal || { mode: 'rigid', pairs: [] }, sheet: d.sheet || null,
+    pid: d.pid || null, layers: d.layers || [], tomb: d.tomb || [],
+  });
+  tracker.reset(doc);
+  recomputeCal();
+  selected = null; selPoint = null; result = null; temp = [];
+  updateTitle(); updateZoneChip(); renderNames(); changed(); fitAll();
+}
 $('#fileJson').addEventListener('change', async (ev) => {
   const f = await readFile(ev.target); if (!f) return;
-  try {
-    const d = JSON.parse(f.text);
-    if (!Array.isArray(d.entities)) throw new Error('形式が違います');
-    snapshot();
-    Object.assign(doc, {
-      name: d.name || '無題', zone: d.zone || null, entities: d.entities, seq: d.seq || 1, nextId: d.nextId || 1,
-      hiddenLayers: d.hiddenLayers || [], reports: d.reports || [], gpsCal: d.gpsCal || { mode: 'rigid', pairs: [] }, sheet: d.sheet || null,
-    });
-    recomputeCal();
-    doc.nextId = Math.max(doc.nextId, ...doc.entities.map((e) => (e.id || 0) + 1), 1);
-    doc.entities.forEach((e) => { if (!e.id) e.id = doc.nextId++; });
-    updateTitle(); updateZoneChip(); changed(); fitAll();
-  } catch (err) { toast('読み込めませんでした: ' + err.message); }
+  try { openProject(unpackProject(f.text).doc); toast(`「${f.name}」を開きました`); } catch (err) { toast('読み込めませんでした: ' + err.message); }
 });
+
+// パソコン連携: 受け取ったプロジェクトを開く or 差分で取り込む
+let incoming = null;
+$('#fileGcad').addEventListener('change', async (ev) => {
+  const f = await readFile(ev.target); if (!f) return;
+  try { incoming = { ...unpackProject(f.text), file: f.name }; } catch (err) { toast('読み込めませんでした: ' + err.message); return; }
+  const d = incoming.doc;
+  if (!doc.entities.length) { openProject(d); toast(`「${f.name}」を開きました（図形 ${d.entities.length}）`); incoming = null; return; }
+  const same = d.pid && d.pid === doc.pid;
+  $('#linkMsg').innerHTML = `<b>${esc(f.name)}</b>（図形 ${d.entities.length}）<br>` + (same
+    ? '今の図面と同じ現場のデータです。「取り込む」を選ぶと、現場で作った点を残したまま、パソコンで変えたところだけ更新します。'
+    : '今の図面とは別のデータです。「開く」で置き換えるか、「取り込む」で今の図面に追加します。');
+  $('#linkDialog').showModal();
+});
+$('#linkOpen').addEventListener('click', () => {
+  $('#linkDialog').close();
+  if (!incoming) return;
+  openProject(incoming.doc); toast(`「${incoming.file}」を開きました`); incoming = null;
+});
+$('#linkMerge').addEventListener('click', () => {
+  $('#linkDialog').close();
+  if (!incoming) return;
+  snapshot();
+  const r = mergeProjects(doc, incoming.doc);
+  recomputeCal(); renderNames(); updateZoneChip(); changed();
+  toast('取り込みました: ' + mergeSummary(r));
+  incoming = null;
+});
+async function sendPc() {
+  const name = safeName() + EXT;
+  const data = JSON.stringify(packProject(doc, 'mobile'));
+  save();
+  const file = new File([data], name, { type: 'application/octet-stream' });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: name }); toast('送りました。パソコン版の［現場データ取込］で取り込めます'); return; } catch (err) { if (err.name === 'AbortError') return; }
+  }
+  download(name, new Blob([data], { type: 'application/octet-stream' }));
+  toast('保存しました。メールやクラウドでパソコンへ送ってください');
+}
 
 // ============================================================
 // UI 操作
@@ -1622,7 +1666,8 @@ const actions = {
   new() {
     if (doc.entities.length && !confirm('今の図面を消して新規作成しますか？（必要なら先に保存してください）')) return;
     snapshot();
-    Object.assign(doc, { name: '無題', entities: [], seq: 1, nextId: 1 });
+    Object.assign(doc, { name: '無題', entities: [], seq: 1, nextId: 1, pid: null, tomb: [], layers: [] });
+    tracker.reset(doc);
     selected = null; selPoint = null; result = null; temp = [];
     updateTitle(); changed(); fitAll();
   },
@@ -1633,7 +1678,9 @@ const actions = {
   openDxf() { $('#fileDxf').click(); },
   openPts() { $('#filePts').click(); },
   openJson() { $('#fileJson').click(); },
-  saveDxf() { download(safeName() + '.dxf', encodeSJIS(toDXF(exportEntities())), 'application/dxf'); },
+  sendPc() { sendPc(); },
+  recvPc() { $('#fileGcad').click(); },
+  saveDxf() { download(safeName() + '.dxf', encodeSJIS(toDXF(exportEntities(), { layers: doc.layers, scaleN: doc.sheet?.scaleN || 100 })), 'application/dxf'); },
   openSima() { openSima(); },
   openSheet() { openSheet(true); },
   editText() {
@@ -1662,7 +1709,7 @@ const actions = {
     const pts = pointList(); if (!pts.length) { toast('点がありません'); return; }
     download(safeName() + '.csv', toCSV(pts, doc.zone), 'text/csv');
   },
-  saveJson() { download(safeName() + '.json', JSON.stringify(doc), 'application/json'); },
+  saveJson() { save(); download(safeName() + EXT, JSON.stringify(packProject(doc, 'mobile')), 'application/octet-stream'); },
   help() { $('#helpDialog').showModal(); },
   delete() {
     const e = getEnt(selected); if (!e) return;
@@ -2049,7 +2096,11 @@ function sheetCfg() {
   if (!doc.sheet) doc.sheet = defaultSheet(doc.name);
   return doc.sheet;
 }
-const sheetData = () => ({ entities: doc.entities.filter(visible), alignGeom, grpOf, zone: doc.zone, unit: settings.dimUnit });
+const layerStyle = (e) => (doc.layers || []).find((l) => l.name === e.layer) || {};
+const sheetData = () => ({
+  entities: doc.entities.filter(visible), alignGeom, grpOf, zone: doc.zone, unit: settings.dimUnit,
+  style: (e) => { const L = layerStyle(e); return { color: e.color || L.color, lw: e.lw || L.lw, ltype: e.ltype || L.ltype }; },
+});
 function rangeFromView(cfg) { fitRange(cfg, (cfg.rangePts = [toW(0, 0), toW(W, 0), toW(0, H), toW(W, H)])); }
 function setRange(cfg, pts) { if (!pts.length) { toast('範囲にする図形がありません'); return false; } cfg.rangePts = pts.map((p) => ({ x: p.x, y: p.y })); fitRange(cfg, cfg.rangePts); return true; }
 function entityExtent(e) {
@@ -2222,6 +2273,7 @@ document.addEventListener('keydown', (ev) => {
 // 起動
 // ============================================================
 load();
+tracker.reset(doc);
 recomputeCal();
 applyTheme();
 updateTitle();

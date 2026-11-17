@@ -1,0 +1,19 @@
+{
+  "name": "現場CAD PC",
+  "short_name": "現場CAD PC",
+  "description": "現場CAD のパソコン版。スマホ版と .gcad ファイルで連動して、作図・編集・横断図・縦断図・測量計算・印刷ができます。",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#1f3a5f",
+  "theme_color": "#1f3a5f",
+  "lang": "ja",
+  "file_handlers": [
+    { "action": "./", "accept": { "application/octet-stream": [".gcad"] } }
+  ],
+  "icons": [
+    { "src": "../icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "../icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "../icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
