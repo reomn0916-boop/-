@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
 from . import audit, awards, calc, db, importer, pipeline, settings, theme
 from .gui_pages import AddItemDialog, PagesMixin
 from .gui_pages2 import BookPageMixin, PagesMixin2
+from .gui_pages3 import TablesPageMixin
+from . import kinnuki
 from . import backup
 from .export import breakdown_rows
 from .importer import normalize_category
@@ -29,6 +31,7 @@ PAGES = [
     # (キー, メニュー名, 見出し, 説明, 区切り)
     ("new", "新規積算", "新規積算", "設計書データを取り込み、計算から内訳書・実行予算の出力までを一度に行います。", "積算"),
     ("items", "明細", "明細", "歩掛・単価の当てはめを確認・修正します。直したコードとメモは次の工事にも引き継がれます。", None),
+    ("tables", "単価表", "単価表", "金抜き設計書から作った単価表（歩掛）です。伏せてある数量・当たらない資源・諸雑費率を入れます。", None),
     ("tree", "内訳書", "工事費内訳書", "直接工事費 → 工種 → 種別 → 細別 の階層で金額を確認します。", None),
     ("bid", "入札検討", "入札検討", "予定価格・基準価格・実行原価の位置関係を見ながら入札額を決めます。", None),
     ("project", "工事の設定", "工事の設定", "発注者・単価の適用日・補正（割増）・確認と提出を設定します。", "工事"),
@@ -44,7 +47,7 @@ PAGES = [
     ("master", "マスタ", "マスタ管理", "年度ごとの単価・歩掛・諸経費率・補正・機械損料・公表単価、発注者ごとの設定を取り込みます。", None),
     ("settings", "設定", "設定", "データファイル・担当者名・利用者と権限・バックアップの設定です。", None),
 ]
-PROJECT_PAGES = {"items", "tree", "bid", "project", "schedule", "change", "after", "verify", "inquiry", "history", "book"}
+PROJECT_PAGES = {"items", "tables", "tree", "bid", "project", "schedule", "change", "after", "verify", "inquiry", "history", "book"}
 
 
 def open_path(path: Path) -> None:
@@ -93,7 +96,7 @@ class ItemFilter(QSortFilterProxyModel):
         return True
 
 
-class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, QMainWindow):
+class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("公共工事 積算アプリ")
@@ -127,7 +130,7 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, QMainWindow):
                     "settings": self._page_settings, "project": self._page_project, "change": self._page_change,
                     "history": self._page_history, "quotes": self._page_quotes, "awards": self._page_awards,
                     "schedule": self._page_schedule, "after": self._page_after, "inquiry": self._page_inquiry,
-                    "book": self._page_book}
+                    "book": self._page_book, "tables": self._page_tables}
         for key, *_ in PAGES:
             self.pages[key] = self.stack.addWidget(builders[key]())
         cv.addWidget(self.stack, 1)
@@ -284,6 +287,7 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, QMainWindow):
 
     def _project_changed(self) -> None:
         self.pid = self.proj.currentData()
+        self._res_cands = None
         self.bid_edit.clear()
         self.recalc()
 
@@ -306,6 +310,7 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, QMainWindow):
         self._refresh_after()
         self._refresh_users()
         self._refresh_book()
+        self._refresh_tables()
 
     def _project_row(self):
         return self.conn.execute("SELECT * FROM project WHERE id=?", (self.pid,)).fetchone() if self.pid else None
@@ -390,9 +395,13 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, QMainWindow):
         b1 = QPushButton("明細を開く")
         b1.setObjectName("Primary")
         b1.clicked.connect(lambda: self.go("items"))
+        b3 = QPushButton("単価表を開く")
+        b3.clicked.connect(lambda: self.go("tables"))
+        ra_tables = b3
         b2 = QPushButton("出力フォルダを開く")
         b2.clicked.connect(lambda: open_path(Path(self.n_out.text())))
         ra.addWidget(b1)
+        ra.addWidget(ra_tables)
         ra.addWidget(b2)
         ra.addStretch(1)
         self.run_actions.hide()
@@ -452,6 +461,38 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, QMainWindow):
             self.go("items")
 
     def _file_chosen(self, path: str) -> None:
+        self.kin_doc = None
+        if path.lower().endswith(".pdf"):
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                ok = kinnuki.is_kinnuki(path)
+                doc = kinnuki.parse(path) if ok else None
+            except Exception as e:
+                ok, doc = False, None
+                self.run_banner.show_msg(f"PDFを読めませんでした：{e}", "bad")
+            finally:
+                QApplication.restoreOverrideCursor()
+            if not ok or not doc:
+                self.run_banner.show_msg("このPDFは金抜き設計書（実施設計書）の形ではないようです。", "warn")
+                return
+            self.kin_doc = doc
+            m = doc.meta
+            self.n_name.setText(m.get("工事名", Path(path).stem))
+            if doc.fy:
+                self.n_fy.setCurrentText(doc.fy)
+            self.n_work.setCurrentText(m.get("適用工種", ""))
+            import unicodedata
+            self.n_region.setText(unicodedata.normalize("NFKC", m.get("単価地区", "")).replace(" ", ""))
+            self.n_orderer.setCurrentText("奈良県")
+            pkg = sum(k.startswith("施") for k in doc.tables)
+            hidden = sum(1 for t in doc.tables.values() for l in t.lines
+                         if l.qty is None and not l.name.startswith("諸雑費") and not t.ref.startswith("施"))
+            self.run_banner.show_msg(
+                f"<b>金抜き設計書です。</b>　{m.get('工事番号', '')}　{m.get('工事箇所', '')}<br>"
+                f"明細 {len(doc.items)} 行・単価表 {len(doc.tables) - pkg} 個・施工パッケージ {pkg} 個を読み取りました"
+                f"（単価適用 {doc.price_date[:7]}・{m.get('単価地区', '')}・{m.get('適用工種', '')}）。<br>"
+                f"伏せてある歩掛の数量が {hidden} か所あります。取り込んだあと「単価表」で入れます。", "info")
+            return
         if not self.n_name.text():
             self.n_name.setText(Path(path).stem)
 
@@ -468,12 +509,21 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, QMainWindow):
             self.run_banner.show_msg("年度を選んでください。先に「マスタ」で年度マスタを取り込む必要があります。", "warn")
             return
         QApplication.setOverrideCursor(Qt.WaitCursor)
+        kin = None
         try:
-            res = pipeline.import_and_run(
-                self.conn, self.drop.path, self.n_name.text() or "無題", self.n_fy.currentText(),
-                self.n_work.currentText(), self.n_out.text(), self.n_region.text(),
-                orderer=self.n_orderer.currentText().strip(),
-            )
+            if getattr(self, "kin_doc", None) and self.drop.path.lower().endswith(".pdf"):
+                kin = kinnuki.import_doc(self.conn, self.drop.path, work_type=self.n_work.currentText().strip() or None,
+                                         orderer=self.n_orderer.currentText().strip() or "奈良県")
+                calc.set_project_fields(self.conn, kin["project_id"], name=self.n_name.text().strip() or "無題",
+                                        region=self.n_region.text())
+                res = pipeline.run(self.conn, kin["project_id"], self.n_out.text())
+                res["project_id"] = kin["project_id"]
+            else:
+                res = pipeline.import_and_run(
+                    self.conn, self.drop.path, self.n_name.text() or "無題", self.n_fy.currentText(),
+                    self.n_work.currentText(), self.n_out.text(), self.n_region.text(),
+                    orderer=self.n_orderer.currentText().strip(),
+                )
         except Exception as e:  # 利用者に原因を見せる
             self.run_banner.show_msg(f"取り込めませんでした：{e}", "bad")
             return
@@ -483,11 +533,19 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, QMainWindow):
         n = len(d.unresolved)
         msg = (f"<b>積算が終わりました。</b>　工事価格 ¥{yen(d.summary.price)}（税込 ¥{yen(d.summary.total)}）"
                f"<br>積算結果・実行予算・電子入札用内訳書を {self.n_out.text()} に出力しました。")
-        if n:
+        if kin:
+            msg += (f"<br>金抜き設計書から単価表 {kin['単価表']} 個・施工パッケージ {kin['施工パッケージ']} 個を作りました。"
+                    f"入れるもの：伏せてある数量 <b>{kin['数量を入れる']}</b>・単価が当たらない資源 <b>{kin['単価を当てる']}</b>"
+                    f"・諸雑費率 <b>{kin['諸雑費率を入れる']}</b>"
+                    + (f"（前回の値で {kin['前回の値']} か所を入れました）" if kin["前回の値"] else "")
+                    + "。「単価表」で入れてください。")
+        elif n:
             msg += f"<br>歩掛・単価が当たっていない明細が <b>{n} 件</b> あります。「明細」で直してください。"
-        self.run_banner.show_msg(msg, "warn" if n else "ok")
+        self.run_banner.show_msg(msg, "warn" if (n or kin) else "ok")
         self.run_actions.show()
         self._load_projects(select=res["project_id"])
+        if kin:
+            self._res_cands = None
 
     # ================================================================ 明細
     def _page_items(self) -> QWidget:
@@ -668,9 +726,10 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, QMainWindow):
             return
         self.d_name.setText(f"{it.name}　{it.spec}")
         self.d_how.setText(it.how)
-        self.d_how.set_tone({"未設定": "bad", "物価資料待ち": "warn", "パッケージ": "info", "対応表": "info"}.get(it.how, "ok"))
+        self.d_how.set_tone({"未設定": "bad", "物価資料待ち": "warn", "単価表待ち": "warn", "パッケージ": "info",
+                             "対応表": "info"}.get(it.how, "ok"))
         self.d_note.setPlainText(it.note)
-        self.d_lines.setVisible(not it.missing)
+        self.d_lines.setVisible(not it.missing or it.how == "単価表待ち")
         if it.how == "物価資料待ち":
             self.d_price.setText("—")
             self.d_sub.setText(f"コード {it.code} は県の単価資料で「○（物価資料の単価を使う）」です。"
@@ -685,6 +744,10 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, QMainWindow):
         conds = "、".join(d.conditions) if (d := it.detail) and d.conditions else ""
         self.d_sub.setText(f"数量 {it.qty:g} {it.unit} → 金額 ¥{yen(it.amount)}　（コード {it.code}）"
                            + (f"\n補正: {conds}" if conds else ""))
+        if it.how == "単価表待ち":
+            self.d_price.setText(f"¥{yen(it.unit_price)} / {it.unit}（途中）")
+            self.d_sub.setText("この明細の単価表には、まだ入れていない数量・資源・率があります。"
+                               "「単価表」の画面で入れてください（いまの単価は入っている分だけの途中の値です）。")
         d = it.detail
         if not d:
             return

@@ -130,7 +130,7 @@ class DropZone(QFrame):
         self.icon = QLabel("⇩")
         self.icon.setAlignment(Qt.AlignCenter)
         self.icon.setStyleSheet(f"font-size: 26pt; color: {C['faint']};")
-        self.title = QLabel("設計書データ（CSV）をここにドラッグ")
+        self.title = QLabel("金抜き設計書（PDF）または設計書データ（CSV）をここにドラッグ")
         self.title.setObjectName("DropTitle")
         self.title.setAlignment(Qt.AlignCenter)
         self.sub = QLabel("またはクリックしてファイルを選ぶ")
@@ -156,7 +156,8 @@ class DropZone(QFrame):
         self.fileChosen.emit(path)
 
     def mousePressEvent(self, e) -> None:  # noqa: N802
-        p, _ = QFileDialog.getOpenFileName(self, "設計書データ", "", "CSV (*.csv);;すべて (*.*)")
+        p, _ = QFileDialog.getOpenFileName(self, "金抜き設計書・設計書データ", "",
+                                           "金抜き設計書・設計書データ (*.pdf *.csv);;すべて (*.*)")
         if p:
             self.set_file(p)
 
@@ -300,7 +301,7 @@ CAT, QTY, PRICE, AMOUNT, HOW, CODE, COND, NOTE = 1, 8, 9, 10, 11, 12, 13, 14
 NUMERIC = {0, QTY, PRICE, AMOUNT}
 EDITABLE = {CAT, QTY, CODE, COND, NOTE}
 HOW_TONE = {"歩掛": "ok", "パッケージ": "info", "単価": "ok", "見積": "info", "対応表": "info", "未設定": "bad",
-            "物価資料待ち": "warn"}
+            "物価資料待ち": "warn", "単価表待ち": "warn"}
 
 
 class ItemModel(QAbstractTableModel):
@@ -361,7 +362,7 @@ class ItemModel(QAbstractTableModel):
                 return QBrush(color("muted"))
         if role == Qt.BackgroundRole and it.how == "未設定":
             return QBrush(QColor(C["bad_soft"]))
-        if role == Qt.BackgroundRole and it.how == "物価資料待ち":
+        if role == Qt.BackgroundRole and it.how in ("物価資料待ち", "単価表待ち"):
             return QBrush(QColor(C["warn_soft"]))
         if role == Qt.FontRole and c == AMOUNT:
             f = QFont()

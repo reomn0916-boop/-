@@ -231,6 +231,17 @@ CREATE TABLE IF NOT EXISTS audit_log (
     detail TEXT NOT NULL DEFAULT ''
 );
 
+-- 金抜き設計書で入れた歩掛の数量・当てた資源を覚える（次に同じ単価表が出てきたら自動で入れる）
+CREATE TABLE IF NOT EXISTS bukake_memory (
+    table_key TEXT NOT NULL,       -- 単価表の名称＋規格＋単位
+    line_key TEXT NOT NULL,        -- 行の名称＋規格＋単位
+    kind TEXT NOT NULL DEFAULT '',
+    res_code TEXT NOT NULL DEFAULT '',
+    qty REAL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    PRIMARY KEY (table_key, line_key)
+);
+
 -- 県の単価資料に載っている品目（単価が○＝物価資料、空欄のものも含めて控える）
 CREATE TABLE IF NOT EXISTS public_item (
     fy TEXT NOT NULL,
@@ -342,4 +353,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
     _add_column(conn, "project", "checked_by", "TEXT NOT NULL DEFAULT ''")
     _add_column(conn, "project", "checked_at", "TEXT NOT NULL DEFAULT ''")
     _add_column(conn, "project", "contract_price", "REAL NOT NULL DEFAULT 0")  # 契約額（税抜）
+    _add_column(conn, "project", "doc_meta", "TEXT NOT NULL DEFAULT ''")      # 金抜き設計書の表紙・条件（JSON）
+    _add_column(conn, "bukake", "note", "TEXT NOT NULL DEFAULT ''")           # 単価表の注意（諸雑費率が伏せてある など）
+    _add_column(conn, "bukake", "project_id", "INTEGER")                     # 金抜き設計書から作った単価表の工事
+    _add_column(conn, "bukake_component", "src", "TEXT NOT NULL DEFAULT ''")  # 設計書に書かれていた名称・規格・単位
+    _add_column(conn, "bukake_component", "note", "TEXT NOT NULL DEFAULT ''") # 数量を入れる・単価を当てる など
+    _add_column(conn, "package", "project_id", "INTEGER")
+    _add_column(conn, "package_component", "src", "TEXT NOT NULL DEFAULT ''")
     conn.commit()

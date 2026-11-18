@@ -37,7 +37,7 @@ def _table(ws, start_row: int, headers: list[str], rows: list[list], formats: di
             cell.border = BORDER
             if formats and c in formats and isinstance(v, (int, float)):
                 cell.number_format = formats[c]
-        if warn_col is not None and warn_col <= len(row) and row[warn_col - 1] in ("未設定", "物価資料待ち"):
+        if warn_col is not None and warn_col <= len(row) and row[warn_col - 1] in ("未設定", "物価資料待ち", "単価表待ち"):
             for c in range(1, len(headers) + 1):
                 ws.cell(r, c).fill = WARN_FILL
     if widths:

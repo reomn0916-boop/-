@@ -45,7 +45,7 @@ DIRECT = "直接"
 DIRECT_EXCLUDED = "直接（率対象外）"  # 直接工事費には入れるが、諸経費率の対象額から除く（処分費・支給品など）
 CATEGORIES = (DIRECT, DIRECT_EXCLUDED, "共通仮設", "現場管理")
 RESOURCE_KINDS = ("労務", "機械", "材料", "市場単価")
-NO_PRICE = ("未設定", "物価資料待ち")
+NO_PRICE = ("未設定", "物価資料待ち", "単価表待ち")
 RATE_TARGETS = ("共通仮設費率", "現場管理費率")
 
 
@@ -101,6 +101,7 @@ class UnitPrice:
     subtotal: float
     price: float  # 1単位あたり（端数処理後）
     conditions: tuple[str, ...] = ()
+    incomplete: bool = False  # 中に数量未入力・単価なし・率未入力がある（入れきっていない）
 
 
 @dataclass
@@ -295,6 +296,21 @@ class Calculator:
             "SELECT * FROM bukake_component WHERE fy=? AND bukake_code=? ORDER BY seq", (self.fy, code)
         ):
             f = 1.0
+            note = c["note"] if "note" in c.keys() else ""
+            src = c["src"] if "src" in c.keys() else ""
+            if "数量を入れる" in note:
+                self.warnings.append(f"{b['name']}：「{src}」の数量が未入力です（金抜きで伏せてあります。標準歩掛で確かめて"
+                                     "「単価表」で入れてください）")
+            if c["kind"] == "パッケージ":
+                sub = self.package_price(c["res_code"], conds)
+                price, name, unit, src_ = (sub.price, sub.name, sub.unit, "施工パッケージ") if sub else \
+                    (0.0, f"（不明 {c['res_code']}）", "", "不明")
+                lines.append(Line(c["kind"], c["res_code"], name, unit, c["qty"], price, c["qty"] * price, src_, 1.0))
+                continue
+            if not c["res_code"]:
+                self.warnings.append(f"{b['name']}：「{src}」に単価が当たっていません（「単価表」で資源を選んでください）")
+                lines.append(Line(c["kind"], "", src or "（資源なし）", "", c["qty"], 0.0, 0.0, "不明", 1.0))
+                continue
             if c["kind"] == "歩掛":
                 sub = self.unit_price(c["res_code"], conds, _depth + 1)
                 if sub is None:
@@ -306,10 +322,26 @@ class Calculator:
                 price, name, unit, src = self.resource_price(c["kind"], c["res_code"])
                 f = self.factor(conds, c["kind"], code) * self.factor(conds, "全体", code)
             lines.append(Line(c["kind"], c["res_code"], name, unit, c["qty"], price, c["qty"] * price * f, src, f))
+        if "諸雑費率を入れる" in (b["note"] if "note" in b.keys() else ""):
+            self.warnings.append(f"{b['name']}：諸雑費の率が伏せてあります（「単価表」で入れてください）")
         subtotal = sum(l.amount for l in lines) * (1 + b["misc_rate"] / 100)
         per = subtotal / (b["per_qty"] or 1)
         price = round_sig(per, int(self.rules["単価の有効桁数"]), self.rules["単価の端数処理"])
         up = UnitPrice(b["code"], b["name"], b["unit"], b["per_qty"], lines, b["misc_rate"], subtotal, price, conds)
+        notes = [c["note"] for c in self.conn.execute(
+            "SELECT note FROM bukake_component WHERE fy=? AND bukake_code=?", (self.fy, code))]
+        nested_bad = False
+        for c in self.conn.execute("SELECT kind, res_code FROM bukake_component WHERE fy=? AND bukake_code=?",
+                                   (self.fy, code)):
+            if c["kind"] == "歩掛":
+                sub = self._cache.get(("b", c["res_code"], conds))
+                nested_bad |= bool(sub is None or sub.incomplete)
+            elif c["kind"] == "パッケージ":
+                sub = self._cache.get(("p", c["res_code"], conds))
+                nested_bad |= bool(sub is None or sub.incomplete)
+        up.incomplete = (nested_bad or any(l.source == "不明" for l in lines)
+                         or any(n and ("数量を入れる" in n or "単価を当てる" in n) for n in notes)
+                         or "諸雑費率を入れる" in (b["note"] if "note" in b.keys() else ""))
         self._cache[key] = up
         return up
 
@@ -324,12 +356,18 @@ class Calculator:
             self._cache[key] = None
             return None
         p0 = pk["std_price"]
+        if not p0:
+            self.warnings.append(f"施工パッケージ「{pk['name']}」（{code}）の標準単価が未入力です"
+                                 "（国の施工パッケージ型積算の標準単価表で確かめて「単価表」で入れてください）")
         lines: list[Line] = []
         ratio_sum = 0.0
         factor = 0.0
         for c in self.conn.execute(
             "SELECT * FROM package_component WHERE fy=? AND package_code=? ORDER BY seq", (self.fy, code)
         ):
+            if not c["res_code"]:
+                self.warnings.append(f"施工パッケージ {code} の「{c['src'] if 'src' in c.keys() else ''}」に単価が当たっていません")
+                continue
             local, name, unit, src = self.resource_price(c["kind"], c["res_code"])
             if not c["base_price"]:
                 self.warnings.append(f"施工パッケージ {code} の {c['res_code']} に東京の基準単価がありません")
@@ -347,6 +385,9 @@ class Calculator:
         price = round_sig(p0 * factor * whole, int(self.rules["単価の有効桁数"]), self.rules["単価の端数処理"])
         up = UnitPrice(pk["code"], f"{pk['name']}（施工パッケージ・標準単価 {p0:,.0f}）", pk["unit"], 1, lines, 0,
                        p0 * factor * whole, price, conds)
+        up.incomplete = (not p0 or any(l.source == "不明" for l in lines) or bool(self.conn.execute(
+            "SELECT 1 FROM package_component WHERE fy=? AND package_code=? AND (res_code='' OR base_price=0)",
+            (self.fy, code)).fetchone()))
         self._cache[key] = up
         return up
 
@@ -373,10 +414,14 @@ class Calculator:
             if detail:
                 unit_price = detail.price
                 how = "歩掛" if how == "未設定" else how
+                if detail.incomplete:
+                    how = "単価表待ち"
             elif pkg:
                 detail = pkg
                 unit_price = pkg.price
                 how = "パッケージ" if how == "未設定" else how
+                if pkg.incomplete:
+                    how = "単価表待ち"
             else:
                 # 歩掛ではなく、単価そのもの（市場単価・見積など）の場合
                 r = self.conn.execute(
