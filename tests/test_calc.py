@@ -33,7 +33,7 @@ def test_round_sig():
 
 def test_parse_design(conn):
     items = importer.parse_design_csv(SAMPLE / "設計書.csv")
-    assert [i.name for i in items] == ["掘削", "基礎砕石", "コンクリート", "基礎工", "区画線"]
+    assert [i.name for i in items] == ["掘削", "基礎砕石", "コンクリート", "基礎工", "区画線", "不陸整正", "重機運搬"]
     assert items[2].qty == 14.5
 
 
@@ -56,7 +56,12 @@ def test_unit_prices(conn, pid):
     assert by[5].unit_price == 310 and by[5].how == "単価"
     # コード無し → 未設定
     assert by[2].how == "未設定" and by[2].amount == 0
-    assert res.summary.direct == 1022075
+    # 施工パッケージ: 1250 × (0.3×42000/40000 + 0.4×20000/21000 + 0.1×4200/4000 + 0.2) = 1251.19 → 1251
+    assert by[6].how == "パッケージ" and by[6].unit_price == 1251 and by[6].amount == 375300
+    # 共通仮設の積上げは直接工事費に入れない
+    assert by[7].category == "共通仮設" and by[7].amount == 84000
+    assert res.summary.direct == 1022075 + 375300
+    assert res.summary.common_temp_stacked == 84000
 
 
 def test_mapping_is_learned(conn, pid):
@@ -78,7 +83,7 @@ def test_summary(conn, pid):
     assert s.price % 1000 == 0
     assert s.total == s.price + s.tax
     # 共通仮設費率 = 30 × P^-0.1（P=直接工事費）
-    assert s.common_temp_rate == round(30 * 1022075 ** -0.1, 2)
+    assert s.common_temp_rate == round(30 * s.direct ** -0.1, 2)
 
 
 def test_company_mode(conn, pid):
@@ -102,10 +107,67 @@ def test_pipeline_and_verify(conn, tmp_path):
     for f in res["files"]:
         assert Path(f).exists()
     wb = load_workbook(res["files"][0])
-    assert wb.sheetnames == ["工事費内訳書", "明細", "単価表"]
+    assert wb.sheetnames == ["総括", "工事費内訳書", "明細", "単価表"]
     ref = tmp_path / "ref.csv"
     ref.write_text("項目,金額\n1,300900\n直接工事費,1000000\n", encoding="utf-8")
     importer.import_reference(conn, res["project_id"], ref)
     checks = {c.key: c for c in pipeline.verify(conn, res["project_id"])}
     assert checks["1"].ok
-    assert not checks["直接工事費"].ok and checks["直接工事費"].diff == 22075
+    assert not checks["直接工事費"].ok and checks["直接工事費"].diff == 397375
+
+
+def test_threshold(conn, pid):
+    s = calc.calculate(conn, pid).summary
+    raw = s.direct * 0.97 + s.common_temp * 0.90 + s.site_mgmt * 0.90 + s.general * 0.68
+    expected = min(max(raw, s.price * 0.75), s.price * 0.92)
+    assert s.threshold == int(expected)
+    assert s.price * 0.75 <= s.threshold <= s.price * 0.92
+
+
+def test_threshold_rule_override(conn, pid):
+    conn.execute("INSERT INTO rule(fy, key, value) VALUES ('R8', '基準価格_上限', '0.80')")
+    conn.commit()
+    s = calc.calculate(conn, pid).summary
+    assert s.threshold <= s.price * 0.80
+
+
+def test_bid_check(conn, pid):
+    d = calc.calculate(conn, pid)
+    c = calc.calculate(conn, pid, calc.COMPANY)
+    b = calc.bid_check(d, c, d.summary.threshold - 1000)
+    assert b.below_threshold and not b.over_planned
+    assert b.cost == c.summary.direct + d.summary.common_temp + d.summary.site_mgmt
+    assert b.margin == b.bid - b.cost
+
+
+def test_breakdown_hierarchy(conn, pid):
+    from sekisan.export import breakdown_rows
+    rows = breakdown_rows(calc.calculate(conn, pid))
+    names = [(d, n) for d, n, *_ in rows]
+    assert (1, "側溝工") in names and (2, "基礎工") in names and (3, "基礎砕石") in names
+    sokko = next(r for r in rows if r[1] == "側溝工")
+    assert sokko[6] == 0 + 335095 + 262080  # 基礎砕石は未設定で0
+    # 積上げ分は共通仮設費の下に出る
+    i_ct = names.index((0, "共通仮設費"))
+    assert names[i_ct + 1] == (1, "運搬費")
+
+
+def test_note_is_remembered(conn, pid):
+    item = conn.execute("SELECT id FROM project_item WHERE project_id=? AND seq=1", (pid,)).fetchone()["id"]
+    calc.set_note(conn, item, "土質は砂質土で見込む")
+    items = importer.parse_design_csv(SAMPLE / "設計書.csv")
+    pid2 = importer.create_project(conn, "次", "R8", items, "北部", WORK)
+    assert calc.calculate(conn, pid2).items[0].note == "土質は砂質土で見込む"
+
+
+def test_old_db_is_migrated(tmp_path):
+    import sqlite3
+    p = tmp_path / "old.sqlite"
+    old = sqlite3.connect(p)
+    old.execute("CREATE TABLE project_item (id INTEGER PRIMARY KEY, project_id INTEGER, seq INTEGER, level1 TEXT,"
+                " level2 TEXT, level3 TEXT, name TEXT, spec TEXT, unit TEXT, qty REAL, bukake_code TEXT)")
+    old.commit()
+    old.close()
+    c = db.connect(p)
+    cols = {r["name"] for r in c.execute("PRAGMA table_info(project_item)")}
+    assert {"category", "note"} <= cols

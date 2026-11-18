@@ -22,7 +22,18 @@ DEFAULT_COLUMNS: dict[str, list[str]] = {
     "unit": ["単位"],
     "qty": ["数量"],
     "bukake_code": ["コード", "単価コード", "歩掛コード", "代価コード"],
+    "category": ["区分", "費用区分"],
 }
+
+CATEGORIES = ("直接", "共通仮設", "現場管理")
+
+
+def normalize_category(s: str) -> str:
+    if "共通仮設" in s:
+        return "共通仮設"
+    if "現場管理" in s:
+        return "現場管理"
+    return "直接"
 
 
 def read_text(path: str | Path) -> str:
@@ -59,6 +70,7 @@ class DesignItem:
     unit: str
     qty: float
     bukake_code: str
+    category: str = "直接"
 
 
 def resolve_columns(headers: list[str], mapping: dict[str, list[str]] | None = None) -> dict[str, str | None]:
@@ -111,6 +123,7 @@ def parse_design_csv(path: str | Path, mapping_file: str | Path | None = None) -
                 unit=get(row, "unit"),
                 qty=qty,
                 bukake_code=get(row, "bukake_code"),
+                category=normalize_category(get(row, "category")),
             )
         )
     return items
@@ -131,10 +144,11 @@ def create_project(
     )
     pid = cur.lastrowid
     conn.executemany(
-        "INSERT INTO project_item(project_id, seq, level1, level2, level3, name, spec, unit, qty, bukake_code)"
-        " VALUES (?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO project_item(project_id, seq, level1, level2, level3, name, spec, unit, qty, bukake_code,"
+        " category) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         [
-            (pid, it.seq, it.level1, it.level2, it.level3, it.name, it.spec, it.unit, it.qty, it.bukake_code)
+            (pid, it.seq, it.level1, it.level2, it.level3, it.name, it.spec, it.unit, it.qty, it.bukake_code,
+             it.category)
             for it in items
         ],
     )
@@ -149,6 +163,8 @@ def create_project(
 #   歩掛構成.csv  : 歩掛コード,種類,資源コード,数量
 #   諸経費.csv    : 工種区分,費目,式,A,b,P下限,P上限
 #   ルール.csv    : 項目,値
+#   施工パッケージ.csv      : コード,名称,規格,単位,標準単価
+#   施工パッケージ構成.csv  : パッケージコード,種類,資源コード,構成比,基準単価
 
 
 def import_master_folder(conn: sqlite3.Connection, fy: str, folder: str | Path) -> dict[str, int]:
@@ -214,6 +230,31 @@ def import_master_folder(conn: sqlite3.Connection, fy: str, folder: str | Path) 
                 [(fy, r["項目"], r["値"]) for r in rows],
             )
             counts["ルール"] = len(rows)
+        if (folder / "施工パッケージ.csv").exists():
+            conn.execute("DELETE FROM package WHERE fy=?", (fy,))
+            rows = read_csv_rows(folder / "施工パッケージ.csv")
+            conn.executemany(
+                "INSERT INTO package(fy, code, name, spec, unit, std_price) VALUES (?,?,?,?,?,?)",
+                [(fy, r["コード"], r["名称"], r.get("規格", ""), r.get("単位", ""), _to_float(r["標準単価"]))
+                 for r in rows],
+            )
+            counts["施工パッケージ"] = len(rows)
+        if (folder / "施工パッケージ構成.csv").exists():
+            conn.execute("DELETE FROM package_component WHERE fy=?", (fy,))
+            rows = read_csv_rows(folder / "施工パッケージ構成.csv")
+            seqs = {}
+            data = []
+            for r in rows:
+                code = r["パッケージコード"]
+                seqs[code] = seqs.get(code, 0) + 1
+                data.append((fy, code, seqs[code], r["種類"], r["資源コード"], _to_float(r["構成比"]),
+                             _to_float(r["基準単価"])))
+            conn.executemany(
+                "INSERT INTO package_component(fy, package_code, seq, kind, res_code, ratio, base_price)"
+                " VALUES (?,?,?,?,?,?,?)",
+                data,
+            )
+            counts["施工パッケージ構成"] = len(rows)
     return counts
 
 

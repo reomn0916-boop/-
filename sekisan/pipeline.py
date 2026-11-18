@@ -40,9 +40,11 @@ def run(conn: sqlite3.Connection, project_id: int, out_dir: str | Path) -> dict[
     company = calc.calculate(conn, project_id, calc.COMPANY)
     out_dir = Path(out_dir)
     safe = "".join(ch for ch in project["name"] if ch not in '\\/:*?"<>|')[:60] or f"工事{project_id}"
-    est = export.export_estimate(out_dir / f"{safe}_積算結果.xlsx", project, design)
+    bid = calc.bid_check(design, company, int(project["bid_price"])) if project["bid_price"] else None
+    est = export.export_estimate(out_dir / f"{safe}_積算結果.xlsx", project, design, bid)
     bud = export.export_budget(out_dir / f"{safe}_実行予算.xlsx", project, design, company)
-    return {"design": design, "company": company, "files": [est, bud], "checks": verify(conn, project_id, design)}
+    return {"design": design, "company": company, "bid": bid, "files": [est, bud],
+            "checks": verify(conn, project_id, design)}
 
 
 def import_and_run(

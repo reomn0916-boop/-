@@ -8,14 +8,17 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
-    QMessageBox, QPlainTextEdit, QPushButton, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout,
-    QWidget,
+    QMessageBox, QPlainTextEdit, QPushButton, QTableWidget, QTableWidgetItem, QTabWidget, QTreeWidget,
+    QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
 from . import calc, db, importer, pipeline, settings
+from .export import breakdown_rows
 
-ITEM_COLS = ["No", "工種", "種別", "細別", "名称", "規格", "単位", "数量", "コード", "当てはめ", "単価", "金額"]
-CODE_COL = 8
+ITEM_COLS = ["No", "区分", "工種", "種別", "細別", "名称", "規格", "単位", "数量", "コード", "当てはめ", "単価", "金額",
+             "積算根拠メモ"]
+CAT_COL, CODE_COL, NOTE_COL = 1, 9, 13
+EDITABLE = {CAT_COL, CODE_COL, NOTE_COL}
 
 
 def _open_folder(path: Path) -> None:
@@ -43,6 +46,8 @@ class MainWindow(QMainWindow):
         tabs = QTabWidget()
         tabs.addTab(self._tab_run(), "一括処理")
         tabs.addTab(self._tab_items(), "工事・明細")
+        tabs.addTab(self._tab_tree(), "内訳書")
+        tabs.addTab(self._tab_bid(), "入札検討")
         tabs.addTab(self._tab_master(), "マスタ")
         tabs.addTab(self._tab_verify(), "答え合わせ")
         tabs.addTab(self._tab_settings(), "設定")
@@ -128,7 +133,8 @@ class MainWindow(QMainWindow):
         h.addWidget(b1)
         h.addWidget(b2)
         v.addLayout(h)
-        v.addWidget(QLabel("「コード」欄に歩掛コードを入れると、次の工事から同じ名称・規格・単位に自動で当たります。"))
+        v.addWidget(QLabel("「コード」に歩掛・施工パッケージ・単価のコードを入れると、次の工事から同じ名称・規格・単位に自動で当たります。"
+                           "「積算根拠メモ」も次の工事に引き継がれます。「区分」は 直接／共通仮設／現場管理（積上げ分）。"))
         self.items = QTableWidget(0, len(ITEM_COLS))
         self.items.setHorizontalHeaderLabels(ITEM_COLS)
         self.items.itemChanged.connect(self._code_edited)
@@ -147,18 +153,19 @@ class MainWindow(QMainWindow):
         self.items.setRowCount(0)
         if pid is None:
             self.items.blockSignals(False)
+            self._load_tree(None)
             return
         res = calc.calculate(self.conn, pid)
+        self._load_tree(res)
         self.items.setRowCount(len(res.items))
         for r, i in enumerate(res.items):
-            vals = [i.seq, i.level1, i.level2, i.level3, i.name, i.spec, i.unit, f"{i.qty:g}", i.code, i.how,
-                    f"{i.unit_price:,.0f}", f"{i.amount:,}"]
+            vals = [i.seq, i.category, i.level1, i.level2, i.level3, i.name, i.spec, i.unit, f"{i.qty:g}", i.code,
+                    i.how, f"{i.unit_price:,.0f}", f"{i.amount:,}", i.note]
             for c, val in enumerate(vals):
                 cell = QTableWidgetItem(str(val))
-                if c != CODE_COL:
+                if c not in EDITABLE:
                     cell.setFlags(cell.flags() & ~Qt.ItemIsEditable)
-                if c == CODE_COL:
-                    cell.setData(Qt.UserRole, i.item_id)
+                cell.setData(Qt.UserRole, i.item_id)
                 if i.how == "未設定":
                     cell.setBackground(Qt.yellow)
                 self.items.setItem(r, c, cell)
@@ -167,13 +174,21 @@ class MainWindow(QMainWindow):
         s = res.summary
         self.items_sum.setText(
             f"直接工事費 {s.direct:,} 円　工事価格 {s.price:,} 円　工事費計 {s.total:,} 円　"
-            f"未設定 {len(res.unresolved)} 件"
+            f"未設定 {len(res.unresolved)} 件　調査基準価格の試算 {s.threshold:,} 円"
         )
+        self.bid_in.clear()
+        self._load_bid()
 
     def _code_edited(self, cell: QTableWidgetItem) -> None:
-        if cell.column() != CODE_COL:
+        item_id, text = cell.data(Qt.UserRole), cell.text().strip()
+        if cell.column() == CODE_COL:
+            calc.assign_code(self.conn, item_id, text, remember=True)
+        elif cell.column() == NOTE_COL:
+            calc.set_note(self.conn, item_id, text, remember=True)
+        elif cell.column() == CAT_COL:
+            calc.set_category(self.conn, item_id, importer.normalize_category(text))
+        else:
             return
-        calc.assign_code(self.conn, cell.data(Qt.UserRole), cell.text().strip(), remember=True)
         self._load_items()
 
     def _export_current(self) -> None:
@@ -184,6 +199,115 @@ class MainWindow(QMainWindow):
         if d:
             res = pipeline.run(self.conn, pid, d)
             QMessageBox.information(self, "出力しました", "\n".join(str(p) for p in res["files"]))
+
+    # ------------------------------------------------------------ 内訳書（階層）
+    def _tab_tree(self) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.addWidget(QLabel("「工事・明細」で選んだ工事の内訳書を、工種 → 種別 → 細別 の階層で表示します。"))
+        self.tree = QTreeWidget()
+        self.tree.setHeaderLabels(["費目・工種・種別・細別", "規格", "単位", "数量", "単価", "金額", "摘要"])
+        v.addWidget(self.tree, 1)
+        return w
+
+    def _load_tree(self, res: calc.Result | None) -> None:
+        self.tree.clear()
+        if res is None:
+            return
+        parents: dict[int, QTreeWidgetItem] = {}
+        for depth, name, spec, unit, qty, price, amount, note in breakdown_rows(res):
+            vals = [name, spec, unit, "" if qty is None else f"{qty:g}",
+                    "" if price is None else f"{price:,.0f}", f"{amount:,}", note]
+            node = QTreeWidgetItem(vals)
+            for c in (3, 4, 5):
+                node.setTextAlignment(c, Qt.AlignRight | Qt.AlignVCenter)
+            parent = parents.get(depth - 1) if depth > 0 else None
+            (parent.addChild(node) if parent else self.tree.addTopLevelItem(node))
+            parents[depth] = node
+            if depth == 0:
+                f = node.font(0)
+                f.setBold(True)
+                for c in range(7):
+                    node.setFont(c, f)
+        self.tree.expandAll()
+        for c in range(7):
+            self.tree.resizeColumnToContents(c)
+
+    # ------------------------------------------------------------ 入札検討
+    def _tab_bid(self) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        h = QHBoxLayout()
+        h.addWidget(QLabel("入札額（税抜・円）"))
+        self.bid_in = QLineEdit()
+        self.bid_in.setPlaceholderText("例: 1350000")
+        h.addWidget(self.bid_in)
+        b = QPushButton("検討する")
+        b.clicked.connect(self._do_bid)
+        h.addWidget(b)
+        b2 = QPushButton("基準価格ちょうどにする")
+        b2.clicked.connect(self._bid_at_threshold)
+        h.addWidget(b2)
+        v.addLayout(h)
+        self.bid_out = QTableWidget(0, 3)
+        self.bid_out.setHorizontalHeaderLabels(["項目", "金額（円）", "対予定価格"])
+        v.addWidget(self.bid_out, 1)
+        self.bid_note = QLabel("基準価格の式は年度のルール表（ルール.csv）で発注者ごとに変えられます。試算なので、必ず発注者の公表内容と照らしてください。")
+        self.bid_note.setWordWrap(True)
+        v.addWidget(self.bid_note)
+        return w
+
+    def _bid_at_threshold(self) -> None:
+        pid = self._current_pid()
+        if pid is not None:
+            self.bid_in.setText(str(calc.calculate(self.conn, pid).summary.threshold))
+            self._do_bid()
+
+    def _do_bid(self) -> None:
+        pid = self._current_pid()
+        if pid is None:
+            return
+        try:
+            bid = int(float(self.bid_in.text().replace(",", "") or 0))
+        except ValueError:
+            QMessageBox.warning(self, "入力", "入札額は数字で入れてください")
+            return
+        calc.set_bid(self.conn, pid, bid)
+        self._load_bid()
+
+    def _load_bid(self) -> None:
+        pid = self._current_pid()
+        self.bid_out.setRowCount(0)
+        if pid is None:
+            return
+        p = self.conn.execute("SELECT bid_price FROM project WHERE id=?", (pid,)).fetchone()
+        d = calc.calculate(self.conn, pid)
+        c = calc.calculate(self.conn, pid, calc.COMPANY)
+        bid = int(p["bid_price"] or 0)
+        if bid and not self.bid_in.text():
+            self.bid_in.setText(str(bid))
+        b = calc.bid_check(d, c, bid)
+        price = d.summary.price or 1
+        rows = [("予定価格の見込み（工事価格）", b.planned), ("調査基準価格・最低制限価格の試算", b.threshold),
+                ("実行原価の見込み", b.cost)]
+        if bid:
+            rows += [("入札額", bid), ("粗利の見込み（入札額 − 実行原価）", b.margin)]
+        self.bid_out.setRowCount(len(rows))
+        for r, (name, amt) in enumerate(rows):
+            for col, val in enumerate([name, f"{amt:,}", f"{amt / price * 100:.2f}%"]):
+                cell = QTableWidgetItem(val)
+                if name == "入札額" and (b.below_threshold or b.over_planned):
+                    cell.setBackground(Qt.yellow)
+                self.bid_out.setItem(r, col, cell)
+        self.bid_out.resizeColumnsToContents()
+        if bid and b.below_threshold:
+            self.bid_note.setText("⚠ 入札額が基準価格の試算を下回っています（失格・調査の対象になるおそれ）。")
+        elif bid and b.over_planned:
+            self.bid_note.setText("⚠ 入札額が予定価格の見込みを上回っています。")
+        elif bid and b.margin < 0:
+            self.bid_note.setText("⚠ 実行原価の見込みを下回る入札額です（赤字の見込み）。")
+        else:
+            self.bid_note.setText("基準価格の式は年度のルール表（ルール.csv）で発注者ごとに変えられます。試算なので、必ず発注者の公表内容と照らしてください。")
 
     # ------------------------------------------------------------ マスタ
     def _tab_master(self) -> QWidget:

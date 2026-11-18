@@ -110,6 +110,28 @@ CREATE TABLE IF NOT EXISTS project_item (
     bukake_code TEXT NOT NULL DEFAULT ''
 );
 
+-- 施工パッケージ（東京地区の標準単価を、機労材の構成比で地域・時期に補正する）
+CREATE TABLE IF NOT EXISTS package (
+    fy TEXT NOT NULL,
+    code TEXT NOT NULL,
+    name TEXT NOT NULL,
+    spec TEXT NOT NULL DEFAULT '',
+    unit TEXT NOT NULL DEFAULT '',
+    std_price REAL NOT NULL,           -- 標準単価（東京地区・基準年月）
+    PRIMARY KEY (fy, code)
+);
+
+CREATE TABLE IF NOT EXISTS package_component (
+    fy TEXT NOT NULL,
+    package_code TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    kind TEXT NOT NULL,                -- 機械 / 労務 / 材料 / 市場単価
+    res_code TEXT NOT NULL,            -- 代表機労材のコード（単価.csv のコード）
+    ratio REAL NOT NULL,               -- 構成比（0〜1）
+    base_price REAL NOT NULL,          -- 東京地区の基準単価
+    PRIMARY KEY (fy, package_code, seq)
+);
+
 -- 外注していた頃の積算結果（答え合わせ用）
 CREATE TABLE IF NOT EXISTS reference_result (
     project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
@@ -128,4 +150,21 @@ def connect(path: str | Path) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = DELETE")  # 共有フォルダではWAL不可
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _add_column(conn: sqlite3.Connection, table: str, col: str, decl: str) -> None:
+    cols = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+    if col not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """古い版で作ったデータファイルに、後から増えた列を足す。"""
+    # 区分: 直接 / 共通仮設 / 現場管理（共通仮設・現場管理は率に加える積上げ分）
+    _add_column(conn, "project_item", "category", "TEXT NOT NULL DEFAULT '直接'")
+    _add_column(conn, "project_item", "note", "TEXT NOT NULL DEFAULT ''")
+    _add_column(conn, "item_mapping", "note", "TEXT NOT NULL DEFAULT ''")  # 積算根拠のメモ（次の工事にも出る）
+    _add_column(conn, "project", "bid_price", "REAL NOT NULL DEFAULT 0")   # 入札額（税抜）
+    conn.commit()
