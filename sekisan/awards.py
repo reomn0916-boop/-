@@ -19,6 +19,7 @@ NUMS = {"planned", "threshold", "award_price", "our_bid", "our_estimate"}
 
 def add(conn: sqlite3.Connection, **kw) -> int:
     data = {k: kw.get(k, 0 if k in NUMS else "") for k in FIELDS}
+    audit.require(conn, "edit")
     if not data["name"]:
         raise ValueError("工事名を入れてください")
     with conn:
@@ -29,6 +30,7 @@ def add(conn: sqlite3.Connection, **kw) -> int:
 
 
 def delete(conn: sqlite3.Connection, award_id: int) -> None:
+    audit.require(conn, "edit")
     with conn:
         conn.execute("DELETE FROM award WHERE id=?", (award_id,))
 

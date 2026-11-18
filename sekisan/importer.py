@@ -183,6 +183,7 @@ def create_project(
 
 def import_master_folder(conn: sqlite3.Connection, fy: str, folder: str | Path) -> dict[str, int]:
     """年度のマスタを丸ごと入れ替える（同じ年度の古い内容は消える）。"""
+    audit.require(conn, "master")
     folder = Path(folder)
     counts: dict[str, int] = {}
     with conn:
@@ -305,6 +306,7 @@ def import_master_folder(conn: sqlite3.Connection, fy: str, folder: str | Path) 
 
 def import_company_prices(conn: sqlite3.Connection, path: str | Path) -> int:
     """自社単価.csv : 種類,コード,名称,単位,単価,備考（同じコードは上書き）"""
+    audit.require(conn, "master")
     rows = read_csv_rows(path)
     with conn:
         conn.executemany(
@@ -332,6 +334,7 @@ def import_reference(conn: sqlite3.Connection, project_id: int, path: str | Path
 
 def import_orderer_rules(conn: sqlite3.Connection, path: str | Path) -> int:
     """発注者.csv : 発注者,項目,値（同じ発注者・項目は上書き）"""
+    audit.require(conn, "master")
     rows = read_csv_rows(path)
     with conn:
         conn.executemany(

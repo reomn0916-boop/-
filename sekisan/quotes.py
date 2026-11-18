@@ -4,6 +4,8 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
+from . import audit
+
 RULES = ("最低", "平均", "指定")
 
 
@@ -52,6 +54,7 @@ def save(conn: sqlite3.Connection, code: str, name: str, spec: str = "", unit: s
          fixed_price: float = 0, note: str = "") -> None:
     if rule not in RULES:
         raise ValueError(f"採用の決め方は {RULES} のどれかです")
+    audit.require(conn, "edit")
     with conn:
         conn.execute(
             "INSERT INTO quote(code, name, spec, unit, rule, fixed_price, note) VALUES (?,?,?,?,?,?,?)"
@@ -62,6 +65,7 @@ def save(conn: sqlite3.Connection, code: str, name: str, spec: str = "", unit: s
 
 
 def add_offer(conn: sqlite3.Connection, code: str, vendor: str, price: float, date: str = "", file: str = "") -> int:
+    audit.require(conn, "edit")
     with conn:
         cur = conn.execute("INSERT INTO quote_offer(code, vendor, price, date, file) VALUES (?,?,?,?,?)",
                            (code, vendor, price, date, file))
@@ -69,11 +73,13 @@ def add_offer(conn: sqlite3.Connection, code: str, vendor: str, price: float, da
 
 
 def delete_offer(conn: sqlite3.Connection, offer_id: int) -> None:
+    audit.require(conn, "edit")
     with conn:
         conn.execute("DELETE FROM quote_offer WHERE id=?", (offer_id,))
 
 
 def delete(conn: sqlite3.Connection, code: str) -> None:
+    audit.require(conn, "edit")
     with conn:
         conn.execute("DELETE FROM quote_offer WHERE code=?", (code,))
         conn.execute("DELETE FROM quote WHERE code=?", (code,))

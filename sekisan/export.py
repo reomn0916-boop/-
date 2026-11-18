@@ -265,3 +265,126 @@ def export_change(path: str | Path, project: dict, comp) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(path)
     return path
+
+
+def _save(wb, path) -> Path:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    wb.save(path)
+    return path
+
+
+def _title(ws, text: str) -> None:
+    ws["A1"] = text
+    ws["A1"].font = Font(bold=True, size=14)
+
+
+def export_lowbid(path: str | Path, project: dict, design: Result, company: Result, bid: int,
+                  quotes_used: list, company_prices: list) -> Path:
+    """⑦ 低入札価格調査の資料（下書き）：入札額の内訳、明細ごとの設計と実行の単価・根拠、見積、手持ち資源。"""
+    from .calc import bid_check
+    b = bid_check(design, company, bid)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "総括"
+    _title(ws, f"低入札価格調査 資料（下書き）　{project['name']}")
+    d, c = design.summary, company.summary
+    cost_ct, cost_sm = d.common_temp, d.site_mgmt
+    rows = [
+        ["入札額（税抜）", bid, f"{b.ratio * 100:.2f}%"],
+        ["予定価格の見込み", b.planned, "100.00%"],
+        ["調査基準価格の試算", b.threshold, f"{b.threshold / b.planned * 100:.2f}%" if b.planned else ""],
+        ["直接工事費（実行）", c.direct, ""],
+        ["共通仮設費（見込み）", cost_ct, ""],
+        ["現場管理費（見込み）", cost_sm, ""],
+        ["実行原価の計", b.cost, f"{b.cost / b.planned * 100:.2f}%" if b.planned else ""],
+        ["一般管理費・利益にあたる分", b.margin, f"{b.margin / bid * 100:.2f}%（入札額に対して）" if bid else ""],
+    ]
+    _table(ws, 3, ["項目", "金額（円）", "割合"], rows, {2: YEN}, [32, 18, 26])
+    r = 3 + len(rows) + 2
+    ws.cell(r, 1, "※ 実行原価は自社単価（日当・保有機械・下請け）と採用した見積単価で積算したもの。"
+                  "提出様式は発注者の指定に合わせること。")
+
+    ws2 = wb.create_sheet("明細ごとの単価と根拠")
+    rows = []
+    for di, ci in zip(design.items, company.items):
+        srcs = sorted({l.source for l in (ci.detail.lines if ci.detail else [])} - {"歩掛"})
+        basis = "・".join(srcs) if srcs else ci.how
+        rows.append([di.seq, di.name, di.spec, di.unit, di.qty, di.unit_price, ci.unit_price,
+                     (ci.unit_price / di.unit_price) if di.unit_price else None, ci.amount, basis])
+    _table(ws2, 1, ["No", "名称", "規格", "単位", "数量", "設計単価", "実行単価", "比率", "実行金額", "根拠"], rows,
+           {5: NUM, 6: YEN, 7: YEN, 8: "0.0%", 9: YEN}, [5, 22, 20, 6, 10, 12, 12, 8, 14, 22])
+
+    ws3 = wb.create_sheet("見積の一覧")
+    rows = [[q.code, q.name, q.spec, q.unit, o["vendor"], o["price"], o["date"], "採用" if o["price"] == q.adopted else ""]
+            for q in quotes_used for o in q.offers]
+    _table(ws3, 1, ["コード", "名称", "規格", "単位", "業者", "単価", "日付", "採用"], rows, {6: YEN},
+           [10, 22, 16, 6, 16, 12, 12, 6])
+
+    ws4 = wb.create_sheet("手持ちの労務・機械")
+    rows = [[r["kind"], r["code"], r["name"], r["unit"], r["price"], r["note"]] for r in company_prices]
+    _table(ws4, 1, ["種類", "コード", "名称", "単位", "自社単価", "備考"], rows, {5: YEN}, [8, 10, 28, 6, 12, 24])
+    return _save(wb, path)
+
+
+def export_inquiry(path: str | Path, project: dict, rows) -> Path:
+    """⑥ 質疑書"""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "質疑書"
+    _title(ws, "質　疑　書")
+    ws["A3"], ws["B3"] = "工事名", project["name"]
+    ws["A4"], ws["B4"] = "発注者", project.get("orderer", "")
+    data = [[i + 1, r["place"], r["question"], r["answer"]] for i, r in enumerate(rows)]
+    _table(ws, 6, ["No", "該当箇所", "質問事項", "回答"], data, None, [5, 14, 60, 40])
+    for k in range(len(data)):
+        for col in (3, 4):
+            ws.cell(7 + k, col).alignment = Alignment(wrap_text=True, vertical="top")
+    return _save(wb, path)
+
+
+def export_qty_sheet(path: str | Path, project: dict, rows) -> Path:
+    """⑤ 数量計算書"""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "数量計算書"
+    _title(ws, f"数量計算書　{project['name']}")
+    data = [list(r) for r in rows]
+    _table(ws, 3, ["No", "名称", "規格", "単位", "場所・測点", "計算式", "数量", "明細の数量"], data,
+           {7: NUM, 8: NUM}, [5, 22, 18, 6, 16, 30, 12, 12])
+    for k, r in enumerate(rows):
+        if r[7] is not None:
+            for col in range(1, 9):
+                ws.cell(4 + k, col).font = Font(bold=True)
+                ws.cell(4 + k, col).fill = HEAD_FILL
+                if col == 8 and abs((r[6] or 0) - (r[7] or 0)) > 0.005:
+                    ws.cell(4 + k, col).fill = WARN_FILL
+    return _save(wb, path)
+
+
+def export_agreement(path: str | Path, project: dict, ag, prog=None) -> Path:
+    """⑧ 単価合意書（目安）と出来高内訳書"""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "単価合意書"
+    _title(ws, f"単価合意書（目安）　{project['name']}")
+    ws["A3"], ws["B3"] = "契約額（税抜）", ag.contract_price
+    ws["A4"], ws["B4"] = "工事価格（設計）", ag.planned
+    ws["A5"], ws["B5"] = "請負比率", ag.ratio
+    ws["B3"].number_format = ws["B4"].number_format = YEN
+    ws["B5"].number_format = "0.0000"
+    data = [[a.seq, a.name, a.spec, a.unit, a.qty, a.design_price, a.agreed_price, a.agreed_amount] for a in ag.items]
+    _table(ws, 7, ["No", "名称", "規格", "単位", "数量", "設計単価", "合意単価", "合意金額"], data,
+           {5: NUM, 6: YEN, 7: YEN, 8: YEN}, [5, 22, 20, 6, 10, 12, 12, 14])
+    if prog:
+        ws2 = wb.create_sheet("出来高内訳書")
+        _title(ws2, f"出来高内訳書　{prog.period}")
+        data = [[r.seq, r.name, r.unit, r.qty, r.agreed_price, r.done_qty, r.rate, r.done_amount] for r in prog.rows]
+        last = _table(ws2, 3, ["No", "名称", "単位", "契約数量", "合意単価", "出来高数量（累計）", "出来高率", "出来高金額"],
+                      data, {4: NUM, 5: YEN, 6: NUM, 7: "0.0%", 8: YEN}, [5, 24, 6, 12, 12, 16, 10, 14])
+        summ = [["出来高金額（直接工事費ベース）", prog.done_total], ["出来高率", prog.done_ratio],
+                ["契約額 × 出来高率", prog.contract_done], ["前回までの部分払い", prog.paid_before],
+                ["今回の部分払い限度額", prog.payable]]
+        _table(ws2, last + 2, ["項目", "金額"], summ, {2: YEN})
+        ws2.cell(last + 4, 2).number_format = "0.0%"
+    return _save(wb, path)

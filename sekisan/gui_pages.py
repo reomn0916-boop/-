@@ -96,7 +96,8 @@ class PagesMixin:
     def guard(self, fn, *args, **kw):
         """ロック中・権限なしなどを画面に出す。"""
         try:
-            return fn(*args, **kw)
+            r = fn(*args, **kw)
+            return True if r is None else r
         except (audit.Locked, PermissionError, ValueError) as e:
             QMessageBox.warning(self, "できませんでした", str(e))
             return None
@@ -423,10 +424,16 @@ class PagesMixin:
     def _pdf_card(self) -> Card:
         c = Card("金抜き設計書PDFと照合", "PDFの文字から各明細の名称と数量を探し、取り込んだCSVと食い違いがないか確かめます。"
                  "（スキャンした画像のPDFは読めません）")
+        h = QHBoxLayout()
         b = QPushButton("PDFを選ぶ…")
         b.setObjectName("Primary")
         b.clicked.connect(self._do_pdf)
-        c.lay.addWidget(b, 0, Qt.AlignLeft)
+        q = QPushButton("食い違いを質疑書へ")
+        q.clicked.connect(self._inquiry_from_pdf)
+        h.addWidget(b)
+        h.addWidget(q)
+        h.addStretch(1)
+        c.lay.addLayout(h)
         return c
 
     def _pdf_table(self) -> QTableWidget:
@@ -447,6 +454,7 @@ class PagesMixin:
         self.show_pdf_result(res)
 
     def show_pdf_result(self, res: list[pdfcheck.PdfCheck]) -> None:
+        self.last_pdf = res
         tone = {"一致": "ok", "数量違い": "bad", "見つからない": "warn"}
         self.pdf_table.setRowCount(len(res))
         for i, r in enumerate(res):

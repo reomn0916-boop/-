@@ -231,6 +231,56 @@ CREATE TABLE IF NOT EXISTS audit_log (
     detail TEXT NOT NULL DEFAULT ''
 );
 
+-- ③ 利用者と権限（空なら全員が管理者として動く）
+CREATE TABLE IF NOT EXISTS app_user (
+    name TEXT PRIMARY KEY,
+    role TEXT NOT NULL            -- 管理者 / 確認 / 積算 / 閲覧
+);
+
+-- ④ 入札スケジュールと提出物
+CREATE TABLE IF NOT EXISTS project_schedule (
+    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,           -- 公告日 / 質問締切 / 回答日 / 入札締切 / 開札日 / 工期開始 / 工期終了
+    date TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (project_id, kind)
+);
+
+CREATE TABLE IF NOT EXISTS project_checklist (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    item TEXT NOT NULL,
+    done INTEGER NOT NULL DEFAULT 0
+);
+
+-- ⑤ 数量計算書（明細ごとの計算式）
+CREATE TABLE IF NOT EXISTS qty_calc (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id INTEGER NOT NULL REFERENCES project_item(id) ON DELETE CASCADE,
+    seq INTEGER NOT NULL,
+    label TEXT NOT NULL DEFAULT '',  -- 場所・測点など
+    expr TEXT NOT NULL,              -- 例: 10.5×2.0×0.3
+    value REAL NOT NULL
+);
+
+-- ⑥ 質疑書
+CREATE TABLE IF NOT EXISTS inquiry (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    place TEXT NOT NULL DEFAULT '',  -- 該当箇所
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+-- ⑧ 出来高（部分払い）
+CREATE TABLE IF NOT EXISTS progress (
+    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    period TEXT NOT NULL,            -- 例: 第1回（2027-01）
+    item_id INTEGER NOT NULL REFERENCES project_item(id) ON DELETE CASCADE,
+    qty REAL NOT NULL,               -- その回までの累計出来高数量
+    PRIMARY KEY (project_id, period, item_id)
+);
+
 -- 外注していた頃の積算結果（答え合わせ用）
 CREATE TABLE IF NOT EXISTS reference_result (
     project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
@@ -275,4 +325,5 @@ def _migrate(conn: sqlite3.Connection) -> None:
     _add_column(conn, "project", "created_by", "TEXT NOT NULL DEFAULT ''")
     _add_column(conn, "project", "checked_by", "TEXT NOT NULL DEFAULT ''")
     _add_column(conn, "project", "checked_at", "TEXT NOT NULL DEFAULT ''")
+    _add_column(conn, "project", "contract_price", "REAL NOT NULL DEFAULT 0")  # 契約額（税抜）
     conn.commit()

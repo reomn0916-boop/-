@@ -32,6 +32,8 @@ DEFAULT_RULES = {
     # 電子入札用の内訳書CSV
     "電子入札_文字コード": "cp932",
     "内訳書_階層の深さ": "4",     # 1=工種まで 2=種別まで 3=細別まで 4=明細まで
+    # 部分払い：出来高に掛ける割合（請負代金額×出来高率×9/10 が限度、の考え方）
+    "部分払_割合": "0.9",
 }
 
 _MODES = {"切捨て": ROUND_FLOOR, "四捨五入": ROUND_HALF_UP, "切上げ": ROUND_CEILING}
@@ -503,6 +505,7 @@ def _item_edit(conn: sqlite3.Connection, item_id: int, action: str, detail: str)
 
 
 def set_bid(conn: sqlite3.Connection, project_id: int, bid: float) -> None:
+    audit.require(conn, "edit")
     with conn:
         conn.execute("UPDATE project SET bid_price=? WHERE id=?", (bid, project_id))
         audit.log(conn, project_id, "入札額", f"{bid:,.0f}")

@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
 
 from . import audit, awards, calc, db, importer, pipeline, settings, theme
 from .gui_pages import AddItemDialog, PagesMixin
+from .gui_pages2 import PagesMixin2
+from . import backup
 from .export import breakdown_rows
 from .importer import normalize_category
 from .theme import C, color
@@ -30,15 +32,18 @@ PAGES = [
     ("tree", "内訳書", "工事費内訳書", "直接工事費 → 工種 → 種別 → 細別 の階層で金額を確認します。", None),
     ("bid", "入札検討", "入札検討", "予定価格・基準価格・実行原価の位置関係を見ながら入札額を決めます。", None),
     ("project", "工事の設定", "工事の設定", "発注者・単価の適用日・補正（割増）・確認と提出を設定します。", "工事"),
+    ("schedule", "スケジュール", "入札スケジュール", "公告から開札・工期までの日程と、提出物のチェックリストです。", None),
     ("change", "設計変更", "設計変更", "変更前と変更後を並べて、数量・金額の増減を確認します。スライドの目安も出せます。", None),
+    ("after", "受注後", "受注後（単価合意・出来高）", "契約額から合意単価を出し、出来高と部分払いの限度額を計算します。", None),
     ("verify", "照合・答え合わせ", "照合・答え合わせ", "金抜き設計書PDFや、外注していた頃の積算結果と比べてズレを見つけます。", "確認"),
+    ("inquiry", "質疑書", "質疑書", "設計書の食い違い・不明な点を、発注者への質問にまとめます。", None),
     ("history", "変更履歴", "変更履歴", "誰が・いつ・何を変えたかの記録です。", None),
     ("quotes", "見積単価", "見積単価", "単価表にない資材・工種の業者見積を比べ、採用単価を決めます。", "データ"),
     ("awards", "落札実績", "落札実績", "過去の落札結果から、落札率や自社積算の精度を見ます。入札検討の予定価格の見込みにも使います。", None),
-    ("master", "マスタ", "マスタ管理", "年度ごとの単価・歩掛・諸経費率・補正・機械損料、発注者ごとの設定を取り込みます。", None),
-    ("settings", "設定", "設定", "データファイルの場所と担当者名など、このパソコンの設定です。", None),
+    ("master", "マスタ", "マスタ管理", "年度ごとの単価・歩掛・諸経費率・補正・機械損料・公表単価、発注者ごとの設定を取り込みます。", None),
+    ("settings", "設定", "設定", "データファイル・担当者名・利用者と権限・バックアップの設定です。", None),
 ]
-PROJECT_PAGES = {"items", "tree", "bid", "project", "change", "verify", "history"}
+PROJECT_PAGES = {"items", "tree", "bid", "project", "schedule", "change", "after", "verify", "inquiry", "history"}
 
 
 def open_path(path: Path) -> None:
@@ -87,13 +92,17 @@ class ItemFilter(QSortFilterProxyModel):
         return True
 
 
-class MainWindow(PagesMixin, QMainWindow):
+class MainWindow(PagesMixin, PagesMixin2, QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("公共工事 積算アプリ")
         self.resize(1360, 840)
         self.setMinimumSize(1100, 680)
         self.conn = db.connect(settings.db_path())
+        try:  # ⑩ 前回から1日たっていれば自動でバックアップ
+            self.auto_backup = backup.auto(settings.db_path(), settings.load().get("backup_dir") or None)
+        except Exception:  # バックアップ先に書けなくても起動は止めない
+            self.auto_backup = None
         self.pid: int | None = None
         self.design: calc.Result | None = None
         self.company: calc.Result | None = None
@@ -115,7 +124,8 @@ class MainWindow(PagesMixin, QMainWindow):
         builders = {"new": self._page_new, "items": self._page_items, "tree": self._page_tree,
                     "bid": self._page_bid, "verify": self._page_verify, "master": self._page_master,
                     "settings": self._page_settings, "project": self._page_project, "change": self._page_change,
-                    "history": self._page_history, "quotes": self._page_quotes, "awards": self._page_awards}
+                    "history": self._page_history, "quotes": self._page_quotes, "awards": self._page_awards,
+                    "schedule": self._page_schedule, "after": self._page_after, "inquiry": self._page_inquiry}
         for key, *_ in PAGES:
             self.pages[key] = self.stack.addWidget(builders[key]())
         cv.addWidget(self.stack, 1)
@@ -160,6 +170,10 @@ class MainWindow(PagesMixin, QMainWindow):
             self.nav_buttons[key] = btn
             v.addWidget(btn)
         v.addStretch(1)
+        self.side_role = QLabel()
+        self.side_role.setObjectName("SidebarFoot")
+        self.side_role.setStyleSheet("color: #C9D3E0; font-weight: 700; padding-bottom: 0;")
+        v.addWidget(self.side_role)
         self.side_foot = QLabel()
         self.side_foot.setObjectName("SidebarFoot")
         self.side_foot.setWordWrap(True)
@@ -240,10 +254,16 @@ class MainWindow(PagesMixin, QMainWindow):
             self._refresh_awards()
         if key == "history":
             self._refresh_history()
+        if key == "settings":
+            self._refresh_users()
+            self._refresh_backups()
 
     def _update_status(self) -> None:
         p = settings.db_path()
-        self.status.showMessage(f"データファイル: {p}")
+        msg = f"データファイル: {p}"
+        if getattr(self, "auto_backup", None):
+            msg += f"　／　自動バックアップしました: {self.auto_backup.name}"
+        self.status.showMessage(msg)
         self.side_foot.setText(f"データ: {p.name}\n{p.parent}")
 
     # ================================================================ 工事の切り替え・再計算
@@ -279,6 +299,10 @@ class MainWindow(PagesMixin, QMainWindow):
         self._refresh_project_page()
         self._refresh_change()
         self._refresh_history()
+        self._refresh_schedule()
+        self._refresh_inquiry()
+        self._refresh_after()
+        self._refresh_users()
 
     def _project_row(self):
         return self.conn.execute("SELECT * FROM project WHERE id=?", (self.pid,)).fetchone() if self.pid else None
@@ -380,8 +404,14 @@ class MainWindow(PagesMixin, QMainWindow):
         self.recent.itemDoubleClicked.connect(self._open_recent)
         right.lay.addWidget(self.recent, 1)
 
+        rcol = QVBoxLayout()
+        rcol.setSpacing(14)
+        rcol.addWidget(right, 3)
+        dl = self._deadline_card()
+        dl.setFixedWidth(360)
+        rcol.addWidget(dl, 2)
         row.addLayout(left, 1)
-        row.addWidget(right)
+        row.addLayout(rcol)
         v.addLayout(row, 1)
         self._fill_master_choices()
         return w
@@ -394,8 +424,8 @@ class MainWindow(PagesMixin, QMainWindow):
             cur = combo.currentText()
             combo.clear()
             combo.addItems(vals)
-            if cur:
-                combo.setCurrentText(cur)
+            if cur or combo is self.n_orderer:
+                combo.setCurrentText(cur)  # 発注者は空欄から始める
 
     def _load_recent(self) -> None:
         if not hasattr(self, "recent"):
@@ -409,6 +439,7 @@ class MainWindow(PagesMixin, QMainWindow):
             it = QListWidgetItem("まだ工事がありません")
             it.setFlags(Qt.NoItemFlags)
             self.recent.addItem(it)
+        self._refresh_deadlines()
 
     def _open_recent(self, it: QListWidgetItem) -> None:
         pid = it.data(Qt.UserRole)
@@ -462,7 +493,7 @@ class MainWindow(PagesMixin, QMainWindow):
         self.search = QLineEdit()
         self.search.setPlaceholderText("名称・規格・コード・メモで絞り込み（Ctrl+F）")
         self.search.setClearButtonEnabled(True)
-        self.search.setMinimumWidth(320)
+        self.search.setMinimumWidth(280)
         self.search.textChanged.connect(self._filter_changed)
         self.only_unres = QCheckBox("未設定だけ表示")
         self.only_unres.toggled.connect(self._filter_changed)
@@ -471,18 +502,26 @@ class MainWindow(PagesMixin, QMainWindow):
         bar.addWidget(self.only_unres)
         bar.addWidget(self.count_pill)
         bar.addStretch(1)
-        ab = QPushButton("行を追加")
-        ab.clicked.connect(self._add_row)
-        dbt = QPushButton("行を削除")
-        dbt.clicked.connect(self._delete_row)
-        bar.addWidget(ab)
-        bar.addWidget(dbt)
-        rb = QPushButton("再計算（F5）")
-        rb.clicked.connect(self.recalc)
+        au = QPushButton("候補で一括当てはめ")
+        au.setToolTip("未設定の明細に、点数が高く迷いのない候補だけを当てます")
+        au.clicked.connect(self._auto_assign)
+        bar.addWidget(au)
+        from PySide6.QtWidgets import QMenu
+        more = QPushButton("その他の操作 ▾")
+        menu = QMenu(more)
+        menu.addAction("行を追加…", self._add_row)
+        menu.addAction("選んだ行を削除", self._delete_row)
+        menu.addSeparator()
+        menu.addAction("数量計算書…", self._open_qty)
+        menu.addAction("再計算（F5）", self.recalc)
+        menu.addSeparator()
+        menu.addAction("自社の書式で出力…", self._export_template)
+        menu.addAction("自社書式のひな形を選び直す…", self._choose_template)
+        more.setMenu(menu)
+        bar.addWidget(more)
         xb = QPushButton("Excelに出力")
         xb.setObjectName("Primary")
         xb.clicked.connect(self._export_current)
-        bar.addWidget(rb)
         bar.addWidget(xb)
         v.addLayout(bar)
 
@@ -522,10 +561,12 @@ class MainWindow(PagesMixin, QMainWindow):
         self.d_sub.setWordWrap(True)
         detail.lay.addWidget(self.d_sub)
         self.d_lines = QTableWidget(0, 5)
+        self.d_lines.setMinimumHeight(110)
         self.d_lines.setHorizontalHeaderLabels(["名称", "数量", "単価", "金額", "出どころ"])
         _style_table(self.d_lines)
         self.d_lines.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         detail.lay.addWidget(self.d_lines, 1)
+        detail.lay.addWidget(self._candidates_box())
         ml = QLabel("積算根拠メモ（次の工事にも表示されます）")
         ml.setObjectName("Muted")
         detail.lay.addWidget(ml)
@@ -609,6 +650,7 @@ class MainWindow(PagesMixin, QMainWindow):
 
     def _show_detail(self) -> None:
         it = self._selected()
+        self._show_candidates(it)
         self.d_lines.setRowCount(0)
         self.d_note.setEnabled(it is not None)
         self.d_save.setEnabled(it is not None)
@@ -618,11 +660,13 @@ class MainWindow(PagesMixin, QMainWindow):
             self.d_price.setText("")
             self.d_sub.setText("")
             self.d_note.setPlainText("")
+            self.d_lines.setVisible(False)
             return
         self.d_name.setText(f"{it.name}　{it.spec}")
         self.d_how.setText(it.how)
         self.d_how.set_tone({"未設定": "bad", "パッケージ": "info", "対応表": "info"}.get(it.how, "ok"))
         self.d_note.setPlainText(it.note)
+        self.d_lines.setVisible(it.how != "未設定")
         if it.how == "未設定":
             self.d_price.setText("—")
             self.d_sub.setText("表の「コード」欄をダブルクリックして、歩掛・施工パッケージ・単価のコードを入れてください。"
@@ -803,6 +847,9 @@ class MainWindow(PagesMixin, QMainWindow):
             b.clicked.connect(lambda _=False, f=fn: self.design and f())
             row.addWidget(b)
         row.addStretch(1)
+        lb = QPushButton("低入札調査の資料を出力…")
+        lb.clicked.connect(self._export_lowbid)
+        row.addWidget(lb)
         g.lay.addLayout(row)
         v.addWidget(g)
 
@@ -999,6 +1046,7 @@ class MainWindow(PagesMixin, QMainWindow):
         c2.lay.addStretch(1)
         row.addWidget(c2, 2)
         v.addLayout(row)
+        v.addWidget(self._public_price_card())
         self.m_banner = Banner()
         v.addWidget(self.m_banner)
         ov = Card("登録済みの年度")
@@ -1078,12 +1126,20 @@ class MainWindow(PagesMixin, QMainWindow):
         uh.addWidget(ub)
         uh.addStretch(1)
         u.lay.addLayout(uh)
-        v.addWidget(u)
+        row2 = QHBoxLayout()
+        row2.setSpacing(16)
+        row2.addWidget(u, 1)
+        k = Card("ショートカット")
+        k.lay.addWidget(QLabel("Ctrl+F　明細を絞り込む　／　F5　再計算\n明細の「コード」欄をダブルクリック　候補から選んで当てる"))
+        row2.addWidget(k, 1)
+        v.addLayout(row2)
         self.s_banner = Banner()
         v.addWidget(self.s_banner)
-        k = Card("ショートカット")
-        k.lay.addWidget(QLabel("Ctrl+F　明細を絞り込む\nF5　再計算\n明細の「コード」欄でダブルクリック　候補から選んで当てる"))
-        v.addWidget(k)
+        row3 = QHBoxLayout()
+        row3.setSpacing(16)
+        row3.addWidget(self._users_card(), 1)
+        row3.addWidget(self._backup_card(), 1)
+        v.addLayout(row3)
         v.addStretch(1)
         return w
 
@@ -1093,6 +1149,7 @@ class MainWindow(PagesMixin, QMainWindow):
         settings.save(s)
         self.s_banner.show_msg(f"担当者名を「{audit.current_user()}」にしました。", "ok")
         self._refresh_project_page()
+        self._refresh_users()
 
     def _pick_db(self) -> None:
         p, _ = QFileDialog.getSaveFileName(self, "データファイル", self.s_db.text(), "データ (*.sqlite)",
