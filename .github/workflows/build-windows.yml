@@ -1,0 +1,28 @@
+name: Windows版をビルド
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 必要なものを入れる
+        run: pip install -r requirements.txt pytest pyinstaller==6.11.1
+      - name: テスト
+        run: python -m pytest -q
+      - name: exeを作る
+        run: pyinstaller --noconfirm --windowed --name 積算アプリ launcher.py
+      - name: 見本データを同梱
+        shell: pwsh
+        run: Copy-Item -Recurse sample dist/積算アプリ/見本データ
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 積算アプリ-windows
+          path: dist/積算アプリ
