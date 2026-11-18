@@ -96,7 +96,7 @@ function loadPrefs() {
     for (const [k, v] of Object.entries(p)) prefs[k] = v && typeof v === 'object' && !Array.isArray(v) ? { ...prefs[k], ...v } : v;
   } catch { /* */ }
 }
-function setDirty(v) { dirty = v; $('#dirtyMark').hidden = !v; }
+function setDirty(v) { dirty = v; $('#dirtyMark').hidden = !v; const st = $('#saveState'); st.textContent = v ? '未保存の変更あり' : (fileName ? '保存済み' : '自動保存'); st.classList.toggle('dirty', v); }
 function updateTitle() {
   $('#docTitle').textContent = doc.name + (fileName ? `（${fileName}）` : '');
   document.title = `${doc.name} - 現場CAD PC`;
@@ -328,7 +328,7 @@ function dispColor(hex) {
 function drawBase() {
   const c = base.getContext('2d');
   c.setTransform(DPR, 0, 0, DPR, 0, 0);
-  c.fillStyle = prefs.dark ? '#14181d' : '#9aa3ad';
+  c.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--canvas').trim() || '#8e98a4';
   c.fillRect(0, 0, W, H);
   if (prefs.showSheet) drawPaper(c);
   else { c.fillStyle = prefs.dark ? '#0b0d10' : '#ffffff'; c.fillRect(0, 0, W, H); }
@@ -347,6 +347,7 @@ function drawPaper(c) {
   c.shadowColor = 'rgba(0,0,0,.35)'; c.shadowBlur = 10; c.shadowOffsetX = 2; c.shadowOffsetY = 3;
   c.fillStyle = prefs.dark ? '#0b0d10' : '#ffffff';
   c.beginPath(); cs.forEach((p, i) => (i ? c.lineTo(p.x, p.y) : c.moveTo(p.x, p.y))); c.closePath(); c.fill();
+  c.shadowColor = 'transparent'; c.strokeStyle = prefs.dark ? '#46586d' : 'rgba(0,0,0,.18)'; c.lineWidth = 1; c.stroke();
   c.restore();
   const o = toS(X.toM({ x: 0, y: 0 })), ex = toS(X.toM({ x: 1, y: 0 })), ey = toS(X.toM({ x: 0, y: 1 }));
   c.save();
@@ -547,6 +548,20 @@ function drawEnt(c, e, isSel, ghost = null) {
 }
 
 // 一時表示（コマンドの仮線）用の描画ヘルパー
+/** 角丸の札（作図中の数値・スナップの名前） */
+function pill(c, t, x, y, { fg = '#fff', bg = 'rgba(20,30,45,.86)', border = null, size = 11.5, align = 'left' } = {}) {
+  c.save();
+  c.font = `600 ${size}px ${FONT}`;
+  const w = c.measureText(t).width + 12, h = size + 9;
+  let x0 = align === 'center' ? x - w / 2 : x;
+  x0 = Math.min(Math.max(x0, 2), W - w - 2);
+  const y0 = Math.min(Math.max(y - h + 3, 2), H - h - 2);
+  c.beginPath(); c.roundRect(x0, y0, w, h, 5); c.fillStyle = bg; c.fill();
+  if (border) { c.strokeStyle = border; c.lineWidth = 1; c.stroke(); }
+  c.fillStyle = fg; c.textAlign = 'left'; c.textBaseline = 'middle';
+  c.fillText(t, x0 + 6, y0 + h / 2 + 0.5);
+  c.restore();
+}
 function previewApi(c) {
   const set = () => { c.strokeStyle = GHOST; c.fillStyle = GHOST; c.lineWidth = 1; c.setLineDash([]); };
   return {
@@ -554,7 +569,7 @@ function previewApi(c) {
     poly(pts, closed, dash) { if (pts.length < 2) return; set(); if (dash) c.setLineDash([5, 4]); pathOf(c, pts, closed); c.stroke(); c.setLineDash([]); },
     circle(cn, r, dash) { set(); if (dash) c.setLineDash([5, 4]); const s = toS(cn); c.beginPath(); c.arc(s.x, s.y, Math.abs(r) * view.s, 0, 7); c.stroke(); c.setLineDash([]); },
     mark(p) { set(); const s = toS(p); c.beginPath(); c.arc(s.x, s.y, 3, 0, 7); c.fill(); },
-    text(p, t, dx = 10, dy = -10) { const s = toS(p); label(c, t, s.x + dx, s.y + dy, GHOST, 'left', 12); },
+    text(p, t, dx = 14, dy = -12) { const s = toS(p); pill(c, t, s.x + dx, s.y + dy, { bg: GHOST }); },
     ents(list) { for (const e of list) drawEnt(c, e, false, GHOST); },
   };
 }
@@ -565,6 +580,7 @@ let hoverEnt = null;    // 図形選択モードでカーソル下の図形
 let winSel = null;      // 範囲選択 {x0,y0,x1,y1}
 function paint() {
   raf = 0;
+  updateZoom();
   if (baseDirty) { drawBase(); baseDirty = false; }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.drawImage(base, 0, 0);
@@ -586,14 +602,60 @@ function paint() {
     const x = Math.min(winSel.x0, winSel.x1), y = Math.min(winSel.y0, winSel.y1), w = Math.abs(winSel.x1 - winSel.x0), h = Math.abs(winSel.y1 - winSel.y0);
     ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h); ctx.setLineDash([]);
   }
+  // グリップ（選んだ図形の頂点。ドラッグで直せる）
+  if (!cmd && sel.size && sel.size <= 200) {
+    for (const e of selEnts()) for (const g of gripsOf(e)) {
+      const q = toS(g.p), hot = gripHot && gripHot.e === e && gripHot.i === g.i;
+      ctx.fillStyle = hot ? SNAPC : (prefs.dark ? '#1d2834' : '#ffffff'); ctx.strokeStyle = hot ? SNAPC : SEL; ctx.lineWidth = 1.3;
+      ctx.beginPath(); ctx.rect(Math.round(q.x) - 4.5, Math.round(q.y) - 4.5, 9, 9); ctx.fill(); ctx.stroke();
+    }
+  }
+  if (drag?.kind === 'grip' && drag.ghost) drawEnt(ctx, drag.ghost, false, GHOST);
   // カーソル
   if (mouse) {
-    const p = hover && wantsPoint() ? toS(hover.p) : mouse;
-    ctx.strokeStyle = prefs.dark ? 'rgba(255,255,255,.55)' : 'rgba(30,40,55,.55)'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(p.x - 18, p.y + 0.5); ctx.lineTo(p.x + 18, p.y + 0.5); ctx.moveTo(p.x + 0.5, p.y - 18); ctx.lineTo(p.x + 0.5, p.y + 18); ctx.stroke();
-    if (!wantsPoint()) { ctx.strokeRect(mouse.x - 5, mouse.y - 5, 10, 10); }
-    if (hover && hover.kind && wantsPoint()) snapMarker(ctx, p, hover);
+    const pointing = wantsPoint() || drag?.kind === 'grip';
+    const p = hover && pointing ? toS(hover.p) : mouse;
+    const cc = prefs.dark ? 'rgba(230,236,245,.75)' : 'rgba(25,34,45,.7)';
+    ctx.strokeStyle = cc; ctx.lineWidth = 1;
+    const L = pointing ? 30 : 14, gap = pointing ? 4 : 0;
+    ctx.beginPath();
+    ctx.moveTo(p.x - L, p.y + 0.5); ctx.lineTo(p.x - gap, p.y + 0.5); ctx.moveTo(p.x + gap, p.y + 0.5); ctx.lineTo(p.x + L, p.y + 0.5);
+    ctx.moveTo(p.x + 0.5, p.y - L); ctx.lineTo(p.x + 0.5, p.y - gap); ctx.moveTo(p.x + 0.5, p.y + gap); ctx.lineTo(p.x + 0.5, p.y + L);
+    ctx.stroke();
+    if (!pointing) { ctx.strokeRect(mouse.x - 5.5, mouse.y - 5.5, 11, 11); }
+    if (hover && hover.kind && pointing) snapMarker(ctx, p, hover);
+    // 作図中は座標の札をカーソルの右下に
+    if (pointing && hover && !cmd?.preview && !(hover.kind)) pill(ctx, `${fmt(hover.p.x)} , ${fmt(hover.p.y)}`, p.x + 14, p.y + 30, { bg: prefs.dark ? 'rgba(40,54,72,.92)' : 'rgba(255,255,255,.94)', fg: prefs.dark ? '#e3e9f0' : '#19222d', border: prefs.dark ? '#3b4c60' : '#c9d2dd', size: 11 });
   }
+}
+/** 図形のグリップ: [{i, p, set(clone, q)}] */
+function gripsOf(e) {
+  const g = [];
+  const add = (p, set) => g.push({ i: g.length, p, set });
+  switch (e.type) {
+    case 'point': case 'text': add(e.p, (n, q) => { n.p = { ...n.p, ...q }; }); break;
+    case 'line': case 'leader':
+      add(e.a, (n, q) => { n.a = q; }); add(e.b, (n, q) => { n.b = q; });
+      if (e.type === 'line') add(G.mid(e.a, e.b), (n, q) => { const m = G.mid(e.a, e.b), dx = q.x - m.x, dy = q.y - m.y; n.a = { x: e.a.x + dx, y: e.a.y + dy }; n.b = { x: e.b.x + dx, y: e.b.y + dy }; });
+      break;
+    case 'poly': case 'hatch': e.pts.forEach((p, i) => add(p, (n, q) => { n.pts[i] = q; })); break;
+    case 'circle': add(e.c, (n, q) => { n.c = q; }); add(G.arcPt(e.c, e.r, 0), (n, q) => { n.r = Math.max(G.dist(e.c, q), 1e-6); }); break;
+    case 'arc': add(e.c, (n, q) => { n.c = q; }); add(G.arcPt(e.c, e.r, e.a0), (n, q) => { n.a0 = G.angOf(e.c, q); }); add(G.arcPt(e.c, e.r, e.a1), (n, q) => { n.a1 = G.angOf(e.c, q); }); break;
+    case 'dim': {
+      const d = dimGeom(e);
+      add(d.ea, (n, q) => { if (n.pa) n.pa = q; else n.a = q; });
+      add(d.eb, (n, q) => { if (n.pb) n.pb = q; else n.b = q; });
+      add(G.mid(d.a2, d.b2), (n, q) => { n.off = (q.x - e.a.x) * d.n.x + (q.y - e.a.y) * d.n.y; });
+      break;
+    }
+  }
+  return g;
+}
+let gripHot = null;
+function gripAt(sx, sy) {
+  if (cmd || !sel.size || sel.size > 200) return null;
+  for (const e of selEnts()) for (const g of gripsOf(e)) { const q = toS(g.p); if (Math.abs(q.x - sx) <= 6 && Math.abs(q.y - sy) <= 6) return { e, i: g.i, g }; }
+  return null;
 }
 function snapMarker(c, s, h) {
   c.strokeStyle = SNAPC; c.fillStyle = SNAPC; c.lineWidth = 2; c.setLineDash([]);
@@ -611,7 +673,7 @@ function snapMarker(c, s, h) {
     default: break;
   }
   c.stroke();
-  label(c, h.label ? `${h.kind}  ${h.label}` : h.kind, s.x + 10, s.y + 20, SNAPC, 'left', 11);
+  pill(c, h.label ? `${h.kind}  ${h.label}` : h.kind, s.x + 12, s.y + 26, { bg: SNAPC, size: 11 });
 }
 const wantsPoint = () => !!cmd && (!cmd.mode || cmd.mode === 'point');
 
@@ -816,15 +878,25 @@ function getPoint(msg, { preview } = {}) {
 
 // マルチボックス
 let renderedOpts = null;
+const KEYS = { save: 'Ctrl+S', saveas: 'Ctrl+Shift+S', open: 'Ctrl+O', new: 'Ctrl+N', print: 'Ctrl+P', undo: 'Ctrl+Z', redo: 'Ctrl+Y', cut: 'Ctrl+X', copyclip: 'Ctrl+C', paste: 'Ctrl+V', del: 'Delete', erase: 'Delete', selall: 'Ctrl+A', zoomall: 'Home', v_all: 'Home', help: 'F1' };
 function refreshMB() {
   const c = cmd;
-  $('#mbIcon').innerHTML = c ? (ICONS[c.icon] || ICONS[c.id] || '') : ICONS.select;
-  $('#mbTitle').textContent = c ? c.title : '選択';
+  $('#mbIcon').innerHTML = c ? (ICONS[c.icon] || ICONS[c.id] || ICONS.select) : ICONS.select;
+  $('#mbIcon').classList.toggle('busy', !!c);
+  $('#mbKind').textContent = c ? (c.mode === 'select' ? '対象を選択中' : 'コマンド実行中') : (sel.size ? '選択中' : '待機中');
+  $('#mbTitle').textContent = c ? c.title : (sel.size ? `${sel.size} 個の図形` : '選択');
+  const step = $('#mbStep');
+  const n = c && Array.isArray(c.pts) ? c.pts.length : 0;
+  step.hidden = !(c && (n || c.mode === 'select'));
+  step.textContent = c?.mode === 'select' ? `選択 ${sel.size}` : `${n} 点 指示済み`;
   let pr;
-  if (!c) pr = sel.size ? `${sel.size} 個の図形を選択中。右クリックで編集メニュー、Delete で削除。` : '図形をクリックで選択（Shift で追加）。ドラッグで範囲選択：左→右は囲んだ図形、右→左はかかった図形。';
+  if (!c) pr = sel.size ? `${sel.size} 個の図形を選択中です。四角いつまみをドラッグすると形を直せます。右クリックで編集メニュー。` : '図形をクリックで選択（Shift で追加）。ドラッグで範囲選択：左→右は囲んだ図形、右→左はかかった図形。';
   else if (c.mode === 'select') pr = `対象の図形を選んで［確定］（Enter・右クリック）。${sel.size ? `選択 ${sel.size} 個` : ''}`;
   else pr = typeof c.prompt === 'function' ? c.prompt() : c.prompt || '';
   $('#mbPrompt').textContent = pr;
+  const k = (key, l) => `<span><kbd>${key}</kbd>${l}</span>`;
+  $('#mbKeys').innerHTML = c ? k('Enter', '確定') + k('BS', '1つ戻る') + k('Esc', '終了') + k('右クリック', 'メニュー') : (sel.size ? k('Delete', '削除') + k('Ctrl+C', 'コピー') + k('Esc', '解除') : k('Enter', '直前のコマンド') + k('Ctrl+K', 'コマンド検索'));
+  $('#mbUnit').textContent = prefs.inUnit;
   status(pr);
   const opts = c?.opts || null;
   if (opts !== renderedOpts) { renderOpts(c); renderedOpts = opts; }
@@ -834,10 +906,12 @@ function refreshMB() {
   if (c?.info) info = typeof c.info === 'function' ? c.info() : c.info;
   else if (!c) {
     if (overlay) info += '<div class="mb-result">計算結果を表示中 <button class="btn" data-mb="clearOverlay">消す</button></div>';
-    if (prefs.recent.length) info += '<h4>最近のコマンド</h4><div class="recent">' + prefs.recent.filter((id) => CMDS[id]).map((id) => `<button data-cmd="${id}">${esc(CMDS[id].title)}</button>`).join('') + '</div>';
-    info += '<h4>操作のこつ</h4>ホイール: 拡大縮小 ／ 中ボタンドラッグ: 移動<br>Enter: 直前のコマンド ／ Esc: 終了<br>F8: 直交 ／ Ctrl+Z: 元に戻す';
+    const rec = prefs.recent.filter((id) => CMDS[id]);
+    if (rec.length) info += '<h4>最近のコマンド</h4><div class="recent">' + rec.map((id, i) => `<button data-cmd="${id}">${ICONS[CMDS[id].icon] || ICONS[id] || ''}<span>${esc(CMDS[id].title)}</span>${i === 0 ? '<kbd>Enter</kbd>' : ''}</button>`).join('') + '</div>';
+    info += `<h4>操作のこつ</h4><div class="tips"><kbd>ホイール</kbd><span>拡大・縮小</span><kbd>中ボタン</kbd><span>ドラッグで画面移動</span><kbd>F8</kbd><span>直交モード</span><kbd>Ctrl+Z</kbd><span>元に戻す</span><kbd>Ctrl+K</kbd><span>コマンドを名前で探す</span></div>`;
   }
   $('#mbInfo').innerHTML = info;
+  updateWelcome();
 }
 function renderOpts(c) {
   const box = $('#mbOpts');
@@ -960,7 +1034,7 @@ $('#mbInput').addEventListener('keydown', (ev) => {
 // ============================================================
 let drag = null; // {kind:'pan'|'win'|'click', sx, sy, vx, vy}
 let lastMid = 0;
-cv.addEventListener('contextmenu', (ev) => ev.preventDefault());
+cv.addEventListener('contextmenu', (ev) => { ev.preventDefault(); if (drag?.kind === 'pan') return; openCtxMenu(ev.clientX, ev.clientY); });
 cv.addEventListener('mousedown', (ev) => {
   cv.focus();
   closeMenu();
@@ -973,8 +1047,10 @@ cv.addEventListener('mousedown', (ev) => {
     drag = { kind: 'pan', sx, sy, vx: view.x, vy: view.y };
     return;
   }
-  if (ev.button === 2) { openCtxMenu(ev.clientX, ev.clientY); return; }
+  if (ev.button === 2) return; // メニューは contextmenu で開く
   if (ev.button !== 0) return;
+  const gp = gripAt(sx, sy);
+  if (gp) { drag = { kind: 'grip', sx, sy, e: gp.e, g: gp.g, ghost: null }; hover = { p: { ...gp.g.p }, kind: null }; return; }
   drag = { kind: 'click', sx, sy, shift: ev.shiftKey || ev.ctrlKey };
 });
 window.addEventListener('mousemove', (ev) => {
@@ -987,16 +1063,29 @@ window.addEventListener('mousemove', (ev) => {
   mouse = { x: sx, y: sy };
   if (drag?.kind === 'click' && Math.hypot(sx - drag.sx, sy - drag.sy) > 5 && (!cmd || cmd.mode === 'select')) drag.kind = 'win';
   if (drag?.kind === 'win') { winSel = { x0: drag.sx, y0: drag.sy, x1: sx, y1: sy }; draw(); return; }
+  if (drag?.kind === 'grip') {
+    hover = snapAt(sx, sy);
+    const n = JSON.parse(JSON.stringify(drag.e)); drag.g.set(n, { x: hover.p.x, y: hover.p.y }); drag.ghost = n;
+    setXY(hover.p); draw(); return;
+  }
+  const gh = gripAt(sx, sy);
+  if ((gh?.e !== gripHot?.e) || (gh?.i !== gripHot?.i)) { gripHot = gh; draw(); }
   if (wantsPoint()) { hover = snapAt(sx, sy); cmd.onMove?.(hover.p); }
   else { hover = { p: toW(sx, sy), kind: null }; hoverEnt = hitEnt(sx, sy, cmd?.mode === 'entity' ? cmd.filter : (cmd?.mode === 'select' ? CMDS[cmd.id]?.filter : null)); }
   const p = hover.p;
-  $('#stXY').textContent = `X= ${fmt(p.x)}  Y= ${fmt(p.y)}`;
+  setXY(p);
   draw();
 });
 window.addEventListener('mouseup', (ev) => {
   if (!drag) return;
   const d = drag; drag = null;
   if (d.kind === 'pan') { autosave(); return; }
+  if (d.kind === 'grip') {
+    if (d.ghost && Math.hypot(ev.clientX - cv.getBoundingClientRect().left - d.sx, ev.clientY - cv.getBoundingClientRect().top - d.sy) > 2) {
+      begin(); replaceEnt(d.e, { ...d.ghost, uid: d.e.uid }); commit();
+    }
+    draw(); return;
+  }
   const r = cv.getBoundingClientRect(), sx = ev.clientX - r.left, sy = ev.clientY - r.top;
   if (d.kind === 'win') {
     const a = toW(d.sx, d.sy), b = toW(sx, sy);
@@ -1012,6 +1101,7 @@ window.addEventListener('mouseup', (ev) => {
   }
   onClick(sx, sy, d.shift);
 });
+function setXY(p) { $('#xyX').textContent = fmt(p.x); $('#xyY').textContent = fmt(p.y); }
 function onClick(sx, sy, shift) {
   if (!cmd || cmd.mode === 'select') {
     const e = hitEnt(sx, sy, cmd ? CMDS[cmd.id]?.filter : null);
@@ -1049,8 +1139,10 @@ cv.addEventListener('mouseleave', () => { mouse = null; draw(); });
 
 function inEditable(t) { return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable); }
 document.addEventListener('keydown', (ev) => {
-  if (document.querySelector('dialog[open]')) return;
+  if (document.querySelector('dialog[open]') || !$('#palette').hidden) return;
   const k = ev.key, ctrl = ev.ctrlKey || ev.metaKey;
+  if ((ctrl && k.toLowerCase() === 'k') || k === 'F2') { ev.preventDefault(); openPalette(); return; }
+  if (ctrl && k === 'F1') { ev.preventDefault(); toggleFold(); return; }
   if (ctrl) {
     const map = { z: undo, y: redo, s: () => (ev.shiftKey ? saveAs() : save()), o: openFile, n: newDoc, c: copySel, x: cutSel, v: () => startCmd('paste'), a: () => setSel(visibleEnts()), p: openPrint };
     const f = map[k.toLowerCase()];
@@ -1078,7 +1170,7 @@ function openMenu(x, y, items) {
   m.innerHTML = items.map((it, i) => {
     if (it === '-') return '<hr>';
     if (it.head) return `<div class="mh">${esc(it.head)}</div>`;
-    return `<button data-i="${i}" ${it.disabled ? 'disabled' : ''} class="${it.checked ? 'chk' : ''}"><span>${esc(it.label)}</span><span class="k">${esc(it.key || '')}</span></button>`;
+    return `<button data-i="${i}" ${it.disabled ? 'disabled' : ''} class="${it.checked ? 'chk' : ''}"><span class="mi">${it.checked !== undefined ? '' : (ICONS[it.icon] || '')}</span><span class="ml">${esc(it.label)}</span><span class="k">${esc(it.key || '')}</span></button>`;
   }).join('');
   m.hidden = false;
   const r = m.getBoundingClientRect();
@@ -1097,29 +1189,32 @@ function openCtxMenu(x, y) {
   let items;
   if (cmd) {
     items = [
-      { label: cmd.mode === 'select' ? '選択を確定' : '確定', key: 'Enter', fn: confirmCmd },
-      { label: '1つ戻る', key: 'BS', disabled: !cmd.onBack, fn: () => { cmd.onBack(); afterCmd(); } },
-      { label: 'コマンドを終了', key: 'Esc', fn: endCmd },
+      { label: cmd.mode === 'select' ? '選択を確定' : '確定', key: 'Enter', icon: 'ok', fn: confirmCmd },
+      { label: '1つ戻る', key: 'BS', icon: 'undo', disabled: !cmd.onBack, fn: () => { cmd.onBack(); afterCmd(); } },
+      { label: 'コマンドを終了', key: 'Esc', icon: 'selnone', fn: endCmd },
       '-', ...snapItems(),
     ];
   } else if (sel.size) {
     items = [
-      { label: '移動', fn: () => startCmd('move') }, { label: '複写', fn: () => startCmd('copy') },
-      { label: '回転', fn: () => startCmd('rotate') }, { label: '反転', fn: () => startCmd('mirror') }, { label: '拡大・縮小', fn: () => startCmd('scale') },
+      { label: '移動', icon: 'move', fn: () => startCmd('move') }, { label: '複写', icon: 'copyc', fn: () => startCmd('copy') },
+      { label: '回転', icon: 'rotate', fn: () => startCmd('rotate') }, { label: '反転', icon: 'mirror', fn: () => startCmd('mirror') }, { label: '拡大・縮小', icon: 'scale', fn: () => startCmd('scale') },
       '-',
-      { label: '切り取り', key: 'Ctrl+X', fn: cutSel }, { label: 'コピー', key: 'Ctrl+C', fn: copySel },
-      { label: '削除', key: 'Delete', fn: deleteSel },
+      { label: '切り取り', key: 'Ctrl+X', icon: 'cut', fn: cutSel }, { label: 'コピー', key: 'Ctrl+C', icon: 'copy', fn: copySel },
+      { label: '削除', key: 'Delete', icon: 'delete', fn: deleteSel },
       '-',
-      { label: '選択を解除', key: 'Esc', fn: () => setSel([]) },
+      { label: '選択した範囲を拡大', icon: 'zoomwin', fn: () => { const b = extents(selEnts()); if (b) fitBox(b.x0, b.y0, b.x1, b.y1, 80); } },
+      { label: '選択を解除', key: 'Esc', icon: 'selnone', fn: () => setSel([]) },
     ];
   } else {
     items = [
-      { label: lastCmdId ? `直前のコマンド（${CMDS[lastCmdId]?.title}）` : '直前のコマンド', key: 'Enter', disabled: !lastCmdId, fn: () => startCmd(lastCmdId) },
-      { label: '元に戻す', key: 'Ctrl+Z', disabled: !undoStack.length, fn: undo }, { label: 'やり直し', key: 'Ctrl+Y', disabled: !redoStack.length, fn: redo },
-      { label: '貼り付け', key: 'Ctrl+V', disabled: !clip, fn: () => startCmd('paste') },
+      { label: lastCmdId ? `直前のコマンド（${CMDS[lastCmdId]?.title}）` : '直前のコマンド', key: 'Enter', icon: lastCmdId ? (CMDS[lastCmdId]?.icon || lastCmdId) : 'select', disabled: !lastCmdId, fn: () => startCmd(lastCmdId) },
+      { label: 'コマンドを検索…', key: 'Ctrl+K', icon: 'calc', fn: openPalette },
       '-',
-      { label: '全体表示', key: 'Home', fn: zoomAll }, { label: '用紙全体を表示', fn: zoomPaper },
-      { label: 'すべて選択', key: 'Ctrl+A', fn: () => setSel(visibleEnts()) },
+      { label: '元に戻す', key: 'Ctrl+Z', icon: 'undo', disabled: !undoStack.length, fn: undo }, { label: 'やり直し', key: 'Ctrl+Y', icon: 'redo', disabled: !redoStack.length, fn: redo },
+      { label: '貼り付け', key: 'Ctrl+V', icon: 'paste', disabled: !clip, fn: () => startCmd('paste') },
+      '-',
+      { label: '全体表示', key: 'Home', icon: 'zoomall', fn: zoomAll }, { label: '用紙全体を表示', icon: 'zoompaper', fn: zoomPaper },
+      { label: 'すべて選択', key: 'Ctrl+A', icon: 'selall', fn: () => setSel(visibleEnts()) },
       '-', ...snapItems(),
     ];
   }
@@ -1158,12 +1253,17 @@ function renderProps() {
   const box = $('#props');
   if (!s.length) {
     const ex = extents();
-    box.innerHTML = `<div class="empty">図形を選ぶと、ここで属性を確認・変更できます。<br>図形 ${doc.entities.length} 個${ex ? `<br>範囲 X ${fmt(ex.x0, 1)}〜${fmt(ex.x1, 1)}<br>　　 Y ${fmt(ex.y0, 1)}〜${fmt(ex.y1, 1)}` : ''}<br>座標系: ${doc.zone ? `第${doc.zone}系` : '未設定'}</div>`;
+    const pts = doc.entities.filter((e) => e.type === 'point').length;
+    box.innerHTML = `<div class="empty">図形を選ぶと、座標・長さ・色などをここで直接変えられます。<dl class="stat"><dt>図形</dt><dd>${doc.entities.length}</dd><dt>点</dt><dd>${pts}</dd>${ex ? `<dt>範囲 X</dt><dd>${fmt(ex.x0, 1)} 〜 ${fmt(ex.x1, 1)}</dd><dt>範囲 Y</dt><dd>${fmt(ex.y0, 1)} 〜 ${fmt(ex.y1, 1)}</dd>` : ''}<dt>座標系</dt><dd>${doc.zone ? `第${doc.zone}系` : '未設定'}</dd><dt>縮尺</dt><dd>1:${sheet().scaleN}</dd></dl></div>`;
+    $('#propCount').textContent = '';
     return;
   }
   const e = s[0], one = s.length === 1;
   const same = (k) => (s.every((q) => (q[k] ?? '') === (e[k] ?? '')) ? e[k] ?? '' : null);
-  let h = `<div class="ptype">${one ? TYPE_NAME[e.type] || e.type : `${s.length} 個の図形（${[...new Set(s.map((q) => TYPE_NAME[q.type] || q.type))].join('・')}）`}</div>`;
+  const TICON = { point: 'point', line: 'line', poly: 'pline', circle: 'circle', arc: 'arc', text: 'text', dim: 'dim', leader: 'leader', hatch: 'hatch', align: 'align' };
+  let h = `<div class="ptype">${ICONS[one ? TICON[e.type] : 'selall'] || ''}<span>${one ? TYPE_NAME[e.type] || e.type : `${[...new Set(s.map((q) => TYPE_NAME[q.type] || q.type))].join('・')}`}</span></div>`;
+  $('#propCount').textContent = `${s.length} 個`;
+  h += '<div class="psec">表示</div>';
   const lay = same('layer');
   h += prow('レイヤ', `<select data-p="layer">${lay === null ? '<option value="" selected>（混在）</option>' : ''}${layerOpts(lay || '0')}</select>`);
   if (s.some((q) => q.type !== 'point')) {
@@ -1173,6 +1273,7 @@ function renderProps() {
     h += prow('線幅', `<select data-p="lw">${lw === null ? '<option value="*" selected>（混在）</option>' : ''}${lwOpts(lw || 0)}</select>`);
   }
   if (one) {
+    h += `<div class="psec">${{ text: '文字', dim: '寸法', leader: '引出線', hatch: 'ハッチング', align: '路線', point: '点' }[e.type] || '形状'}</div>`;
     switch (e.type) {
       case 'point':
         h += prow('点名', pin('name', e.name, false)) + prow('X', pin('px', fmt(e.p.x))) + prow('Y', pin('py', fmt(e.p.y))) + prow('Z（標高）', pin('z', fmt(e.z || 0)));
@@ -1218,9 +1319,9 @@ function renderProps() {
         break;
     }
   }
-  h += '<div class="pbtns"><button class="btn" data-pa="move">移動</button><button class="btn" data-pa="copy">複写</button><button class="btn" data-pa="delete">削除</button>' +
-    (one && ['line', 'poly'].includes(e.type) ? '<button class="btn" data-pa="regverts">頂点を点登録</button>' : '') +
-    (one && e.type === 'poly' && e.closed ? '<button class="btn" data-pa="areatbl">求積表</button>' : '') + '</div>';
+  h += `<div class="pbtns"><button class="btn" data-pa="move">${ICONS.move}移動</button><button class="btn" data-pa="copy">${ICONS.copyc}複写</button><button class="btn danger" data-pa="delete">${ICONS.delete}削除</button>` +
+    (one && ['line', 'poly'].includes(e.type) ? `<button class="btn wide" data-pa="regverts">${ICONS.regverts}頂点を点として登録</button>` : '') +
+    (one && e.type === 'poly' && e.closed ? `<button class="btn wide" data-pa="areatbl">${ICONS.areatbl}求積表を置く</button>` : '') + '</div>';
   box.innerHTML = h;
 }
 $('#props').addEventListener('change', (ev) => applyProp(ev.target));
@@ -1268,18 +1369,25 @@ function applyProp(t) {
 function renderLayers() {
   const counts = new Map();
   for (const e of doc.entities) counts.set(layerOf(e), (counts.get(layerOf(e)) || 0) + 1);
-  $('#layers').innerHTML = doc.layers.map((l) => `<div class="lay ${l.name === prefs.cur.layer ? 'cur' : ''}" data-l="${esc(l.name)}" title="クリック: 現在のレイヤにする ／ 右クリック: メニュー">
-    <input type="checkbox" data-vis ${doc.hiddenLayers.includes(l.name) ? '' : 'checked'} title="表示">
-    <span class="sw" style="background:${esc(l.color || '#000')}"></span><span class="lname">${esc(l.name)}</span><span class="cnt">${counts.get(l.name) || 0}</span></div>`).join('');
+  $('#layers').innerHTML = doc.layers.map((l) => { const off = doc.hiddenLayers.includes(l.name); return `<div class="lay ${l.name === prefs.cur.layer ? 'cur' : ''} ${off ? 'off' : ''}" data-l="${esc(l.name)}" title="クリック: 現在のレイヤにする ／ 右クリック: メニュー">
+    <button class="eye" data-vis="${off ? 0 : 1}" title="${off ? '表示する' : '隠す'}">${off ? '<svg viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 5.6A10.6 10.6 0 0 1 12 5.5C18.4 5.5 22 12 22 12a18 18 0 0 1-3.2 4M6.2 6.9A17.6 17.6 0 0 0 2 12s3.6 6.5 10 6.5a9.7 9.7 0 0 0 4.4-1" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/></svg>'}</button>
+    <button class="sw" data-sw style="background:${esc(l.color || '#000')}" title="色を変える"></button><span class="lname">${esc(l.name)}</span><span class="cnt">${counts.get(l.name) || 0}</span></div>`; }).join('');
   renderStylebar();
 }
 $('#layers').addEventListener('click', (ev) => {
   const row = ev.target.closest('.lay'); if (!row) return;
   const n = row.dataset.l;
-  if (ev.target.matches('[data-vis]')) {
-    doc.hiddenLayers = ev.target.checked ? doc.hiddenLayers.filter((q) => q !== n) : [...new Set([...doc.hiddenLayers, n])];
-    if (!ev.target.checked) setSel(selEnts().filter(visible));
-    setDirty(true); autosave(); clearCaches(); baseDirty = true; draw(); return;
+  const vis = ev.target.closest('[data-vis]');
+  if (vis) {
+    const show = vis.dataset.vis === '0';
+    doc.hiddenLayers = show ? doc.hiddenLayers.filter((q) => q !== n) : [...new Set([...doc.hiddenLayers, n])];
+    if (!show) setSel(selEnts().filter(visible));
+    setDirty(true); autosave(); clearCaches(); baseDirty = true; draw(); renderLayers(); return;
+  }
+  if (ev.target.closest('[data-sw]')) {
+    const L = layerDef(n), r = ev.target.getBoundingClientRect();
+    openColorPop(r.left, r.bottom + 4, L.color, (c) => { begin(); L.color = c; commit(`レイヤ「${n}」の色を変えました`); });
+    return;
   }
   prefs.cur.layer = n; savePrefs(); renderLayers();
 });
@@ -1330,6 +1438,15 @@ async function editLayer(L) {
   return r;
 }
 $('#layAdd').addEventListener('click', () => editLayer(null));
+/** 色を選ぶ小さな窓 */
+function openColorPop(x, y, cur, fn) {
+  const m = $('#ctxmenu');
+  m.innerHTML = '<div class="mh">色</div><div class="colorgrid">' + COLORS.map((c) => `<button data-c="${c.hex}" title="${c.name}" style="background:${c.hex}${c.hex === cur ? ';outline:2px solid var(--accent)' : ''}"></button>`).join('') + '</div>';
+  m.hidden = false;
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.min(x, innerWidth - r.width - 4) + 'px'; m.style.top = Math.min(y, innerHeight - r.height - 4) + 'px';
+  m.onclick = (ev) => { const b = ev.target.closest('[data-c]'); if (!b) return; closeMenu(); fn(b.dataset.c); };
+}
 
 // ============================================================
 // スタイルバー
@@ -1354,6 +1471,13 @@ function renderStylebar() {
   $('#stPaper').value = `${s.paper}|${s.orient}`;
   $('#stInUnit').value = prefs.inUnit; $('#stDimUnit').value = prefs.dimUnit;
   $('#stInfo').textContent = `1:${s.scaleN}　${s.paper}${s.orient === 'portrait' ? '縦' : '横'}　${doc.zone ? `第${doc.zone}系` : '系 未設定'}`;
+  const L = layerDef(prefs.cur.layer) || {};
+  $('#swLayer').style.background = L.color || '#000';
+  $('#swColor').style.background = prefs.cur.color || L.color || '#000';
+  const lt = LTYPES[prefs.cur.ltype || L.ltype || 'solid'];
+  const pv = $('#pvLt line');
+  pv.setAttribute('stroke-dasharray', lt.pat.length ? lt.pat.map((v) => v * 1.4).join(' ') : '');
+  pv.style.strokeWidth = String(Math.min(4, 0.8 + (prefs.cur.lw || L.lw || 0.25) * 4));
   $('#mbHint').textContent = `X,Y ／ @ΔX,ΔY ／ @距離<方向角 ／ 長さ ／ 点名（長さの単位: ${prefs.inUnit}）`;
 }
 function styleChanged(key, val) {
@@ -1386,7 +1510,11 @@ $('#stDimUnit').addEventListener('change', (ev) => { prefs.dimUnit = ev.target.v
 // スナップの切り替え（ステータスバー）
 function renderSnapBar() {
   const S = prefs.snap;
-  const b = (k, l, on) => `<button data-s="${k}" class="${on ? 'on' : ''}">${l}</button>`;
+  const SI = {
+    pt: '<path d="M6 1l5 5-5 5-5-5z"/>', end: '<rect x="1.5" y="1.5" width="9" height="9"/>', mid: '<path d="M6 1.5l5 9H1z"/>', inter: '<path d="M1.5 1.5l9 9M10.5 1.5l-9 9"/>',
+    cen: '<circle cx="6" cy="6" r="4.5"/>', perp: '<path d="M1 10.5h10M6 10.5V1.5"/>', near: '<path d="M1.5 1.5h9l-9 9h9z"/>', ortho: '<path d="M6 1v10M1 6h10"/>', grid: '<path d="M1 4h10M1 8h10M4 1v10M8 1v10"/>',
+  };
+  const b = (k, l, on) => `<button data-s="${k}" class="${on ? 'on' : ''}" title="${l}（クリックで ON / OFF）"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4">${SI[k] || ''}</svg>${l}</button>`;
   $('#snapBar').innerHTML = b('pt', '点', S.pt) + b('end', '端点', S.end) + b('mid', '中点', S.mid) + b('inter', '交点', S.inter) + b('cen', '中心', S.cen) + b('perp', '垂点', S.perp) + b('near', '線上', S.near) +
     '<span class="sep"></span>' + b('ortho', '直交 F8', prefs.ortho) + b('grid', 'グリッド', prefs.grid);
 }
@@ -1403,80 +1531,113 @@ $('#snapBar').addEventListener('click', (ev) => {
 // リボン
 // ============================================================
 const A = (id, label, icon, fn, opt = {}) => ({ id, label, icon, fn, ...opt });
-const C = (id, label) => ({ id, label, cmd: id });
+const C = (id, label, opt = {}) => ({ id, label, cmd: id, ...opt });
+const sm = (it) => ({ ...it, s: true });
 function toggle(id, label, icon, get, set) { return { id, label, icon, toggle: get, fn: () => { set(!get()); savePrefs(); baseDirty = true; draw(); markRibbon(); renderSnapBar(); } }; }
 const RIBBON = [
   { tab: 'ファイル', cls: 'file-tab', groups: [
-    { name: 'ファイル', items: [A('new', '新規', 'new', () => newDoc()), A('open', '開く', 'open', () => openFile()), A('save', '上書き保存', 'save', () => save()), A('saveas', '名前を付けて保存', 'saveas', () => saveAs())] },
-    { name: '読み込み（追加）', items: [A('impDxf', 'DXF 図面', 'import', () => importFile('dxf')), A('impPts', '座標 SIMA・CSV', 'sima', () => importFile('pts'))] },
-    { name: '書き出し', items: [A('expDxf', 'DXF', 'export', () => exportDxf()), A('expSima', 'SIMA', 'sima', () => exportPoints('sima')), A('expCsv', 'CSV', 'export', () => exportPoints('csv')), A('expPng', '画像', 'image', () => exportPng())] },
-    { name: '印刷', items: [A('print', '印刷・PDF', 'print', () => openPrint())] },
+    { name: 'ファイル', items: [A('new', '新規', 'new', () => newDoc(), { tip: '白紙の図面を作ります' }), A('open', '開く', 'open', () => openFile(), { tip: '.gcad・DXF・SIMA・CSV を開きます' }), A('save', '上書き保存', 'save', () => save()), sm(A('saveas', '名前を付けて保存', 'saveas', () => saveAs()))] },
+    { name: '読み込み（追加）', items: [A('impDxf', 'DXF 図面', 'import', () => importFile('dxf'), { tip: '今の図面に DXF の図形を追加します' }), A('impPts', '座標', 'sima', () => importFile('pts'), { tip: 'SIMA・CSV の座標を基準点として追加します' })] },
+    { name: '書き出し', items: [A('expDxf', 'DXF', 'export', () => exportDxf(), { tip: 'Shift_JIS・画層の色と線種付き' }), sm(A('expSima', 'SIMA', 'sima', () => exportPoints('sima'))), sm(A('expCsv', 'CSV', 'export', () => exportPoints('csv'))), sm(A('expPng', '画像（PNG）', 'image', () => exportPng()))] },
+    { name: '印刷', items: [A('print', '印刷・PDF', 'print', () => openPrint(), { tip: '図面枠・表題欄・座標表付きで出力します' })] },
     { name: 'プロジェクト', items: [A('rename', '名前・座標系', 'zone', () => projectSettings())] },
   ] },
   { tab: 'ホーム', groups: [
     { name: '元に戻す', items: [A('undo', '元に戻す', 'undo', undo), A('redo', 'やり直し', 'redo', redo)] },
-    { name: 'クリップボード', items: [A('cut', '切り取り', 'cut', cutSel), A('copyclip', 'コピー', 'copy', copySel), C('paste', '貼り付け'), A('del', '削除', 'delete', deleteSel)] },
-    { name: '選択', items: [A('selall', 'すべて選択', 'selall', () => setSel(visibleEnts())), C('selattr', '属性で選択'), A('selnone', '選択解除', 'selnone', () => setSel([]))] },
-    { name: '表示', items: [A('zoomall', '全体表示', 'zoomall', zoomAll), A('zoompaper', '用紙全体', 'zoompaper', zoomPaper), C('zoomwin', '範囲拡大')] },
+    { name: 'クリップボード', items: [C('paste', '貼り付け'), sm(A('cut', '切り取り', 'cut', cutSel)), sm(A('copyclip', 'コピー', 'copy', copySel)), sm(A('del', '削除', 'delete', deleteSel))] },
+    { name: '選択', items: [A('selall', 'すべて選択', 'selall', () => setSel(visibleEnts())), sm(C('selattr', '属性で選択')), sm(A('selnone', '選択解除', 'selnone', () => setSel([])))] },
+    { name: '表示', items: [A('zoomall', '全体表示', 'zoomall', zoomAll), sm(A('zoompaper', '用紙全体', 'zoompaper', zoomPaper)), sm(C('zoomwin', '範囲拡大'))] },
+    { name: '検索', items: [A('search', 'コマンド検索', 'calc', () => openPalette(), { tip: 'コマンドを名前で探して実行します（Ctrl+K）' })] },
   ] },
   { tab: '作図', groups: [
-    { name: '線', items: [C('line', '単線'), C('pline', '連続線'), C('rect', '矩形'), C('offset', '平行線')] },
-    { name: '円・円弧', items: [C('circle', '円'), C('circle3', '3点円'), C('arc', '円弧'), C('arc3', '3点円弧')] },
-    { name: '点', items: [C('point', '点'), C('divide', '等分点')] },
+    { name: '線', items: [C('line', '単線'), C('pline', '連続線'), sm(C('rect', '矩形')), sm(C('offset', '平行線'))] },
+    { name: '円・円弧', items: [C('circle', '円'), sm(C('circle3', '3点円')), sm(C('arc', '円弧')), sm(C('arc3', '3点円弧'))] },
+    { name: '点', items: [C('point', '点'), sm(C('divide', '等分点'))] },
     { name: '文字', items: [C('text', '文字'), C('leader', '引出線')] },
-    { name: '寸法', items: [C('dim', '平行寸法'), C('dimh', '水平寸法'), C('dimv', '垂直寸法'), C('dimser', '直列寸法'), C('dimr', '半径寸法'), C('dimang', '角度寸法')] },
-    { name: 'その他', items: [C('hatch', 'ハッチング'), C('areafig', '求積図形'), C('north', '方位記号')] },
+    { name: '寸法', items: [C('dim', '平行寸法'), sm(C('dimh', '水平寸法')), sm(C('dimv', '垂直寸法')), sm(C('dimser', '直列寸法')), sm(C('dimr', '半径寸法')), sm(C('dimang', '角度寸法'))] },
+    { name: 'その他', items: [C('hatch', 'ハッチング'), sm(C('areafig', '求積図形')), sm(C('north', '方位記号'))] },
   ] },
   { tab: '図形編集', groups: [
-    { name: '移動複写', items: [C('move', '移動'), C('copy', '複写'), C('rotate', '回転'), C('mirror', '反転'), C('scale', '拡大縮小'), C('scalefit', '縮尺合わせ'), C('array', '配列複写')] },
-    { name: '修正', items: [C('erase', '削除'), C('stretch', '伸縮'), C('trim', '部分消去'), C('corner', '角作成'), C('chamfer', '面取り'), C('fillet', 'R面取り'), C('break', '分割'), C('join', '結合'), C('explode', '分解')] },
-    { name: '計測', items: [C('mdist', '距離'), C('mangle', '角度'), C('marea', '面積'), C('mcoord', '座標')] },
+    { name: '移動複写', items: [C('move', '移動'), C('copy', '複写'), sm(C('rotate', '回転')), sm(C('mirror', '反転')), sm(C('scale', '拡大縮小')), sm(C('scalefit', '縮尺合わせ')), sm(C('array', '配列複写'))] },
+    { name: '修正', items: [C('erase', '削除'), C('stretch', '伸縮'), C('trim', '部分消去'), sm(C('corner', '角作成')), sm(C('chamfer', '面取り')), sm(C('fillet', 'R面取り')), sm(C('break', '分割')), sm(C('join', '結合')), sm(C('explode', '分解'))] },
+    { name: '計測', items: [C('mdist', '距離'), sm(C('mangle', '角度')), sm(C('marea', '面積')), sm(C('mcoord', '座標'))] },
   ] },
   { tab: '土木', groups: [
-    { name: '座標', items: [C('ptable', '座標一覧'), C('regverts', '頂点を点登録'), C('fit', '座標合わせ'), C('scalefit', '縮尺合わせ')] },
+    { name: '座標', items: [C('ptable', '座標一覧'), sm(C('regverts', '頂点を点登録')), sm(C('fit', '座標合わせ')), sm(C('scalefit', '縮尺合わせ'))] },
     { name: '作図', items: [C('xsec', '横断図'), C('profile', '縦断図'), C('areatbl', '求積表')] },
     { name: '位置出し', items: [C('nige', '逃げ杭'), C('stakeTable', '杭打ち表')] },
   ] },
   { tab: '測量計算', groups: [
-    { name: '座標計算', items: [A('c_inverse', '逆計算', 'inverse', () => calc.open('inverse')), A('c_radial', '放射計算', 'radial', () => calc.open('radial')), A('c_stakeout', '杭打ち計算', 'stake', () => calc.open('stakeout')), A('c_intersect', '交点計算', 'intersect', () => calc.open('intersect')), A('c_distdist', '距離交会', 'intersect', () => calc.open('distdist')), A('c_perp', '垂線計算', 'mcoord', () => calc.open('perp')), A('c_offset', '幅杭計算', 'offset', () => calc.open('offset'))] },
+    { name: '座標計算', items: [A('c_inverse', '逆計算', 'inverse', () => calc.open('inverse'), { tip: '2点間の距離・方向角・高低差' }), A('c_radial', '放射計算', 'radial', () => calc.open('radial'), { tip: '器械点から角度と距離で座標を出す' }), A('c_stakeout', '杭打ち計算', 'stake', () => calc.open('stakeout'), { tip: 'TS の夾角と距離の一覧' }), sm(A('c_intersect', '交点計算', 'intersect', () => calc.open('intersect'))), sm(A('c_distdist', '距離交会', 'intersect', () => calc.open('distdist'))), sm(A('c_perp', '垂線計算', 'mcoord', () => calc.open('perp'))), sm(A('c_offset', '幅杭計算', 'offset', () => calc.open('offset')))] },
     { name: '面積', items: [A('c_area', '座標求積', 'marea', () => calc.open('area'))] },
-    { name: '路線', items: [A('c_align', '路線計算', 'align', () => calc.open('align')), A('c_station', '測点⇔座標', 'station', () => calc.open('station')), A('c_curve', '曲線要素', 'arc', () => calc.open('curve')), A('c_slope', '勾配・法長', 'mangle', () => calc.open('slope'))] },
-    { name: '計算書', items: [A('reports', '計算書', 'report', () => openReports()), A('calcmenu', '計算一覧', 'calc', () => calc.open())] },
+    { name: '路線', items: [A('c_align', '路線計算', 'align', () => calc.open('align')), sm(A('c_station', '測点⇔座標', 'station', () => calc.open('station'))), sm(A('c_curve', '曲線要素', 'arc', () => calc.open('curve'))), sm(A('c_slope', '勾配・法長', 'mangle', () => calc.open('slope')))] },
+    { name: '計算書', items: [A('reports', '計算書', 'report', () => openReports()), sm(A('calcmenu', '計算の一覧', 'calc', () => calc.open()))] },
   ] },
   { tab: '現場連携', groups: [
-    { name: 'スマホへ', items: [A('l_send', '現場へ送る', 'send', () => link.send()), A('l_sima', 'SIMA で送る', 'sima', () => exportPoints('sima'))] },
-    { name: 'スマホから', items: [A('l_recv', '現場データ取込', 'recv', () => link.receive())] },
+    { name: 'スマホへ', items: [A('l_send', '現場へ送る', 'send', () => link.send(), { tip: '.gcad にまとめて、スマホへ送れる形で保存します' }), A('l_sima', 'SIMA で送る', 'sima', () => exportPoints('sima'))] },
+    { name: 'スマホから', items: [A('l_recv', '現場データ取込', 'recv', () => link.receive(), { tip: 'スマホから戻ってきた .gcad を差分で取り込みます' })] },
     { name: '連携フォルダ', items: [A('l_folder', 'フォルダ設定', 'folder', () => link.setupFolder()), A('l_check', '新着を確認', 'sync', () => link.check(true))] },
     { name: 'スマホ版', items: [A('l_phone', 'スマホ版の開き方', 'phone', () => link.phoneInfo())] },
   ] },
   { tab: '表示', groups: [
-    { name: '画面', items: [A('v_all', '全体表示', 'zoomall', zoomAll), A('v_paper', '用紙全体', 'zoompaper', zoomPaper), C('zoomwin', '範囲拡大'), C('movesheet', '用紙枠の移動')] },
+    { name: '画面', items: [A('v_all', '全体表示', 'zoomall', zoomAll), sm(A('v_paper', '用紙全体', 'zoompaper', zoomPaper)), sm(C('zoomwin', '範囲拡大')), sm(C('movesheet', '用紙枠の移動'))] },
     { name: '表示の切り替え', items: [
-      toggle('t_sheet', '用紙枠', 'paper', () => prefs.showSheet, (v) => { prefs.showSheet = v; }),
-      toggle('t_grid', 'グリッド', 'grid', () => prefs.grid, (v) => { prefs.grid = v; }),
-      toggle('t_lw', '線幅表示', 'lw', () => prefs.showLw, (v) => { prefs.showLw = v; }),
-      toggle('t_names', '点名表示', 'names', () => prefs.showNames, (v) => { prefs.showNames = v; }),
-      toggle('t_dark', '黒背景', 'dark', () => prefs.dark, (v) => { prefs.dark = v; }),
+      sm(toggle('t_sheet', '用紙枠', 'paper', () => prefs.showSheet, (v) => { prefs.showSheet = v; })),
+      sm(toggle('t_grid', 'グリッド', 'grid', () => prefs.grid, (v) => { prefs.grid = v; })),
+      sm(toggle('t_lw', '線幅表示', 'lw', () => prefs.showLw, (v) => { prefs.showLw = v; })),
+      sm(toggle('t_names', '点名表示', 'names', () => prefs.showNames, (v) => { prefs.showNames = v; })),
+      sm(toggle('t_dark', '暗い表示', 'dark', () => prefs.dark, (v) => { prefs.dark = v; applyTheme(); })),
     ] },
     { name: 'レイヤ', items: [A('v_layer', 'レイヤ追加', 'layer', () => editLayer(null))] },
     { name: 'ヘルプ', items: [A('help', '使い方', 'help', () => showHelp())] },
   ] },
 ];
 function buildRibbon() {
-  $('#ribbonTabs').innerHTML = RIBBON.map((t) => `<button role="tab" class="${t.cls || ''}" data-tab="${t.tab}">${t.tab}</button>`).join('');
+  $('#ribbonTabs').innerHTML = RIBBON.map((t) => `<button role="tab" class="${t.cls || ''}" data-tab="${t.tab}">${t.tab}</button>`).join('') +
+    `<span class="tabs-end"><button id="btnRibbonFold" class="fold" title="リボンをたたむ / 広げる (Ctrl+F1)">${FOLD}</button></span>`;
   showTab(prefs.tab);
 }
+const FOLD = '<svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+function itemTitle(it) { return it.cmd ? CMDS[it.cmd]?.title || it.label : it.label; }
+function itemIcon(it) { return ICONS[it.icon || (it.cmd && CMDS[it.cmd]?.icon) || it.cmd] || ICONS.select; }
 function showTab(name) {
   const t = RIBBON.find((q) => q.tab === name) || RIBBON[2];
   prefs.tab = t.tab; savePrefs();
-  $$('#ribbonTabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === t.tab)));
-  $('#ribbon').innerHTML = t.groups.map((g, gi) => `<div class="rgroup"><div class="ritems">${g.items.map((it, ii) => {
-    const title = it.cmd ? CMDS[it.cmd]?.title || it.label : it.label;
-    const icon = ICONS[it.icon || (it.cmd && CMDS[it.cmd]?.icon) || it.cmd] || ICONS.select;
-    return `<button class="rbtn" data-g="${gi}" data-i="${ii}" data-id="${it.id}" title="${esc(CMDS[it.cmd]?.tip || title)}">${icon}<span>${esc(it.label)}</span></button>`;
-  }).join('')}</div><div class="rlabel">${esc(g.name)}</div></div>`).join('');
+  $$('#ribbonTabs button[data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === t.tab)));
+  const btn = (it, gi, ii) => `<button class="rbtn${it.s ? ' small' : ''}" data-g="${gi}" data-i="${ii}" data-id="${it.id}">${itemIcon(it)}<span>${esc(it.label)}</span></button>`;
+  $('#ribbon').innerHTML = t.groups.map((g, gi) => {
+    let html = '', stack = [];
+    const flush = () => { if (stack.length) { html += `<div class="rstack">${stack.join('')}</div>`; stack = []; } };
+    g.items.forEach((it, ii) => {
+      if (it.s) { stack.push(btn(it, gi, ii)); if (stack.length === 3) flush(); }
+      else { flush(); html += btn(it, gi, ii); }
+    });
+    flush();
+    return `<div class="rgroup"><div class="ritems">${html}</div><div class="rlabel">${esc(g.name)}</div></div>`;
+  }).join('');
   markRibbon();
 }
+// ツールチップ（名前・説明・キー）
+let tipTimer = 0;
+function showTip(el, html) {
+  const t = $('#tip'); t.innerHTML = html; t.hidden = false;
+  const r = el.getBoundingClientRect(), w = t.getBoundingClientRect();
+  t.style.left = Math.min(Math.max(4, r.left), innerWidth - w.width - 6) + 'px';
+  t.style.top = Math.min(r.bottom + 6, innerHeight - w.height - 6) + 'px';
+}
+function hideTip() { clearTimeout(tipTimer); $('#tip').hidden = true; }
+$('#ribbon').addEventListener('mouseover', (ev) => {
+  const b = ev.target.closest('.rbtn'); if (!b) return;
+  clearTimeout(tipTimer);
+  tipTimer = setTimeout(() => {
+    const t = RIBBON.find((q) => q.tab === prefs.tab); const it = t?.groups[b.dataset.g]?.items[b.dataset.i]; if (!it) return;
+    const key = KEYS[it.id] || (it.cmd && KEYS[it.cmd]);
+    const tip = it.tip || (it.cmd && CMDS[it.cmd]?.tip) || '';
+    showTip(b, `<b><span>${esc(itemTitle(it))}</span>${key ? `<kbd>${esc(key)}</kbd>` : ''}</b>${tip ? `<p>${esc(tip)}</p>` : ''}`);
+  }, 420);
+});
+$('#ribbon').addEventListener('mouseout', (ev) => { if (!ev.relatedTarget || !ev.relatedTarget.closest?.('.rbtn')) hideTip(); });
+$('#ribbon').addEventListener('mousedown', hideTip);
 function markRibbon() {
   const t = RIBBON.find((q) => q.tab === prefs.tab); if (!t) return;
   $$('#ribbon .rbtn').forEach((b) => {
@@ -1485,7 +1646,19 @@ function markRibbon() {
     b.classList.toggle('on', !!(it.toggle && it.toggle()));
   });
 }
-$('#ribbonTabs').addEventListener('click', (ev) => { const b = ev.target.closest('[data-tab]'); if (b) showTab(b.dataset.tab); });
+$('#ribbonTabs').addEventListener('click', (ev) => {
+  if (ev.target.closest('#btnRibbonFold')) { toggleFold(); return; }
+  const b = ev.target.closest('[data-tab]'); if (!b) return;
+  if (prefs.fold) toggleFold(false);
+  showTab(b.dataset.tab);
+});
+$('#ribbonTabs').addEventListener('dblclick', (ev) => { if (ev.target.closest('[data-tab]')) toggleFold(); });
+function toggleFold(v = !prefs.fold) {
+  prefs.fold = v; savePrefs();
+  $('#app').classList.toggle('folded', v);
+  $('#btnRibbonFold').style.transform = v ? 'rotate(180deg)' : '';
+  resize();
+}
 $('#ribbon').addEventListener('click', (ev) => {
   const b = ev.target.closest('.rbtn'); if (!b) return;
   const t = RIBBON.find((q) => q.tab === prefs.tab);
@@ -1944,7 +2117,12 @@ function showHelp() {
       <tr><td>Home</td><td>全体表示</td></tr>
       <tr><td>Ctrl+Z / Ctrl+Y</td><td>元に戻す / やり直し</td></tr>
       <tr><td>Ctrl+C / X / V</td><td>コピー / 切り取り / 貼り付け</td></tr>
-      <tr><td>Ctrl+S / Ctrl+O / Ctrl+P</td><td>保存 / 開く / 印刷</td></tr></table>
+      <tr><td>Ctrl+S / Ctrl+O / Ctrl+P</td><td>保存 / 開く / 印刷</td></tr>
+      <tr><td>Ctrl+K / F2</td><td>コマンドを名前で探して実行</td></tr>
+      <tr><td>Ctrl+F1</td><td>リボンをたたむ / 広げる</td></tr></table>
+      <h4>図形を直す</h4><ul>
+      <li>図形を選ぶと四角い<b>つまみ</b>が出ます。ドラッグすると、その頂点だけ動かせます（線の中央のつまみは線全体を移動、円の右のつまみは半径）。</li>
+      <li>右上の月のボタンで暗い表示に切り替えられます。</li></ul>
       <h4>スマホ版との連動</h4><ul>
       <li>［現場連携］→［現場へ送る］で .gcad ファイルを作り、LINE・メール・Google ドライブなどでスマホへ。</li>
       <li>スマホ版のメニュー［パソコン連携］→［パソコンから受け取る］で開きます。</li>
@@ -1964,6 +2142,88 @@ function renderAll() {
 }
 window.addEventListener('resize', resize);
 window.addEventListener('beforeunload', (ev) => { if (dirty && fileHandle) { ev.preventDefault(); ev.returnValue = ''; } });
+// テーマ（明るい / 暗い）
+const SUN = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+function applyTheme() {
+  document.documentElement.dataset.theme = prefs.dark ? 'dark' : 'light';
+  $('#btnTheme').innerHTML = prefs.dark ? SUN : ICONS.dark;
+  $('meta[name="theme-color"]').content = prefs.dark ? '#0f1722' : '#1b3150';
+  baseDirty = true; draw(); markRibbon();
+}
+$('#btnTheme').addEventListener('click', () => { prefs.dark = !prefs.dark; savePrefs(); applyTheme(); });
+// クイックアクセス
+const QAT = { save: ['save', () => save()], undo: ['undo', undo], redo: ['redo', redo], print: ['print', () => openPrint()] };
+$$('.qbtn').forEach((b) => { b.innerHTML = ICONS[QAT[b.dataset.q][0]]; b.addEventListener('click', () => QAT[b.dataset.q][1]()); });
+// 図面上の表示ボタン
+const NAV = {
+  all: [ICONS.zoomall, () => zoomAll()], paper: [ICONS.zoompaper, () => zoomPaper()],
+  in: ['<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>', () => zoomAt(W / 2, H / 2, 1.4)],
+  out: ['<svg viewBox="0 0 24 24"><path d="M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>', () => zoomAt(W / 2, H / 2, 1 / 1.4)],
+};
+$$('.navbar button').forEach((b) => { b.innerHTML = NAV[b.dataset.nav][0]; b.addEventListener('click', () => { NAV[b.dataset.nav][1](); cv.focus(); }); });
+// 表示倍率（用紙に対して。96dpi 換算）
+function updateZoom() { const z = (pxmm() / (96 / 25.4)) * 100; $('#stZoom').textContent = `表示 ${z >= 10 ? Math.round(z) : z.toFixed(1)}%`; }
+// スタート画面
+let welcomeOff = false;
+function updateWelcome() { const el = $('#welcome'); if (el) el.hidden = welcomeOff || !!cmd || doc.entities.length > 0; }
+$$('#welcome [data-ic]').forEach((i) => { i.innerHTML = ICONS[i.dataset.ic] || ''; });
+$('#welcome').addEventListener('click', async (ev) => {
+  const b = ev.target.closest('[data-wl]'); if (!b) return;
+  const k = b.dataset.wl;
+  if (k === 'new') { welcomeOff = true; updateWelcome(); zoomPaper(); toast('作図タブのコマンドでかき始められます'); showTab('作図'); }
+  else if (k === 'open') openFile();
+  else if (k === 'recv') link.receive();
+  else if (k === 'sample') {
+    try {
+      const get = async (f) => decodeText(await (await fetch(`../manual/練習データ/${f}`)).arrayBuffer());
+      const [dxf, sim] = await Promise.all([get('練習_倉庫平面図_mm.dxf'), get('練習_基準点.sim')]);
+      const d = blankDoc(); d.name = '練習 倉庫A'; replaceDoc(d, '');
+      importDxfText(dxf, '練習.dxf', false); importPointsText(sim, '練習.sim');
+      zoomAll(); setDirty(false);
+      toast('練習用の図面を開きました。mm で描かれているので、縮尺合わせから始めます（練習問題集の問4）', 5000);
+    } catch { toast('練習用の図面を読み込めませんでした（オフラインのときは使えません）', 4000); }
+  }
+});
+// コマンド検索
+let plItems = [], plSel = 0;
+function allItems() {
+  const seen = new Set(), out = [];
+  for (const t of RIBBON) for (const g of t.groups) for (const it of g.items) {
+    const key = it.cmd || it.id; if (seen.has(key)) continue; seen.add(key);
+    out.push({ it, tab: t.tab, group: g.name, title: itemTitle(it), tip: it.tip || (it.cmd && CMDS[it.cmd]?.tip) || '' });
+  }
+  return out;
+}
+function openPalette() {
+  closeMenu(); hideTip();
+  $('#palette').hidden = false; $('#plInput').value = ''; renderPalette(); $('#plInput').focus();
+}
+function closePalette() { $('#palette').hidden = true; cv.focus(); }
+function renderPalette() {
+  const q = $('#plInput').value.trim().toLowerCase();
+  const all = allItems();
+  plItems = q ? all.filter((x) => `${x.title} ${x.it.label} ${x.tip} ${x.tab} ${x.group} ${x.it.cmd || x.it.id}`.toLowerCase().includes(q)) : [...prefs.recent.map((id) => all.find((x) => (x.it.cmd || x.it.id) === id)).filter(Boolean), ...all.filter((x) => !prefs.recent.includes(x.it.cmd || x.it.id))];
+  plSel = Math.min(plSel, Math.max(0, plItems.length - 1)); if (!q) plSel = 0;
+  $('#plList').innerHTML = plItems.length ? plItems.slice(0, 60).map((x, i) => `<div class="pl-it ${i === plSel ? 'sel' : ''}" data-pi="${i}" role="option">${itemIcon(x.it)}<div><b>${esc(x.title)}</b>${x.tip ? `<small>${esc(x.tip)}</small>` : ''}</div><span class="tab">${esc(x.tab)} › ${esc(x.group)}</span></div>`).join('') : '<div class="pl-empty">見つかりません。別の言葉で探してください。</div>';
+  $('#plList .sel')?.scrollIntoView({ block: 'nearest' });
+}
+function runPalette(i) {
+  const x = plItems[i]; if (!x) return;
+  closePalette();
+  if (x.it.cmd) startCmd(x.it.cmd); else x.it.fn();
+}
+$('#plInput').addEventListener('input', () => { plSel = 0; renderPalette(); });
+$('#plInput').addEventListener('keydown', (ev) => {
+  if (ev.key === 'ArrowDown') { ev.preventDefault(); plSel = Math.min(plSel + 1, plItems.length - 1); renderPalette(); }
+  else if (ev.key === 'ArrowUp') { ev.preventDefault(); plSel = Math.max(plSel - 1, 0); renderPalette(); }
+  else if (ev.key === 'Enter') { ev.preventDefault(); runPalette(plSel); }
+  else if (ev.key === 'Escape') { ev.preventDefault(); closePalette(); }
+});
+$('#plList').addEventListener('click', (ev) => { const r = ev.target.closest('[data-pi]'); if (r) runPalette(Number(r.dataset.pi)); });
+$('#palette').addEventListener('mousedown', (ev) => { if (ev.target.id === 'palette') closePalette(); });
+$('#btnSearch').addEventListener('click', openPalette);
+K.openPalette = openPalette;
+
 async function boot() {
   loadPrefs();
   let restored = false;
@@ -1979,10 +2239,13 @@ async function boot() {
     }
   } catch { /* 初回 */ }
   tracker.reset(doc);
+  applyTheme();
   buildStylebar(); buildRibbon();
+  if (prefs.fold) toggleFold(true);
   resize();
   renderAll();
   if (!restored) { sheet().center = { x: 0, y: 0 }; zoomPaper(); }
+  setDirty(dirty);
   link.init();
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('../sw.js', { scope: '../' }).catch(() => {});
 }
