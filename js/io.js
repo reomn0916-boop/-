@@ -13,6 +13,36 @@ export function decodeText(buf) {
 }
 
 // ---------------- DXF 読み込み ----------------
+/**
+ * DXF の文字の特殊な書き方を普通の文字に戻す
+ * - \U+30C6        … Unicode の文字（AutoCAD が日本語などをこの形で書く）
+ * - \M+18341       … 2バイト文字（n=1 は Shift_JIS）
+ * - %%c %%d %%p    … φ ° ±、%%% は %、%%u %%o（下線・上線の切替）は消す、%%nnn は文字コード
+ */
+export function decodeDxfString(str) {
+  let s = String(str ?? '');
+  s = s.replace(/\\U\+([0-9A-Fa-f]{4,5})/g, (_, h) => String.fromCodePoint(parseInt(h, 16)));
+  s = s.replace(/\\M\+([1-5])([0-9A-Fa-f]{4})/g, (m, n, h) => {
+    const enc = { 1: 'shift_jis', 2: 'big5', 3: 'euc-kr', 4: 'utf-16be', 5: 'gbk' }[n];
+    try { return new TextDecoder(enc).decode(new Uint8Array([parseInt(h.slice(0, 2), 16), parseInt(h.slice(2), 16)])); } catch { return m; }
+  });
+  s = s.replace(/%%([cCdDpP%uUoOkK]|\d{3})/g, (_, c) => {
+    if (/^\d{3}$/.test(c)) return String.fromCharCode(Number(c));
+    return { c: 'φ', d: '°', p: '±', '%': '%', u: '', o: '', k: '' }[c.toLowerCase()];
+  });
+  return s;
+}
+/** MTEXT の書式（\P 改行・\f フォントなど）を外して普通の文字にする */
+function plainText(str) {
+  return decodeDxfString(str)
+    .replace(/\\P/g, ' ').replace(/\\~/g, ' ')
+    .replace(/\\S([^;]*);/g, (_, f) => f.replace(/[#^]/g, '/'))
+    .replace(/\\[A-Za-z][^;\\]*;/g, '').replace(/\\[LlOoKk]/g, '')
+    .replace(/\\([\\{}])/g, (_, c) => `\u0001${c.charCodeAt(0)}\u0002`) // 文字としての \ { } を退避
+    .replace(/[{}]/g, '')
+    .replace(/\u0001(\d+)\u0002/g, (_, n) => String.fromCharCode(Number(n)));
+}
+
 export function parseDXF(text) {
   const lines = text.split(/\r\n|\r|\n/);
   const pairs = [];
@@ -28,7 +58,7 @@ export function parseDXF(text) {
     const L = { name: '', color: null, ltype: null, hidden: false };
     for (let m = k + 1; m < pairs.length && pairs[m][0] !== 0; m++) {
       const [c, v] = pairs[m];
-      if (c === 2) L.name = v.trim();
+      if (c === 2) L.name = decodeDxfString(v.trim());
       else if (c === 62) { const n = parseInt(v, 10); L.hidden = n < 0; L.color = aciToHex(Math.abs(n)); }
       else if (c === 420) L.color = trueColorHex(v);
       else if (c === 6) L.ltype = ltOf(v);
@@ -55,7 +85,7 @@ export function parseDXF(text) {
     while (j < pairs.length && pairs[j][0] !== 0) { g.push(pairs[j]); j++; }
     const num = (code, def = 0) => { const p = g.find((q) => q[0] === code); return p ? parseFloat(p[1]) : def; };
     const str = (code) => { const p = g.find((q) => q[0] === code); return p ? p[1] : ''; };
-    const layer = str(8).trim() || '0';
+    const layer = decodeDxfString(str(8).trim()) || '0';
     const P = (e, nn) => ({ x: nn, y: e }); // DXF(東, 北) → 内部(北, 東)
     const n0 = out.length;
 
@@ -76,7 +106,7 @@ export function parseDXF(text) {
       case 'TEXT':
       case 'MTEXT': {
         let t = g.filter((q) => q[0] === 3 || q[0] === 1).map((q) => q[1]).join('');
-        t = t.replace(/\\P/g, ' ').replace(/\\[A-Za-z][^;]*;/g, '').replace(/[{}]/g, '');
+        t = type === 'MTEXT' ? plainText(t) : decodeDxfString(t);
         let align = 'left';
         let pos = P(num(10), num(20));
         if (type === 'TEXT') {
@@ -139,7 +169,7 @@ export function parseDXF(text) {
         const a = proj(p13), b = proj(p14);
         if (Math.hypot(b.x - a.x, b.y - a.y) < 1e-12) break;
         const e = { type: 'dim', layer, a, b, off: 0, pa: p13, pb: p14 };
-        const txt = str(1).replace(/\\P/g, ' ').replace(/\\[A-Za-z][^;]*;/g, '').replace(/[{}]/g, '').trim();
+        const txt = plainText(str(1)).trim();
         if (txt && !txt.includes('<>')) e.txt = txt; // 書き換えた寸法値だけ残す（<> は実測値）
         out.push(e);
         break;

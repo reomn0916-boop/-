@@ -65,7 +65,7 @@
 ### データ
 | 機能 | 内容 |
 |---|---|
-| 読み込み | DXF（LINE / LWPOLYLINE / POLYLINE / POINT / CIRCLE / ARC / TEXT / MTEXT、文字の回転・配置、Shift_JIS 対応）、SIMA、CSV |
+| 読み込み | DXF（LINE / LWPOLYLINE / POLYLINE / POINT / CIRCLE / ARC / TEXT / MTEXT / 長さの DIMENSION、文字の回転・配置。Shift_JIS・UTF-8 を自動判別し、`\U+` 形式の日本語、`%%c`（φ）・`%%d`（°）・`%%p`（±）なども戻す）、SIMA、CSV |
 | 書き出し | DXF（R12・Shift_JIS・画層の色と線種。寸法線・引出線・ハッチ・路線は線・円弧・文字に展開）、SIMA（Shift_JIS・区画も可）、CSV（Excel 用 BOM 付き）、プロジェクト（.gcad） |
 | 保存 | 端末内（localStorage）に自動保存。元に戻す対応 |
 
