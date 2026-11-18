@@ -132,6 +132,105 @@ CREATE TABLE IF NOT EXISTS package_component (
     PRIMARY KEY (fy, package_code, seq)
 );
 
+-- ② 補正係数・割増（年度ごと）。対象: 労務 / 機械 / 材料 / 市場単価 / 全体 / 共通仮設費率 / 現場管理費率
+CREATE TABLE IF NOT EXISTS adjustment (
+    fy TEXT NOT NULL,
+    code TEXT NOT NULL,           -- 条件のコード 例: 夜間
+    name TEXT NOT NULL,
+    target TEXT NOT NULL,
+    factor REAL NOT NULL,         -- 掛ける係数 例: 1.5
+    bukake_code TEXT NOT NULL DEFAULT '',  -- 空欄はすべての歩掛に効く
+    PRIMARY KEY (fy, code, target, bukake_code)
+);
+
+-- 工事に付ける条件（工事全体）
+CREATE TABLE IF NOT EXISTS project_condition (
+    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    code TEXT NOT NULL,
+    PRIMARY KEY (project_id, code)
+);
+
+-- ③ 機械経費（損料表から運転1日あたりの単価を作る）
+CREATE TABLE IF NOT EXISTS machine_cost (
+    fy TEXT NOT NULL,
+    code TEXT NOT NULL,
+    name TEXT NOT NULL,
+    spec TEXT NOT NULL DEFAULT '',
+    hours REAL NOT NULL,            -- 1日の運転時間
+    loss_per_hour REAL NOT NULL,    -- 運転1時間あたり損料（換算値）
+    fuel_per_hour REAL NOT NULL DEFAULT 0,   -- 燃料消費量（L/h）
+    fuel_code TEXT NOT NULL DEFAULT '',      -- 燃料の材料コード
+    operator_code TEXT NOT NULL DEFAULT '',  -- 運転手の労務コード
+    operators REAL NOT NULL DEFAULT 0,       -- 運転手の人数
+    misc_rate REAL NOT NULL DEFAULT 0,       -- 諸雑費率（%）
+    PRIMARY KEY (fy, code)
+);
+
+-- ⑤ 見積単価（業者見積を比べて採用単価を決める）
+CREATE TABLE IF NOT EXISTS quote (
+    code TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    spec TEXT NOT NULL DEFAULT '',
+    unit TEXT NOT NULL DEFAULT '',
+    rule TEXT NOT NULL DEFAULT '最低',   -- 最低 / 平均 / 指定
+    fixed_price REAL NOT NULL DEFAULT 0, -- rule=指定 のときの単価
+    note TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS quote_offer (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL REFERENCES quote(code) ON DELETE CASCADE,
+    vendor TEXT NOT NULL,
+    price REAL NOT NULL,
+    date TEXT NOT NULL DEFAULT '',
+    file TEXT NOT NULL DEFAULT ''        -- 見積書ファイルの場所
+);
+
+-- ⑥ 単価の改定（適用日から新しい単価に切り替える）
+CREATE TABLE IF NOT EXISTS price_revision (
+    fy TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    code TEXT NOT NULL,
+    region TEXT NOT NULL DEFAULT '',
+    valid_from TEXT NOT NULL,            -- YYYY-MM-DD
+    price REAL NOT NULL,
+    PRIMARY KEY (fy, kind, code, region, valid_from)
+);
+
+-- ⑦ 落札結果
+CREATE TABLE IF NOT EXISTS award (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL DEFAULT '',
+    orderer TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL,
+    work_type TEXT NOT NULL DEFAULT '',
+    planned REAL NOT NULL DEFAULT 0,       -- 予定価格（税抜）
+    threshold REAL NOT NULL DEFAULT 0,     -- 最低制限・調査基準価格
+    award_price REAL NOT NULL DEFAULT 0,   -- 落札額
+    winner TEXT NOT NULL DEFAULT '',
+    our_bid REAL NOT NULL DEFAULT 0,       -- 自社の入札額
+    our_estimate REAL NOT NULL DEFAULT 0,  -- 自社の積算（工事価格）
+    note TEXT NOT NULL DEFAULT ''
+);
+
+-- ⑧ 発注者ごとのルール（年度のルールより優先）
+CREATE TABLE IF NOT EXISTS orderer_rule (
+    orderer TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    PRIMARY KEY (orderer, key)
+);
+
+-- ⑩ 変更履歴
+CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    user TEXT NOT NULL,
+    project_id INTEGER,
+    action TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT ''
+);
+
 -- 外注していた頃の積算結果（答え合わせ用）
 CREATE TABLE IF NOT EXISTS reference_result (
     project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
@@ -167,4 +266,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
     _add_column(conn, "project_item", "note", "TEXT NOT NULL DEFAULT ''")
     _add_column(conn, "item_mapping", "note", "TEXT NOT NULL DEFAULT ''")  # 積算根拠のメモ（次の工事にも出る）
     _add_column(conn, "project", "bid_price", "REAL NOT NULL DEFAULT 0")   # 入札額（税抜）
+    _add_column(conn, "project_item", "conditions", "TEXT NOT NULL DEFAULT ''")  # この行だけの補正（読点区切り）
+    _add_column(conn, "project", "parent_id", "INTEGER")                     # 設計変更の元の工事
+    _add_column(conn, "project", "change_no", "INTEGER NOT NULL DEFAULT 0")  # 0=当初, 1=第1回変更…
+    _add_column(conn, "project", "orderer", "TEXT NOT NULL DEFAULT ''")      # 発注者
+    _add_column(conn, "project", "price_date", "TEXT NOT NULL DEFAULT ''")   # 単価の適用日（空欄=年度の単価）
+    _add_column(conn, "project", "status", "TEXT NOT NULL DEFAULT '作成中'")  # 作成中 / 確認済 / 提出済
+    _add_column(conn, "project", "created_by", "TEXT NOT NULL DEFAULT ''")
+    _add_column(conn, "project", "checked_by", "TEXT NOT NULL DEFAULT ''")
+    _add_column(conn, "project", "checked_at", "TEXT NOT NULL DEFAULT ''")
     conn.commit()

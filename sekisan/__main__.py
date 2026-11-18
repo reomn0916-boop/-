@@ -28,6 +28,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--fy", required=True)
     r.add_argument("--work-type", required=True)
     r.add_argument("--region", default="")
+    r.add_argument("--orderer", default="", help="発注者（発注者ごとの設定を使う）")
     r.add_argument("--out", default="出力")
     r.add_argument("--mapping", help="列の対応表（JSON）")
     r.add_argument("--reference", help="答え合わせ用CSV（項目,金額）")
@@ -44,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{importer.import_company_prices(conn, args.csv)}件 取り込みました")
     elif args.cmd == "run":
         res = pipeline.import_and_run(conn, args.csv, args.name, args.fy, args.work_type, args.out,
-                                      args.region, args.mapping)
+                                      args.region, args.mapping, args.orderer)
         if args.reference:
             importer.import_reference(conn, res["project_id"], args.reference)
             res["checks"] = pipeline.verify(conn, res["project_id"], res["design"])

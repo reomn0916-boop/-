@@ -295,11 +295,11 @@ class BidGauge(QWidget):
 
 # ------------------------------------------------------------------ 明細表
 COLS = ["No", "区分", "工種", "種別", "細別", "名称", "規格", "単位", "数量", "単価", "金額", "当てはめ", "コード",
-        "積算根拠メモ"]
-CAT, PRICE, AMOUNT, HOW, CODE, NOTE = 1, 9, 10, 11, 12, 13
-NUMERIC = {0, 8, PRICE, AMOUNT}
-EDITABLE = {CAT, CODE, NOTE}
-HOW_TONE = {"歩掛": "ok", "パッケージ": "info", "単価": "ok", "対応表": "info", "未設定": "bad"}
+        "補正", "積算根拠メモ"]
+CAT, QTY, PRICE, AMOUNT, HOW, CODE, COND, NOTE = 1, 8, 9, 10, 11, 12, 13, 14
+NUMERIC = {0, QTY, PRICE, AMOUNT}
+EDITABLE = {CAT, QTY, CODE, COND, NOTE}
+HOW_TONE = {"歩掛": "ok", "パッケージ": "info", "単価": "ok", "見積": "info", "対応表": "info", "未設定": "bad"}
 
 
 class ItemModel(QAbstractTableModel):
@@ -329,7 +329,7 @@ class ItemModel(QAbstractTableModel):
 
     def value(self, it: calc.ItemResult, c: int):
         return [it.seq, it.category, it.level1, it.level2, it.level3, it.name, it.spec, it.unit, it.qty,
-                it.unit_price, it.amount, it.how, it.code, it.note][c]
+                it.unit_price, it.amount, it.how, it.code, it.conditions, it.note][c]
 
     def data(self, idx: QModelIndex, role=Qt.DisplayRole):
         it = self.items[idx.row()]
@@ -344,7 +344,7 @@ class ItemModel(QAbstractTableModel):
                 return f"● {v}"
             return str(v)
         if role == Qt.EditRole:
-            return str(v)
+            return f"{v:g}" if c == QTY else str(v)
         if role == Qt.TextAlignmentRole:
             return int((Qt.AlignRight if c in NUMERIC else Qt.AlignLeft) | Qt.AlignVCenter)
         if role == Qt.ForegroundRole:
@@ -352,6 +352,8 @@ class ItemModel(QAbstractTableModel):
                 return QBrush(QColor(C[{"ok": "ok", "info": "accent", "bad": "bad"}[HOW_TONE.get(it.how, "ok")]]))
             if c == CAT and it.category != "直接":
                 return QBrush(color("warn"))
+            if c == COND:
+                return QBrush(color("accent"))
             if c in (0, 2, 3, 4):
                 return QBrush(color("muted"))
             if c == NOTE:
@@ -364,7 +366,11 @@ class ItemModel(QAbstractTableModel):
             return f
         if role == Qt.ToolTipRole:
             if c == CODE:
-                return "歩掛・施工パッケージ・単価のコードを入力（名称の一部でも候補が出ます）"
+                return "歩掛・施工パッケージ・単価・見積のコードを入力（名称の一部でも候補が出ます）"
+            if c == COND:
+                return "この行だけに効かせる補正のコード（読点区切り）。工事全体の補正は「工事の設定」で。"
+            if c == QTY:
+                return "数量（設計変更のときなどに直せます。変更前の値は履歴に残ります）"
             if c == NOTE and it.note:
                 return it.note
         return None
@@ -377,7 +383,7 @@ class ItemModel(QAbstractTableModel):
         if role != Qt.EditRole:
             return False
         it = self.items[idx.row()]
-        if str(value) == str(self.value(it, idx.column())):
+        if str(value).strip() == self.data(idx, Qt.EditRole):
             return False
         self.edited.emit(it.item_id, idx.column(), str(value).strip())
         return True

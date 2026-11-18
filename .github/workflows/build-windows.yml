@@ -14,7 +14,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: 必要なものを入れる
-        run: pip install -r requirements.txt pytest pyinstaller==6.11.1
+        run: pip install -r requirements.txt pytest reportlab==4.2.5 pyinstaller==6.11.1
       - name: テスト
         run: python -m pytest -q
       - name: exeを作る

@@ -5,7 +5,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import calc, export, importer
+from . import calc, change, export, importer
 
 
 @dataclass
@@ -43,7 +43,12 @@ def run(conn: sqlite3.Connection, project_id: int, out_dir: str | Path) -> dict[
     bid = calc.bid_check(design, company, int(project["bid_price"])) if project["bid_price"] else None
     est = export.export_estimate(out_dir / f"{safe}_積算結果.xlsx", project, design, bid)
     bud = export.export_budget(out_dir / f"{safe}_実行予算.xlsx", project, design, company)
-    return {"design": design, "company": company, "bid": bid, "files": [est, bud],
+    files = [est, bud, export.export_ebid_csv(out_dir / f"{safe}_電子入札用内訳書.csv", project, design)]
+    if project.get("parent_id"):
+        comp = change.compare(conn, project_id)
+        if comp:
+            files.append(export.export_change(out_dir / f"{safe}_変更対比表.xlsx", project, comp))
+    return {"design": design, "company": company, "bid": bid, "files": files,
             "checks": verify(conn, project_id, design)}
 
 
@@ -56,9 +61,10 @@ def import_and_run(
     out_dir: str | Path,
     region: str = "",
     mapping_file: str | Path | None = None,
+    orderer: str = "",
 ) -> dict[str, object]:
     items = importer.parse_design_csv(csv_path, mapping_file)
-    pid = importer.create_project(conn, name, fy, items, region, work_type, str(csv_path))
+    pid = importer.create_project(conn, name, fy, items, region, work_type, str(csv_path), orderer)
     result = run(conn, pid, out_dir)
     result["project_id"] = pid
     return result

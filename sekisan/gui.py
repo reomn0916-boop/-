@@ -13,12 +13,13 @@ from PySide6.QtWidgets import (
     QSizePolicy, QTableWidgetItem, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
-from . import calc, db, importer, pipeline, settings, theme
+from . import audit, awards, calc, db, importer, pipeline, settings, theme
+from .gui_pages import AddItemDialog, PagesMixin
 from .export import breakdown_rows
 from .importer import normalize_category
 from .theme import C, color
 from .widgets import (
-    AMOUNT, CAT, CODE, NOTE, Banner, BidGauge, Card, CategoryDelegate, CodeDelegate, DropZone, ItemModel, Kpi,
+    AMOUNT, CAT, CODE, COND, NOTE, QTY, Banner, BidGauge, Card, CategoryDelegate, CodeDelegate, DropZone, ItemModel, Kpi,
     Pill, path_row, yen,
 )
 
@@ -28,11 +29,16 @@ PAGES = [
     ("items", "明細", "明細", "歩掛・単価の当てはめを確認・修正します。直したコードとメモは次の工事にも引き継がれます。", None),
     ("tree", "内訳書", "工事費内訳書", "直接工事費 → 工種 → 種別 → 細別 の階層で金額を確認します。", None),
     ("bid", "入札検討", "入札検討", "予定価格・基準価格・実行原価の位置関係を見ながら入札額を決めます。", None),
-    ("verify", "答え合わせ", "答え合わせ", "外注していた頃の積算結果と比べ、計算のズレを見つけます。", "確認"),
-    ("master", "マスタ", "マスタ管理", "年度ごとの単価・歩掛・諸経費率と、自社単価を取り込みます。", "管理"),
-    ("settings", "設定", "設定", "データファイルの場所など、このパソコンの設定です。", None),
+    ("project", "工事の設定", "工事の設定", "発注者・単価の適用日・補正（割増）・確認と提出を設定します。", "工事"),
+    ("change", "設計変更", "設計変更", "変更前と変更後を並べて、数量・金額の増減を確認します。スライドの目安も出せます。", None),
+    ("verify", "照合・答え合わせ", "照合・答え合わせ", "金抜き設計書PDFや、外注していた頃の積算結果と比べてズレを見つけます。", "確認"),
+    ("history", "変更履歴", "変更履歴", "誰が・いつ・何を変えたかの記録です。", None),
+    ("quotes", "見積単価", "見積単価", "単価表にない資材・工種の業者見積を比べ、採用単価を決めます。", "データ"),
+    ("awards", "落札実績", "落札実績", "過去の落札結果から、落札率や自社積算の精度を見ます。入札検討の予定価格の見込みにも使います。", None),
+    ("master", "マスタ", "マスタ管理", "年度ごとの単価・歩掛・諸経費率・補正・機械損料、発注者ごとの設定を取り込みます。", None),
+    ("settings", "設定", "設定", "データファイルの場所と担当者名など、このパソコンの設定です。", None),
 ]
-PROJECT_PAGES = {"items", "tree", "bid", "verify"}
+PROJECT_PAGES = {"items", "tree", "bid", "project", "change", "verify", "history"}
 
 
 def open_path(path: Path) -> None:
@@ -81,7 +87,7 @@ class ItemFilter(QSortFilterProxyModel):
         return True
 
 
-class MainWindow(QMainWindow):
+class MainWindow(PagesMixin, QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("公共工事 積算アプリ")
@@ -108,7 +114,8 @@ class MainWindow(QMainWindow):
         self.pages: dict[str, int] = {}
         builders = {"new": self._page_new, "items": self._page_items, "tree": self._page_tree,
                     "bid": self._page_bid, "verify": self._page_verify, "master": self._page_master,
-                    "settings": self._page_settings}
+                    "settings": self._page_settings, "project": self._page_project, "change": self._page_change,
+                    "history": self._page_history, "quotes": self._page_quotes, "awards": self._page_awards}
         for key, *_ in PAGES:
             self.pages[key] = self.stack.addWidget(builders[key]())
         cv.addWidget(self.stack, 1)
@@ -186,9 +193,11 @@ class MainWindow(QMainWindow):
         self.proj.setObjectName("HeaderProject")
         self.proj.currentIndexChanged.connect(self._project_changed)
         self.fy_pill = Pill("", "info")
+        self.status_pill = Pill("")
         pb.addWidget(lab)
         pb.addWidget(self.proj)
         pb.addWidget(self.fy_pill)
+        pb.addWidget(self.status_pill)
         top.addWidget(self.proj_box, 0, Qt.AlignTop)
         v.addLayout(top)
 
@@ -204,6 +213,8 @@ class MainWindow(QMainWindow):
         for k in (self.k_direct, self.k_price, self.k_threshold, self.k_cost, self.k_unres):
             kr.addWidget(k)
         v.addWidget(self.kpi_row)
+        v.addStretch(1)
+        self.header_frame = hd
         return hd
 
     def go(self, key: str) -> None:
@@ -215,10 +226,20 @@ class MainWindow(QMainWindow):
         on_project = key in PROJECT_PAGES
         self.kpi_row.setVisible(on_project)
         self.proj_box.setVisible(on_project)
+        self.header_frame.layout().activate()
+        self.header_frame.setFixedHeight(self.header_frame.sizeHint().height())
         if key == "master":
             self._load_master_overview()
+            self._refresh_orderer_rules()
         if key == "new":
             self._load_recent()
+            self._fill_master_choices()
+        if key == "quotes":
+            self._refresh_quotes()
+        if key == "awards":
+            self._refresh_awards()
+        if key == "history":
+            self._refresh_history()
 
     def _update_status(self) -> None:
         p = settings.db_path()
@@ -255,6 +276,9 @@ class MainWindow(QMainWindow):
         self._refresh_tree()
         self._refresh_bid()
         self._refresh_verify()
+        self._refresh_project_page()
+        self._refresh_change()
+        self._refresh_history()
 
     def _project_row(self):
         return self.conn.execute("SELECT * FROM project WHERE id=?", (self.pid,)).fetchone() if self.pid else None
@@ -262,7 +286,12 @@ class MainWindow(QMainWindow):
     def _refresh_kpis(self) -> None:
         d, c = self.design, self.company
         p = self._project_row()
-        self.fy_pill.setText(f"{p['fy']}年度・{p['work_type'] or '工種区分なし'}" if p else "")
+        self.fy_pill.setText(f"{p['fy']}年度・{p['work_type'] or '工種区分なし'}"
+                             + (f"・{p['orderer']}" if p and p["orderer"] else "") if p else "")
+        st = (p["status"] or "作成中") if p else ""
+        self.status_pill.setText(st + ("（ロック中）" if st == "提出済" else ""))
+        self.status_pill.set_tone({"確認済": "ok", "提出済": "info"}.get(st, ""))
+        self.status_pill.setVisible(bool(p))
         if not d:
             for k in (self.k_direct, self.k_price, self.k_threshold, self.k_cost, self.k_unres):
                 k.set("—")
@@ -304,11 +333,14 @@ class MainWindow(QMainWindow):
         self.n_work.setEditable(True)
         self.n_region = QLineEdit()
         self.n_region.setPlaceholderText("空欄なら全地区共通の単価")
+        self.n_orderer = QComboBox()
+        self.n_orderer.setEditable(True)
         self.n_out = QLineEdit(str(Path.home() / "Documents" / "積算出力"))
         f.addRow("工事名", self.n_name)
         f.addRow("年度", self.n_fy)
         f.addRow("工種区分", self.n_work)
         f.addRow("地区", self.n_region)
+        f.addRow("発注者", self.n_orderer)
         f.addRow("出力先", path_row(self.n_out, lambda: self._pick_dir(self.n_out)))
         form_card.lay.addLayout(f)
         btns = QHBoxLayout()
@@ -358,7 +390,7 @@ class MainWindow(QMainWindow):
         fys = [r[0] for r in self.conn.execute(
             "SELECT DISTINCT fy FROM master_price UNION SELECT DISTINCT fy FROM bukake ORDER BY 1 DESC")]
         works = [r[0] for r in self.conn.execute("SELECT DISTINCT work_type FROM overhead_param ORDER BY 1")]
-        for combo, vals in ((self.n_fy, fys), (self.n_work, works)):
+        for combo, vals in ((self.n_fy, fys), (self.n_work, works), (self.n_orderer, self._orderers())):
             cur = combo.currentText()
             combo.clear()
             combo.addItems(vals)
@@ -405,6 +437,7 @@ class MainWindow(QMainWindow):
             res = pipeline.import_and_run(
                 self.conn, self.drop.path, self.n_name.text() or "無題", self.n_fy.currentText(),
                 self.n_work.currentText(), self.n_out.text(), self.n_region.text(),
+                orderer=self.n_orderer.currentText().strip(),
             )
         except Exception as e:  # 利用者に原因を見せる
             self.run_banner.show_msg(f"取り込めませんでした：{e}", "bad")
@@ -414,7 +447,7 @@ class MainWindow(QMainWindow):
         d = res["design"]
         n = len(d.unresolved)
         msg = (f"<b>積算が終わりました。</b>　工事価格 ¥{yen(d.summary.price)}（税込 ¥{yen(d.summary.total)}）"
-               f"<br>積算結果と実行予算のExcelを {self.n_out.text()} に出力しました。")
+               f"<br>積算結果・実行予算・電子入札用内訳書を {self.n_out.text()} に出力しました。")
         if n:
             msg += f"<br>歩掛・単価が当たっていない明細が <b>{n} 件</b> あります。「明細」で直してください。"
         self.run_banner.show_msg(msg, "warn" if n else "ok")
@@ -438,6 +471,12 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.only_unres)
         bar.addWidget(self.count_pill)
         bar.addStretch(1)
+        ab = QPushButton("行を追加")
+        ab.clicked.connect(self._add_row)
+        dbt = QPushButton("行を削除")
+        dbt.clicked.connect(self._delete_row)
+        bar.addWidget(ab)
+        bar.addWidget(dbt)
         rb = QPushButton("再計算（F5）")
         rb.clicked.connect(self.recalc)
         xb = QPushButton("Excelに出力")
@@ -520,6 +559,8 @@ class MainWindow(QMainWindow):
         for r in self.conn.execute(
                 "SELECT DISTINCT kind, code, name, spec, unit FROM master_price WHERE fy=? ORDER BY kind, code", (fy,)):
             out.append(f"{r['code']}　{r['name']}　{r['spec']}　[{r['kind']}・{r['unit']}]")
+        for r in self.conn.execute("SELECT code, name, spec, unit FROM quote ORDER BY code"):
+            out.append(f"{r['code']}　{r['name']}　{r['spec']}　[見積・{r['unit']}]")
         return out
 
     def _refresh_items(self) -> None:
@@ -588,14 +629,17 @@ class MainWindow(QMainWindow):
                                "名称の一部を打つと候補が出ます。")
             return
         self.d_price.setText(f"¥{yen(it.unit_price)} / {it.unit}")
-        self.d_sub.setText(f"数量 {it.qty:g} {it.unit} → 金額 ¥{yen(it.amount)}　（コード {it.code}）")
+        conds = "、".join(d.conditions) if (d := it.detail) and d.conditions else ""
+        self.d_sub.setText(f"数量 {it.qty:g} {it.unit} → 金額 ¥{yen(it.amount)}　（コード {it.code}）"
+                           + (f"\n補正: {conds}" if conds else ""))
         d = it.detail
         if not d:
             return
         lines = list(d.lines)
         self.d_lines.setRowCount(len(lines) + 1)
         for r, ln in enumerate(lines):
-            vals = [f"{ln.name}", f"{ln.qty:g}", yen(ln.price), yen(ln.amount), ln.source]
+            vals = [f"{ln.name}", f"{ln.qty:g}", yen(ln.price), yen(ln.amount),
+                    ln.source + (f" ×{ln.factor:g}" if ln.factor != 1 else "")]
             for c, val in enumerate(vals):
                 cell = _ro_item(val, c in (1, 2, 3))
                 if ln.source == "不明":
@@ -616,17 +660,46 @@ class MainWindow(QMainWindow):
 
     def _item_edited(self, item_id: int, col: int, value: str) -> None:
         if col == CODE:
-            calc.assign_code(self.conn, item_id, value, remember=True)
+            self.guard(calc.assign_code, self.conn, item_id, value, remember=True)
         elif col == NOTE:
-            calc.set_note(self.conn, item_id, value, remember=True)
+            self.guard(calc.set_note, self.conn, item_id, value, remember=True)
         elif col == CAT:
-            calc.set_category(self.conn, item_id, normalize_category(value))
+            self.guard(calc.set_category, self.conn, item_id, normalize_category(value))
+        elif col == COND:
+            self.guard(calc.set_item_conditions, self.conn, item_id, value)
+        elif col == QTY:
+            try:
+                q = float(value.replace(",", ""))
+            except ValueError:
+                QMessageBox.warning(self, "入力", "数量は数字で入れてください")
+                return
+            self.guard(calc.set_qty, self.conn, item_id, q)
         QTimer.singleShot(0, self.recalc)
+
+    def _add_row(self) -> None:
+        if self.pid is None:
+            return
+        dlg = AddItemDialog(self, self._code_candidates())
+        if dlg.exec():
+            v = dlg.values()
+            if not v["name"]:
+                return
+            self.guard(calc.add_item, self.conn, self.pid, **v)
+            self.recalc()
+
+    def _delete_row(self) -> None:
+        it = self._selected()
+        if it and QMessageBox.question(self, "行を削除", f"明細{it.seq}「{it.name}」を削除しますか？（履歴に残ります）") \
+                == QMessageBox.Yes:
+            self.guard(calc.delete_item, self.conn, it.item_id)
+            self.recalc()
 
     def _save_note(self) -> None:
         it = self._selected()
         if it:
-            calc.set_note(self.conn, it.item_id, self.d_note.toPlainText().strip(), remember=True)
+            if self.guard(calc.set_note, self.conn, it.item_id, self.d_note.toPlainText().strip(), remember=True) \
+                    is None and self._project_row()["status"] == "提出済":
+                return
             self.recalc()
             self.status.showMessage("メモを保存しました", 3000)
 
@@ -742,11 +815,12 @@ class MainWindow(QMainWindow):
         self.b_margin = Kpi("粗利の見込み（入札額 − 実行原価）")
         self.b_gap = Kpi("基準価格との差")
         self.b_cost = Kpi("実行原価 ÷ 予定価格")
-        for i, k in enumerate((self.b_ratio, self.b_margin, self.b_gap, self.b_cost)):
+        self.b_pred = Kpi("落札実績から見た予定価格の見込み")
+        for i, k in enumerate((self.b_ratio, self.b_margin, self.b_gap, self.b_cost, self.b_pred)):
             grid.addWidget(k, 0, i)
         v.addLayout(grid)
 
-        note = QLabel("※ 基準価格の式は年度のルール表（ルール.csv）で発注者ごとに変えられます。"
+        note = QLabel("※ 基準価格の式は「マスタ」の発注者ごとの設定（なければ年度のルール.csv）に従います。"
                       "予定価格は工事価格と同じとみなした試算です。必ず発注者の公表内容と照らしてください。")
         note.setObjectName("Muted")
         note.setWordWrap(True)
@@ -783,6 +857,15 @@ class MainWindow(QMainWindow):
         if not self.bid_edit.hasFocus():
             self.bid_edit.setText(yen(bid) if bid else "")
         price = b.planned or 1
+        st = awards.stats(self.conn, p["orderer"], p["work_type"])
+        if st.count == 0 or st.accuracy is None:
+            st = awards.stats(self.conn, p["orderer"])
+        pred = st.predict_planned(b.planned)
+        if pred:
+            self.b_pred.set(f"¥{yen(pred)}", f"過去{st.count}件で自社積算は予定価格の{st.accuracy * 100:.1f}%",
+                            "warn" if abs(pred - b.planned) / b.planned > 0.03 else "")
+        else:
+            self.b_pred.set("—", "落札実績（自社積算額入り）がまだありません")
         self.b_cost.set(f"{b.cost / price * 100:.2f}%", f"¥{yen(b.cost)}", "bad" if b.cost > b.threshold else "")
         if not bid:
             self.b_ratio.set("—", "入札額を入れてください")
@@ -811,22 +894,33 @@ class MainWindow(QMainWindow):
         w, v = _page()
         top = QHBoxLayout()
         top.setSpacing(12)
-        self.v_rate = Kpi("一致した項目")
+        self.v_rate = Kpi("過去の結果と一致")
         self.v_diff = Kpi("工事価格の差")
         top.addWidget(self.v_rate)
         top.addWidget(self.v_diff)
-        imp = Card("過去の積算結果を取り込む", "CSV（項目,金額）。項目は明細の番号か、直接工事費・工事価格などの合計名。")
+        imp = Card("過去の積算結果", "CSV（項目,金額）。項目は明細の番号か合計名。")
         b = QPushButton("CSVを選ぶ…")
         b.setObjectName("Primary")
         b.clicked.connect(self._do_reference)
         imp.lay.addWidget(b, 0, Qt.AlignLeft)
         top.addWidget(imp, 2)
+        self.v_pdf = Kpi("PDFと一致した明細")
+        self.v_pdf.set("—", "PDFを選ぶと照合します")
+        top.addWidget(self.v_pdf)
+        top.addWidget(self._pdf_card(), 2)
         v.addLayout(top)
+        split = QSplitter(Qt.Vertical)
+        a = Card("過去の積算結果との比較")
         self.checks = QTableWidget(0, 5)
         self.checks.setHorizontalHeaderLabels(["項目", "今回の計算", "過去の結果", "差", "判定"])
         _style_table(self.checks)
         self.checks.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        v.addWidget(self.checks, 1)
+        a.lay.addWidget(self.checks, 1)
+        b2 = Card("金抜き設計書PDFとの照合")
+        b2.lay.addWidget(self._pdf_table(), 1)
+        split.addWidget(a)
+        split.addWidget(b2)
+        v.addWidget(split, 1)
         return w
 
     def _do_reference(self) -> None:
@@ -881,8 +975,8 @@ class MainWindow(QMainWindow):
         w, v = _page()
         row = QHBoxLayout()
         row.setSpacing(16)
-        c1 = Card("年度マスタを取り込む", "年度フォルダ（単価.csv・歩掛.csv・歩掛構成.csv・諸経費.csv・ルール.csv・"
-                  "施工パッケージ.csv・施工パッケージ構成.csv）を選びます。同じ年度の古い内容は入れ替わります。")
+        c1 = Card("年度マスタを取り込む", "年度フォルダ（単価・歩掛・歩掛構成・諸経費・ルール・施工パッケージ・"
+                  "施工パッケージ構成・補正・機械損料・単価改定 の各CSV）を選びます。同じ年度の古い内容は入れ替わります。")
         f = QFormLayout()
         self.m_fy = QLineEdit("R8")
         self.m_fy.setMaximumWidth(120)
@@ -908,18 +1002,20 @@ class MainWindow(QMainWindow):
         self.m_banner = Banner()
         v.addWidget(self.m_banner)
         ov = Card("登録済みの年度")
-        self.m_table = QTableWidget(0, 7)
-        self.m_table.setHorizontalHeaderLabels(["年度", "単価", "歩掛", "施工パッケージ", "諸経費の式", "ルール", "工種区分"])
+        self.m_table = QTableWidget(0, 10)
+        self.m_table.setHorizontalHeaderLabels(["年度", "単価", "歩掛", "施工パッケージ", "諸経費の式", "ルール", "補正",
+                                                "機械損料", "単価改定", "工種区分"])
         _style_table(self.m_table)
-        self.m_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)
+        self.m_table.horizontalHeader().setSectionResizeMode(9, QHeaderView.Stretch)
         ov.lay.addWidget(self.m_table)
-        v.addWidget(ov, 1)
+        v.addWidget(ov, 2)
+        v.addWidget(self._orderer_card(), 3)
         return w
 
     def _load_master_overview(self) -> None:
         fys = [r[0] for r in self.conn.execute(
             "SELECT fy FROM master_price UNION SELECT fy FROM bukake UNION SELECT fy FROM package "
-            "UNION SELECT fy FROM overhead_param ORDER BY 1 DESC")]
+            "UNION SELECT fy FROM overhead_param UNION SELECT fy FROM adjustment ORDER BY 1 DESC")]
         self.m_table.setRowCount(len(fys))
         for r, fy in enumerate(fys):
             def cnt(table: str) -> str:
@@ -927,8 +1023,8 @@ class MainWindow(QMainWindow):
             works = "、".join(x[0] for x in self.conn.execute(
                 "SELECT DISTINCT work_type FROM overhead_param WHERE fy=?", (fy,)))
             for c, val in enumerate([fy, cnt("master_price"), cnt("bukake"), cnt("package"), cnt("overhead_param"),
-                                     cnt("rule"), works]):
-                self.m_table.setItem(r, c, _ro_item(val, 1 <= c <= 5))
+                                     cnt("rule"), cnt("adjustment"), cnt("machine_cost"), cnt("price_revision"), works]):
+                self.m_table.setItem(r, c, _ro_item(val, 1 <= c <= 8))
         n = self.conn.execute("SELECT COUNT(*) FROM company_price").fetchone()[0]
         self.m_company.setText(f"{n:,} 件")
 
@@ -971,6 +1067,18 @@ class MainWindow(QMainWindow):
         b.clicked.connect(self._save_settings)
         c.lay.addWidget(b, 0, Qt.AlignRight)
         v.addWidget(c)
+        u = Card("担当者名", "変更履歴とダブルチェック（作成者と確認者は別の人）に使います。空欄ならWindowsのユーザー名。")
+        uh = QHBoxLayout()
+        self.s_user = QLineEdit(settings.load().get("user_name", ""))
+        self.s_user.setPlaceholderText(audit.current_user())
+        self.s_user.setMaximumWidth(260)
+        ub = QPushButton("保存")
+        ub.clicked.connect(self._save_user)
+        uh.addWidget(self.s_user)
+        uh.addWidget(ub)
+        uh.addStretch(1)
+        u.lay.addLayout(uh)
+        v.addWidget(u)
         self.s_banner = Banner()
         v.addWidget(self.s_banner)
         k = Card("ショートカット")
@@ -978,6 +1086,13 @@ class MainWindow(QMainWindow):
         v.addWidget(k)
         v.addStretch(1)
         return w
+
+    def _save_user(self) -> None:
+        s = settings.load()
+        s["user_name"] = self.s_user.text().strip()
+        settings.save(s)
+        self.s_banner.show_msg(f"担当者名を「{audit.current_user()}」にしました。", "ok")
+        self._refresh_project_page()
 
     def _pick_db(self) -> None:
         p, _ = QFileDialog.getSaveFileName(self, "データファイル", self.s_db.text(), "データ (*.sqlite)",

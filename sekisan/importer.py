@@ -23,9 +23,11 @@ DEFAULT_COLUMNS: dict[str, list[str]] = {
     "qty": ["数量"],
     "bukake_code": ["コード", "単価コード", "歩掛コード", "代価コード"],
     "category": ["区分", "費用区分"],
+    "conditions": ["補正", "条件"],
 }
 
-CATEGORIES = ("直接", "共通仮設", "現場管理")
+from .calc import CATEGORIES, DIRECT, DIRECT_EXCLUDED  # noqa: E402,F401
+from . import audit  # noqa: E402
 
 
 def normalize_category(s: str) -> str:
@@ -33,7 +35,9 @@ def normalize_category(s: str) -> str:
         return "共通仮設"
     if "現場管理" in s:
         return "現場管理"
-    return "直接"
+    if "対象外" in s:
+        return DIRECT_EXCLUDED
+    return DIRECT
 
 
 def read_text(path: str | Path) -> str:
@@ -71,6 +75,7 @@ class DesignItem:
     qty: float
     bukake_code: str
     category: str = "直接"
+    conditions: str = ""
 
 
 def resolve_columns(headers: list[str], mapping: dict[str, list[str]] | None = None) -> dict[str, str | None]:
@@ -124,6 +129,7 @@ def parse_design_csv(path: str | Path, mapping_file: str | Path | None = None) -
                 qty=qty,
                 bukake_code=get(row, "bukake_code"),
                 category=normalize_category(get(row, "category")),
+                conditions=get(row, "conditions"),
             )
         )
     return items
@@ -137,21 +143,26 @@ def create_project(
     region: str = "",
     work_type: str = "",
     source_file: str = "",
+    orderer: str = "",
+    parent_id: int | None = None,
+    change_no: int = 0,
 ) -> int:
     cur = conn.execute(
-        "INSERT INTO project(name, fy, region, work_type, source_file) VALUES (?,?,?,?,?)",
-        (name, fy, region, work_type, source_file),
+        "INSERT INTO project(name, fy, region, work_type, source_file, orderer, parent_id, change_no, created_by)"
+        " VALUES (?,?,?,?,?,?,?,?,?)",
+        (name, fy, region, work_type, source_file, orderer, parent_id, change_no, audit.current_user()),
     )
     pid = cur.lastrowid
     conn.executemany(
         "INSERT INTO project_item(project_id, seq, level1, level2, level3, name, spec, unit, qty, bukake_code,"
-        " category) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        " category, conditions) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
         [
             (pid, it.seq, it.level1, it.level2, it.level3, it.name, it.spec, it.unit, it.qty, it.bukake_code,
-             it.category)
+             it.category, it.conditions)
             for it in items
         ],
     )
+    audit.log(conn, pid, "工事を作成", f"{name}（{len(items)}行）{source_file}")
     conn.commit()
     return pid
 
@@ -165,6 +176,9 @@ def create_project(
 #   ルール.csv    : 項目,値
 #   施工パッケージ.csv      : コード,名称,規格,単位,標準単価
 #   施工パッケージ構成.csv  : パッケージコード,種類,資源コード,構成比,基準単価
+#   補正.csv      : コード,名称,対象,係数,歩掛コード
+#   機械損料.csv  : コード,名称,規格,運転時間,損料_1時間,燃料_1時間,燃料コード,運転手コード,運転手人数,諸雑費率
+#   単価改定.csv  : 種類,コード,地区,適用日,単価
 
 
 def import_master_folder(conn: sqlite3.Connection, fy: str, folder: str | Path) -> dict[str, int]:
@@ -255,6 +269,37 @@ def import_master_folder(conn: sqlite3.Connection, fy: str, folder: str | Path) 
                 data,
             )
             counts["施工パッケージ構成"] = len(rows)
+        if (folder / "補正.csv").exists():
+            conn.execute("DELETE FROM adjustment WHERE fy=?", (fy,))
+            rows = read_csv_rows(folder / "補正.csv")
+            conn.executemany(
+                "INSERT INTO adjustment(fy, code, name, target, factor, bukake_code) VALUES (?,?,?,?,?,?)",
+                [(fy, r["コード"], r.get("名称", r["コード"]), r["対象"], _to_float(r["係数"]),
+                  r.get("歩掛コード", "")) for r in rows],
+            )
+            counts["補正"] = len(rows)
+        if (folder / "機械損料.csv").exists():
+            conn.execute("DELETE FROM machine_cost WHERE fy=?", (fy,))
+            rows = read_csv_rows(folder / "機械損料.csv")
+            conn.executemany(
+                "INSERT INTO machine_cost(fy, code, name, spec, hours, loss_per_hour, fuel_per_hour, fuel_code,"
+                " operator_code, operators, misc_rate) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                [(fy, r["コード"], r["名称"], r.get("規格", ""), _to_float(r["運転時間"]),
+                  _to_float(r["損料_1時間"]), _to_float(r.get("燃料_1時間", "0")), r.get("燃料コード", ""),
+                  r.get("運転手コード", ""), _to_float(r.get("運転手人数", "0")), _to_float(r.get("諸雑費率", "0")))
+                 for r in rows],
+            )
+            counts["機械損料"] = len(rows)
+        if (folder / "単価改定.csv").exists():
+            conn.execute("DELETE FROM price_revision WHERE fy=?", (fy,))
+            rows = read_csv_rows(folder / "単価改定.csv")
+            conn.executemany(
+                "INSERT INTO price_revision(fy, kind, code, region, valid_from, price) VALUES (?,?,?,?,?,?)",
+                [(fy, r["種類"], r["コード"], r.get("地区", ""), r["適用日"], _to_float(r["単価"])) for r in rows],
+            )
+            counts["単価改定"] = len(rows)
+        if counts:
+            audit.log(conn, None, f"{fy}年度マスタを取り込み", "、".join(f"{k}{v}件" for k, v in counts.items()))
     return counts
 
 
@@ -282,4 +327,16 @@ def import_reference(conn: sqlite3.Connection, project_id: int, path: str | Path
             "INSERT OR REPLACE INTO reference_result(project_id, key, amount) VALUES (?,?,?)",
             [(project_id, r["項目"], _to_float(r["金額"])) for r in rows],
         )
+    return len(rows)
+
+
+def import_orderer_rules(conn: sqlite3.Connection, path: str | Path) -> int:
+    """発注者.csv : 発注者,項目,値（同じ発注者・項目は上書き）"""
+    rows = read_csv_rows(path)
+    with conn:
+        conn.executemany(
+            "INSERT OR REPLACE INTO orderer_rule(orderer, key, value) VALUES (?,?,?)",
+            [(r["発注者"], r["項目"], r["値"]) for r in rows],
+        )
+        audit.log(conn, None, "発注者ごとの設定を取り込み", f"{len(rows)}件")
     return len(rows)
