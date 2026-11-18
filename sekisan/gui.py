@@ -15,13 +15,13 @@ from PySide6.QtWidgets import (
 
 from . import audit, awards, calc, db, importer, pipeline, settings, theme
 from .gui_pages import AddItemDialog, PagesMixin
-from .gui_pages2 import PagesMixin2
+from .gui_pages2 import BookPageMixin, PagesMixin2
 from . import backup
 from .export import breakdown_rows
 from .importer import normalize_category
 from .theme import C, color
 from .widgets import (
-    AMOUNT, CAT, CODE, COND, NOTE, QTY, Banner, BidGauge, Card, CategoryDelegate, CodeDelegate, DropZone, ItemModel, Kpi,
+    AMOUNT, CAT, CODE, COND, NOTE, QTY, Banner, RegionBox, BidGauge, Card, CategoryDelegate, CodeDelegate, DropZone, ItemModel, Kpi,
     Pill, path_row, yen,
 )
 
@@ -39,11 +39,12 @@ PAGES = [
     ("inquiry", "質疑書", "質疑書", "設計書の食い違い・不明な点を、発注者への質問にまとめます。", None),
     ("history", "変更履歴", "変更履歴", "誰が・いつ・何を変えたかの記録です。", None),
     ("quotes", "見積単価", "見積単価", "単価表にない資材・工種の業者見積を比べ、採用単価を決めます。", "データ"),
+    ("book", "物価資料の単価", "物価資料の単価", "県の単価資料で「○」の品目のうち、この工事で使うものに、積算資料・建設物価の単価を入れます。", None),
     ("awards", "落札実績", "落札実績", "過去の落札結果から、落札率や自社積算の精度を見ます。入札検討の予定価格の見込みにも使います。", None),
     ("master", "マスタ", "マスタ管理", "年度ごとの単価・歩掛・諸経費率・補正・機械損料・公表単価、発注者ごとの設定を取り込みます。", None),
     ("settings", "設定", "設定", "データファイル・担当者名・利用者と権限・バックアップの設定です。", None),
 ]
-PROJECT_PAGES = {"items", "tree", "bid", "project", "schedule", "change", "after", "verify", "inquiry", "history"}
+PROJECT_PAGES = {"items", "tree", "bid", "project", "schedule", "change", "after", "verify", "inquiry", "history", "book"}
 
 
 def open_path(path: Path) -> None:
@@ -84,7 +85,7 @@ class ItemFilter(QSortFilterProxyModel):
 
     def filterAcceptsRow(self, row, parent) -> bool:  # noqa: N802
         it = self.sourceModel().items[row]
-        if self.only_unresolved and it.how != "未設定":
+        if self.only_unresolved and not it.missing:
             return False
         if self.text:
             hay = " ".join([it.name, it.spec, it.code, it.level1, it.level2, it.level3, it.note]).lower()
@@ -92,7 +93,7 @@ class ItemFilter(QSortFilterProxyModel):
         return True
 
 
-class MainWindow(PagesMixin, PagesMixin2, QMainWindow):
+class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("公共工事 積算アプリ")
@@ -125,7 +126,8 @@ class MainWindow(PagesMixin, PagesMixin2, QMainWindow):
                     "bid": self._page_bid, "verify": self._page_verify, "master": self._page_master,
                     "settings": self._page_settings, "project": self._page_project, "change": self._page_change,
                     "history": self._page_history, "quotes": self._page_quotes, "awards": self._page_awards,
-                    "schedule": self._page_schedule, "after": self._page_after, "inquiry": self._page_inquiry}
+                    "schedule": self._page_schedule, "after": self._page_after, "inquiry": self._page_inquiry,
+                    "book": self._page_book}
         for key, *_ in PAGES:
             self.pages[key] = self.stack.addWidget(builders[key]())
         cv.addWidget(self.stack, 1)
@@ -303,6 +305,7 @@ class MainWindow(PagesMixin, PagesMixin2, QMainWindow):
         self._refresh_inquiry()
         self._refresh_after()
         self._refresh_users()
+        self._refresh_book()
 
     def _project_row(self):
         return self.conn.execute("SELECT * FROM project WHERE id=?", (self.pid,)).fetchone() if self.pid else None
@@ -311,7 +314,8 @@ class MainWindow(PagesMixin, PagesMixin2, QMainWindow):
         d, c = self.design, self.company
         p = self._project_row()
         self.fy_pill.setText(f"{p['fy']}年度・{p['work_type'] or '工種区分なし'}"
-                             + (f"・{p['orderer']}" if p and p["orderer"] else "") if p else "")
+                             + (f"・{p['region']}" if p["region"] else "")
+                             + (f"・{p['orderer']}" if p["orderer"] else "") if p else "")
         st = (p["status"] or "作成中") if p else ""
         self.status_pill.setText(st + ("（ロック中）" if st == "提出済" else ""))
         self.status_pill.set_tone({"確認済": "ok", "提出済": "info"}.get(st, ""))
@@ -355,7 +359,7 @@ class MainWindow(PagesMixin, PagesMixin2, QMainWindow):
         self.n_fy.setEditable(True)
         self.n_work = QComboBox()
         self.n_work.setEditable(True)
-        self.n_region = QLineEdit()
+        self.n_region = RegionBox()
         self.n_region.setPlaceholderText("空欄なら全地区共通の単価")
         self.n_orderer = QComboBox()
         self.n_orderer.setEditable(True)
@@ -664,9 +668,14 @@ class MainWindow(PagesMixin, PagesMixin2, QMainWindow):
             return
         self.d_name.setText(f"{it.name}　{it.spec}")
         self.d_how.setText(it.how)
-        self.d_how.set_tone({"未設定": "bad", "パッケージ": "info", "対応表": "info"}.get(it.how, "ok"))
+        self.d_how.set_tone({"未設定": "bad", "物価資料待ち": "warn", "パッケージ": "info", "対応表": "info"}.get(it.how, "ok"))
         self.d_note.setPlainText(it.note)
-        self.d_lines.setVisible(it.how != "未設定")
+        self.d_lines.setVisible(not it.missing)
+        if it.how == "物価資料待ち":
+            self.d_price.setText("—")
+            self.d_sub.setText(f"コード {it.code} は県の単価資料で「○（物価資料の単価を使う）」です。"
+                               "積算資料・建設物価で調べて、「物価資料の単価」の画面で単価を入れてください。")
+            return
         if it.how == "未設定":
             self.d_price.setText("—")
             self.d_sub.setText("表の「コード」欄をダブルクリックして、歩掛・施工パッケージ・単価のコードを入れてください。"

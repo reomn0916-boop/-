@@ -208,3 +208,80 @@ def test_backup_restore(conn, pid, tmp_path):
     for _ in range(5):
         backup.make(dbp, dest, keep=3)
     assert len(backup.list_backups(dest)) <= 3
+
+
+# ---------------------------------------------------------------- 奈良県の単価資料PDF（同じ並びの小さなPDFを作って読む）
+def _nara_pdf(path, regional: bool):
+    rl = pytest.importorskip("reportlab.pdfgen.canvas")
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    pdfmetrics.registerFont(UnicodeCIDFont("HeiseiKakuGo-W5"))
+    c = rl.Canvas(str(path), pagesize=(842, 595))
+    c.setFont("HeiseiKakuGo-W5", 9)
+    c.drawString(40, 560, "土木工事設計資材単価表（令和８年１１月１日より適用）")
+    c.showPage()
+    c.setFont("HeiseiKakuGo-W5", 6)
+    y = 520
+    if regional:
+        head = [(47, "項番"), (78, "地区"), (122, "単価コード"), (245, "名称"), (403, "規格"), (507, "単位"), (566, "単価（円）")]
+        rows = [[(51, "5"), (83, "1"), (102, "Z002010012"), (173, "生コンクリート"), (331, "21-18-25(20)"),
+                 (508, "ｍ３"), (593, "○"), (624, "202610積"), (678, "P.118")],
+                [(83, "2"), (102, "Z002010012"), (575, "28,000")],
+                [(83, "3"), (102, "Z002010012")]]
+    else:
+        head = [(43, "項番"), (84, "単価コード"), (226, "名称"), (404, "規格"), (506, "単位"), (555, "単価（円）")]
+        rows = [[(43, "1441"), (61, "Z006412002"), (137, "メタルクラウン"), (330, "φ４１ｍｍ"), (509, "個"), (580, "○"),
+                 (616, "202610積"), (664, "P.309")],
+                [(43, "1443"), (61, "ZA06416010"), (137, "ケーシング"), (170, "φ96mm"), (191, "ｶｯﾌﾟﾘﾝｸﾞ付"),
+                 (330, "二重管工法削孔φ96mm"), (509, "個"), (575, "12,300")],
+                [(43, "1778"), (61, "Q040015036"), (137, "モノレール機械器具損料"), (330, "50m以下"), (509, "日"),
+                 (575, "2,200")]]
+    for x, t in head:
+        c.drawString(x, y, t)
+    for r in rows:
+        y -= 12
+        for x, t in r:
+            c.drawString(x, y, t)
+    c.save()
+
+
+def test_nara_pdf_regional(tmp_path, conn):
+    p = tmp_path / "r.pdf"
+    _nara_pdf(p, True)
+    assert publicprice.is_nara_pdf(p) and publicprice.effective_date(p) == "2026-11-01"
+    items = publicprice.parse_nara_pdf(p)
+    got = [(i.region, i.name, i.spec, i.unit, i.price, i.source) for i in items]
+    assert got == [("1地区", "生コンクリート", "21-18-25(20)", "ｍ３", None, "物価資料"),
+                   ("2地区", "生コンクリート", "21-18-25(20)", "ｍ３", 28000, "県単価"),
+                   ("3地区", "生コンクリート", "21-18-25(20)", "ｍ３", None, "未設定")]
+    assert items[0].ref.startswith("202610積")
+    rows = publicprice.preview(conn, "R8", publicprice.parse(p))
+    assert publicprice.apply(conn, "R8", rows, "r.pdf") == 1
+    assert conn.execute("SELECT price FROM master_price WHERE code='Z002010012' AND region='2地区'").fetchone()[0] == 28000
+    assert conn.execute("SELECT COUNT(*) FROM public_item WHERE code='Z002010012'").fetchone()[0] == 3
+
+
+def test_nara_pdf_uniform_and_book_items(tmp_path, conn, pid):
+    p = tmp_path / "u.pdf"
+    _nara_pdf(p, False)
+    items = {i.code: i for i in publicprice.parse_nara_pdf(p)}
+    k = items["ZA06416010"]
+    # 名称の中の空白は文字の間隔しだいで詰まることがあるので、空白を除いて比べる
+    assert (k.name.replace(" ", ""), k.spec, k.price) == ("ケーシングφ96mmｶｯﾌﾟﾘﾝｸﾞ付", "二重管工法削孔φ96mm", 12300)
+    assert items["Q040015036"].kind == "市場単価" and items["Z006412002"].source == "物価資料"
+    publicprice.apply(conn, "R8", publicprice.preview(conn, "R8", publicprice.parse(p)), "u.pdf")
+    # ○の品目を明細に当てると「物価資料で調べる単価」に出て、入れると単価が付く
+    iid_ = calc.add_item(conn, pid, "メタルクラウン", "φ41mm", "個", 4, "Z006412002")
+    res = calc.calculate(conn, pid)
+    assert any("物価資料" in w for w in res.warnings)
+    waiting = next(i for i in res.items if i.item_id == iid_)
+    assert waiting.how == "物価資料待ち" and waiting in res.unresolved
+    assert not [x for x, _ in suggest.auto_assign(conn, pid) if x == waiting.seq]  # 別のコードに変えない
+    book = publicprice.book_items_for(conn, pid)
+    assert [b.code for b in book] == ["Z006412002"] and "P.309" in book[0].ref
+    publicprice.set_book_price(conn, "R8", "材料", "Z006412002", 8500)
+    r = next(i for i in calc.calculate(conn, pid).items if i.item_id == iid_)
+    assert r.amount == 34000 and not publicprice.book_items_for(conn, pid)
+    # 当てはめ候補にも出る
+    cs = suggest.candidates(conn, "R8", "モノレール機械器具損料", "50m以下", "日")
+    assert cs[0].code == "Q040015036"

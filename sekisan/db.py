@@ -231,6 +231,22 @@ CREATE TABLE IF NOT EXISTS audit_log (
     detail TEXT NOT NULL DEFAULT ''
 );
 
+-- 県の単価資料に載っている品目（単価が○＝物価資料、空欄のものも含めて控える）
+CREATE TABLE IF NOT EXISTS public_item (
+    fy TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    code TEXT NOT NULL,
+    name TEXT NOT NULL,
+    spec TEXT NOT NULL DEFAULT '',
+    unit TEXT NOT NULL DEFAULT '',
+    region TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL,          -- 県単価 / 物価資料 / 未設定
+    price REAL,
+    ref TEXT NOT NULL DEFAULT '',  -- 刊行物の掲載元
+    file TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (fy, code, region)
+);
+
 -- ③ 利用者と権限（空なら全員が管理者として動く）
 CREATE TABLE IF NOT EXISTS app_user (
     name TEXT PRIMARY KEY,

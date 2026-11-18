@@ -37,7 +37,7 @@ def _table(ws, start_row: int, headers: list[str], rows: list[list], formats: di
             cell.border = BORDER
             if formats and c in formats and isinstance(v, (int, float)):
                 cell.number_format = formats[c]
-        if warn_col is not None and warn_col <= len(row) and row[warn_col - 1] == "未設定":
+        if warn_col is not None and warn_col <= len(row) and row[warn_col - 1] in ("未設定", "物価資料待ち"):
             for c in range(1, len(headers) + 1):
                 ws.cell(r, c).fill = WARN_FILL
     if widths:
@@ -387,4 +387,17 @@ def export_agreement(path: str | Path, project: dict, ag, prog=None) -> Path:
                 ["今回の部分払い限度額", prog.payable]]
         _table(ws2, last + 2, ["項目", "金額"], summ, {2: YEN})
         ws2.cell(last + 4, 2).number_format = "0.0%"
+    return _save(wb, path)
+
+
+def export_book_list(path: str | Path, project: dict, items) -> Path:
+    """物価資料（積算資料・建設物価）で調べる単価の一覧。調べた単価を書き込んで使う。"""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "物価資料で調べる単価"
+    _title(ws, f"物価資料で調べる単価　{project['name']}")
+    ws["A2"] = "県の単価資料で「○（刊行物単価使用）」になっている品目です。積算資料・建設物価の単価を「単価」欄に記入してください。"
+    data = [[b.kind, b.code, b.name, b.spec, b.unit, b.region, b.ref, b.used_in, None] for b in items]
+    _table(ws, 4, ["種類", "単価コード", "名称", "規格", "単位", "地区", "刊行物の掲載元", "使う明細", "単価"], data,
+           {9: YEN}, [8, 13, 26, 24, 6, 7, 30, 20, 12])
     return _save(wb, path)

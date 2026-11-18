@@ -51,6 +51,11 @@ def candidates(conn: sqlite3.Connection, fy: str, name: str, spec: str, unit: st
         pool.append((r["code"], r["kind"], r["name"], r["spec"], r["unit"]))
     for r in conn.execute("SELECT code, name, spec, unit FROM quote"):
         pool.append((r["code"], "見積", r["name"], r["spec"], r["unit"]))
+    have = {c for c, *_ in pool}
+    for r in conn.execute("SELECT DISTINCT kind, code, name, spec, unit, source FROM public_item "
+                          "WHERE fy=? AND price IS NULL", (fy,)):
+        if r["code"] not in have:
+            pool.append((r["code"], f"{r['kind']}・単価は{r['source']}", r["name"], r["spec"], r["unit"]))
 
     best: dict[str, Candidate] = {}
 
@@ -62,7 +67,11 @@ def candidates(conn: sqlite3.Connection, fy: str, name: str, spec: str, unit: st
         s_name = sim(name, cn)
         if s_name < 0.4:
             continue
+        if s_name < 1.0:
+            s_name = min(s_name, 0.9)   # 名称が完全に同じものを、似ているだけのものより必ず上にする
         s_spec = sim(spec, cs) if spec and cs else (0.5 if not spec and not cs else 0.3)
+        if s_spec < 1.0:
+            s_spec = min(s_spec, 0.85)  # 規格も同じ考え方（RC-40 と C-40 を区別する）
         s_unit = 1.0 if norm(unit) == norm(cu) else 0.0
         score = 0.6 * s_name + 0.25 * s_spec + 0.15 * s_unit
         why = [f"名称{s_name * 100:.0f}%"]
@@ -90,11 +99,14 @@ def auto_assign(conn: sqlite3.Connection, project_id: int, min_score: float = AU
     res = calc.calculate(conn, project_id)
     done = []
     for it in res.unresolved:
+        if it.code:  # コードは当たっていて単価待ち（物価資料）なら、別のものに変えない
+            continue
         cs = candidates(conn, p["fy"], it.name, it.spec, it.unit, 2)
         if not cs or cs[0].score < min_score:
             continue
-        # 1位と2位が僅差なら迷うので当てない
-        if len(cs) > 1 and cs[0].score - cs[1].score < 0.05 and cs[0].code != cs[1].code:
+        # 1位と2位が僅差なら迷うので当てない（名称・規格・単位が完全に同じなら迷わない）
+        exact = cs[0].score >= 0.999
+        if not exact and len(cs) > 1 and cs[0].score - cs[1].score < 0.05 and cs[0].code != cs[1].code:
             continue
         calc.assign_code(conn, it.item_id, cs[0].code, remember=True)
         done.append((it.seq, cs[0]))

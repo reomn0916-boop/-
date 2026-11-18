@@ -96,32 +96,59 @@ class QtyDialog(QDialog):
 
 # ====================================================================== 公表単価の確認ダイアログ
 class PricePreviewDialog(QDialog):
-    def __init__(self, parent, rows: list[publicprice.PriceRow]) -> None:
+    TONE = {"新規": "ok", "更新": "warn", "同じ": "", "物価資料": "info", "未設定": ""}
+
+    def __init__(self, parent, rows: list[publicprice.PriceRow], fy: str = "", valid_from: str = "") -> None:
         super().__init__(parent)
+        self.rows = rows
         self.setWindowTitle("公表単価の取り込み（確認）")
-        self.resize(860, 520)
+        self.resize(1000, 600)
         v = QVBoxLayout(self)
-        new = sum(r.status == "新規" for r in rows)
-        upd = sum(r.status == "更新" for r in rows)
-        same = sum(r.status == "同じ" for r in rows)
-        lab = QLabel(f"{len(rows)} 件を読み取りました。新規 {new} 件・単価が変わる {upd} 件・変わらない {same} 件。")
+        cnt = {k: sum(r.status == k for r in rows) for k in self.TONE}
+        head = f"{len(rows):,} 件を読み取りました。" + (f"（適用日 {valid_from}）" if valid_from else "")
+        lab = QLabel(head + f"\n{fy}年度の単価に入れるもの：新規 {cnt['新規']:,} 件・単価が変わる {cnt['更新']:,} 件・"
+                     f"変わらない {cnt['同じ']:,} 件\n単価がないもの：○（物価資料の単価を使う）{cnt['物価資料']:,} 件・"
+                     f"空欄 {cnt['未設定']:,} 件 → 名称・規格だけ控えて、当てはめ候補と「物価資料の単価」に使います")
         lab.setStyleSheet("font-weight: 700;")
+        lab.setWordWrap(True)
         v.addWidget(lab)
-        t = _table(["状態", "種類", "コード", "名称", "規格", "単位", "いまの単価", "新しい単価"], 3)
-        t.setRowCount(len(rows))
-        tone = {"新規": "ok", "更新": "warn", "同じ": ""}
-        for i, r in enumerate(rows):
-            _set_row(t, i, [r.status, r.kind, r.code, r.name, r.spec, r.unit,
-                            "" if r.old_price is None else yen(r.old_price), yen(r.price)],
-                     right={6, 7}, tone=tone[r.status], tone_col=0)
-        v.addWidget(t, 1)
+        fh = QHBoxLayout()
+        fl = QLabel("表示")
+        fl.setObjectName("Muted")
+        self.filter = QComboBox()
+        self.filter.addItems(["すべて"] + [k for k in self.TONE if cnt[k]])
+        self.filter.currentIndexChanged.connect(self._fill)
+        fh.addWidget(fl)
+        fh.addWidget(self.filter)
+        fh.addStretch(1)
+        v.addLayout(fh)
+        self.t = _table(["状態", "種類", "コード", "名称", "規格", "単位", "地区", "いまの単価", "新しい単価"], 3)
+        v.addWidget(self.t, 1)
+        self._fill()
         bb = QDialogButtonBox()
         ok = bb.addButton("取り込む", QDialogButtonBox.AcceptRole)
+        self._bb = bb
         ok.setObjectName("Primary")
         bb.addButton("やめる", QDialogButtonBox.RejectRole)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
         v.addWidget(bb)
+
+
+def _fill_preview(self) -> None:
+    f = self.filter.currentText()
+    rows = [r for r in self.rows if f == "すべて" or r.status == f][:5000]
+    self.t.setRowCount(len(rows))
+    for i, r in enumerate(rows):
+        _set_row(self.t, i, [r.status, r.kind, r.code, r.name, r.spec, r.unit, r.region,
+                             "" if r.old_price is None else yen(r.old_price), "○" if r.price is None and r.status == "物価資料"
+                             else ("" if r.price is None else yen(r.price))],
+                 right={7, 8}, tone=self.TONE.get(r.status, ""), tone_col=0)
+    for c, wd in enumerate([70, 60, 100, 260, 220, 50, 60, 90]):
+        self.t.setColumnWidth(c, wd)
+
+
+PricePreviewDialog._fill = _fill_preview
 
 
 class PagesMixin2:
@@ -658,8 +685,9 @@ class PagesMixin2:
 
     # ================================================================ マスタ：公表単価
     def _public_price_card(self) -> Card:
-        c = Card("公表単価を取り込む", "奈良県の設計単価・公共工事設計労務単価などの Excel・CSV・PDF を読み、確認してから年度の単価に入れます。"
-                 "コードがない行は、同じ名称・規格の既存コードを使うか、新しく付けます。")
+        c = Card("公表単価を取り込む", "奈良県の「土木工事設計単価資料」（労務単価・資材単価）のPDFは、そのまま読めます"
+                 "（種類と地区はPDFから自動で決まります）。ほかの Excel・CSV は下の「種類」を選んで読みます。"
+                 "取り込む前に、新規・更新・○（物価資料）の件数を確認できます。")
         h = QHBoxLayout()
         self.pp_kind = QComboBox()
         self.pp_kind.addItems(["材料", "労務", "機械", "市場単価"])
@@ -691,20 +719,38 @@ class PagesMixin2:
         path, _ = QFileDialog.getOpenFileName(self, "公表単価のファイル", "", "Excel・CSV・PDF (*.xlsx *.xlsm *.csv *.pdf)")
         if not path:
             return
+        from PySide6.QtWidgets import QApplication, QProgressDialog
+        prog = QProgressDialog("PDFを読み取っています…（200ページほどで30秒ほどかかります）", None, 0, 100, self)
+        prog.setWindowTitle("公表単価の取り込み")
+        prog.setWindowModality(Qt.WindowModal)
+        prog.setMinimumDuration(0)
+
+        def step(n: int, total: int) -> None:
+            prog.setMaximum(total)
+            prog.setValue(n)
+            QApplication.processEvents()
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            rows = publicprice.parse(path, self.pp_kind.currentText(), self.pp_pref.text().strip() or "奈良")
+            rows = publicprice.parse(path, self.pp_kind.currentText(), self.pp_pref.text().strip() or "奈良", step)
+            valid = publicprice.effective_date(path) if path.lower().endswith(".pdf") else ""
         except Exception as e:
             self.m_banner.show_msg(f"読めませんでした：{e}", "bad")
             return
+        finally:
+            QApplication.restoreOverrideCursor()
+            prog.close()
         if not rows:
             self.m_banner.show_msg("単価の表が見つかりませんでした。見出しに「名称」と「単価」がある表か、"
                                    "職種が横に並ぶ労務単価の表に対応しています。", "warn")
             return
         rows = publicprice.preview(self.conn, fy, rows, self.pp_region.text().strip())
-        if PricePreviewDialog(self, rows).exec():
+        if PricePreviewDialog(self, rows, fy, valid).exec():
             n = self.guard(publicprice.apply, self.conn, fy, rows, Path(path).name)
             if n:
-                self.m_banner.show_msg(f"{fy}年度の単価に {n} 件を取り込みました。", "ok")
+                book = sum(r.price is None for r in rows)
+                self.m_banner.show_msg(f"{fy}年度の単価に {n:,} 件を取り込みました。単価のない {book:,} 件は名称・規格を控えました"
+                                       "（当てはめ候補と「物価資料の単価」に出ます）。", "ok")
                 self._load_master_overview()
                 self.recalc()
 
@@ -833,3 +879,86 @@ class PagesMixin2:
         self.pid = None
         self._load_projects()
         self.s_banner.show_msg(f"バックアップから戻しました。戻す前の状態は {safety.name} に残しています。", "ok")
+
+
+class BookPageMixin:
+    """物価資料（積算資料・建設物価）で調べる単価：県の資料で○の品目のうち、この工事で使うもの。"""
+
+    def _page_book(self) -> QWidget:
+        w, v = _page()
+        self.bk_banner = Banner()
+        v.addWidget(self.bk_banner)
+        bar = QHBoxLayout()
+        hint = QLabel("県の単価資料で「○（刊行物単価使用）」の品目は、県のPDFに金額がありません。"
+                      "積算資料・建設物価で調べた単価を「単価」欄に入れて「保存」すると、年度の単価として使われます。")
+        hint.setObjectName("Muted")
+        hint.setWordWrap(True)
+        bar.addWidget(hint, 1)
+        xb = QPushButton("一覧をExcelに出力")
+        xb.clicked.connect(self._export_book)
+        sb = QPushButton("入れた単価を保存")
+        sb.setObjectName("Primary")
+        sb.clicked.connect(self._save_book)
+        bar.addWidget(xb)
+        bar.addWidget(sb)
+        v.addLayout(bar)
+        self.book_table = QTableWidget(0, 9)
+        self.book_table.setHorizontalHeaderLabels(["種類", "単価コード", "名称", "規格", "単位", "地区", "刊行物の掲載元",
+                                                   "使う明細", "単価（入力）"])
+        from .gui import _style_table
+        _style_table(self.book_table)
+        v.addWidget(self.book_table, 1)
+        return w
+
+    def _refresh_book(self) -> None:
+        items = publicprice.book_items_for(self.conn, self.pid) if self.pid is not None else []
+        self.book_items = items
+        self.book_table.setRowCount(len(items))
+        for i, b in enumerate(items):
+            for c, val in enumerate([b.kind, b.code, b.name, b.spec, b.unit, b.region or "共通", b.ref, b.used_in, ""]):
+                cell = QTableWidgetItem(val)
+                if c != 8:
+                    cell.setFlags(cell.flags() & ~Qt.ItemIsEditable)
+                else:
+                    cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                    cell.setBackground(Qt.white)
+                self.book_table.setItem(i, c, cell)
+        for c, wd in enumerate([70, 110, 220, 200, 50, 60, 200, 140]):
+            self.book_table.setColumnWidth(c, wd)
+        self.book_table.horizontalHeader().setStretchLastSection(True)
+        if self.pid is None:
+            self.bk_banner.hide()
+        elif items:
+            self.bk_banner.show_msg(f"この工事で使う品目のうち {len(items)} 件は、物価資料の単価を入れる必要があります。", "warn")
+        else:
+            self.bk_banner.show_msg("物価資料で調べる必要のある品目はありません。", "ok")
+
+    def _save_book(self) -> None:
+        p = self._project_row()
+        if not p:
+            return
+        n = 0
+        for i, b in enumerate(getattr(self, "book_items", [])):
+            t = (self.book_table.item(i, 8).text() or "").replace(",", "").replace("¥", "").strip()
+            if not t:
+                continue
+            try:
+                price = float(t)
+            except ValueError:
+                QMessageBox.warning(self, "入力", f"{b.name} {b.spec} の単価は数字で入れてください")
+                return
+            if self.guard(publicprice.set_book_price, self.conn, p["fy"], b.kind, b.code, price, b.region) is None:
+                return
+            n += 1
+        self.recalc()
+        self.status.showMessage(f"物価資料の単価を {n} 件保存しました", 5000)
+
+    def _export_book(self) -> None:
+        if self.pid is None:
+            return
+        p = dict(self._project_row())
+        out, _ = QFileDialog.getSaveFileName(self, "物価資料で調べる単価", str(Path(self.n_out.text()) / f"{p['name']}_物価資料で調べる単価.xlsx"),
+                                             "Excel (*.xlsx)")
+        if out:
+            export.export_book_list(out, p, publicprice.book_items_for(self.conn, self.pid))
+            self.status.showMessage(f"出力しました: {out}", 5000)

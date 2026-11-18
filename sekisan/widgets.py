@@ -299,7 +299,8 @@ COLS = ["No", "区分", "工種", "種別", "細別", "名称", "規格", "単�
 CAT, QTY, PRICE, AMOUNT, HOW, CODE, COND, NOTE = 1, 8, 9, 10, 11, 12, 13, 14
 NUMERIC = {0, QTY, PRICE, AMOUNT}
 EDITABLE = {CAT, QTY, CODE, COND, NOTE}
-HOW_TONE = {"歩掛": "ok", "パッケージ": "info", "単価": "ok", "見積": "info", "対応表": "info", "未設定": "bad"}
+HOW_TONE = {"歩掛": "ok", "パッケージ": "info", "単価": "ok", "見積": "info", "対応表": "info", "未設定": "bad",
+            "物価資料待ち": "warn"}
 
 
 class ItemModel(QAbstractTableModel):
@@ -339,7 +340,7 @@ class ItemModel(QAbstractTableModel):
             if c == 8:
                 return f"{v:,.3f}".rstrip("0").rstrip(".")
             if c in (PRICE, AMOUNT):
-                return "—" if it.how == "未設定" else yen(v)
+                return "—" if it.missing else yen(v)
             if c == HOW:
                 return f"● {v}"
             return str(v)
@@ -349,7 +350,7 @@ class ItemModel(QAbstractTableModel):
             return int((Qt.AlignRight if c in NUMERIC else Qt.AlignLeft) | Qt.AlignVCenter)
         if role == Qt.ForegroundRole:
             if c == HOW:
-                return QBrush(QColor(C[{"ok": "ok", "info": "accent", "bad": "bad"}[HOW_TONE.get(it.how, "ok")]]))
+                return QBrush(QColor(C[{"ok": "ok", "info": "accent", "bad": "bad", "warn": "warn"}[HOW_TONE.get(it.how, "ok")]]))
             if c == CAT and it.category != "直接":
                 return QBrush(color("warn"))
             if c == COND:
@@ -360,6 +361,8 @@ class ItemModel(QAbstractTableModel):
                 return QBrush(color("muted"))
         if role == Qt.BackgroundRole and it.how == "未設定":
             return QBrush(QColor(C["bad_soft"]))
+        if role == Qt.BackgroundRole and it.how == "物価資料待ち":
+            return QBrush(QColor(C["warn_soft"]))
         if role == Qt.FontRole and c == AMOUNT:
             f = QFont()
             f.setBold(True)
@@ -422,3 +425,33 @@ class CategoryDelegate(QStyledItemDelegate):
 
     def setModelData(self, editor, model, index):  # noqa: N802
         model.setData(index, editor.currentText(), Qt.EditRole)
+
+
+class RegionBox(QComboBox):
+    """地区の選択。奈良県の地区別資材単価の 1〜11地区 を、市町村名つきで選べる。text()/setText() は「5地区」の形。"""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        from .publicprice import NARA_AREAS
+        self.addItem("（地区を指定しない：県下同一の単価だけ使う）", "")
+        for k, cities in NARA_AREAS.items():
+            self.addItem(f"{k}　{cities}", k)
+            self.setItemData(self.count() - 1, cities, Qt.ToolTipRole)
+        self.setMaxVisibleItems(13)
+        self.view().setMinimumWidth(560)
+        # 長い市町村名で画面の幅が広がらないようにする（一覧を開くと全部見える）
+        self.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.setMinimumContentsLength(18)
+
+    def text(self) -> str:
+        return self.currentData() if self.currentData() is not None else self.currentText()
+
+    def setText(self, value: str) -> None:  # noqa: N802
+        i = self.findData(value or "")
+        if i < 0:  # 以前に手で入れた地区名も残す
+            self.addItem(value, value)
+            i = self.count() - 1
+        self.setCurrentIndex(i)
+
+    def setPlaceholderText(self, _t: str) -> None:  # noqa: N802 （QLineEdit と同じ呼び方を受ける）
+        pass

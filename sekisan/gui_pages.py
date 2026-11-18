@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 
 from . import audit, awards, calc, change, export, pdfcheck, quotes
 from .theme import C, color
-from .widgets import Banner, Card, Kpi, Pill, path_row, yen
+from .widgets import Banner, Card, Kpi, Pill, RegionBox, path_row, yen
 
 STATUS_TONE = {"作成中": "", "確認済": "ok", "提出済": "info"}
 CHANGE_TONE = {"増": "warn", "減": "info", "新規": "ok", "削除": "bad", "単価": "warn", "同じ": ""}
@@ -116,7 +116,7 @@ class PagesMixin:
         self.ps_fy.setEditable(True)
         self.ps_work = QComboBox()
         self.ps_work.setEditable(True)
-        self.ps_region = QLineEdit()
+        self.ps_region = RegionBox()
         self.ps_orderer = QComboBox()
         self.ps_orderer.setEditable(True)
         self.ps_use_date = QCheckBox("単価の適用日を指定する（単価改定を反映）")

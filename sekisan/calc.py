@@ -45,6 +45,7 @@ DIRECT = "直接"
 DIRECT_EXCLUDED = "直接（率対象外）"  # 直接工事費には入れるが、諸経費率の対象額から除く（処分費・支給品など）
 CATEGORIES = (DIRECT, DIRECT_EXCLUDED, "共通仮設", "現場管理")
 RESOURCE_KINDS = ("労務", "機械", "材料", "市場単価")
+NO_PRICE = ("未設定", "物価資料待ち")
 RATE_TARGETS = ("共通仮設費率", "現場管理費率")
 
 
@@ -122,6 +123,11 @@ class ItemResult:
     note: str = ""
     conditions: str = ""
 
+    @property
+    def missing(self) -> bool:
+        """単価がまだない（未設定、または県の資料で○のため物価資料の単価待ち）"""
+        return self.how in NO_PRICE
+
 
 @dataclass
 class Summary:
@@ -173,7 +179,7 @@ class Result:
 
     @property
     def unresolved(self) -> list[ItemResult]:
-        return [i for i in self.items if i.how == "未設定"]
+        return [i for i in self.items if i.missing]
 
 
 def load_rules(conn: sqlite3.Connection, fy: str, orderer: str = "") -> dict[str, str]:
@@ -243,8 +249,19 @@ class Calculator:
         q = quotes.adopted_price(self.conn, code)
         if q:
             return q[0], q[1]["name"], q[1]["unit"], "見積"
+        pub = self.public_item(code)
+        if pub:
+            self.warnings.append(f"{pub['name']} {pub['spec']}（{code}）は県の単価資料で「{pub['source']}」です。"
+                                 + ("物価資料（積算資料・建設物価）の単価を入れてください。" if pub["source"] == "物価資料"
+                                    else "見積などで単価を決めてください。"))
+            return 0.0, f"{pub['name']} {pub['spec']}".strip(), pub["unit"], "不明"
         self.warnings.append(f"{self.fy}年度の単価がありません: {kind} {code}")
         return 0.0, f"（不明 {code}）", "", "不明"
+
+    def public_item(self, code: str):
+        return self.conn.execute(
+            "SELECT * FROM public_item WHERE fy=? AND code=? AND region IN (?, '') ORDER BY region DESC LIMIT 1",
+            (self.fy, code, self.region)).fetchone()
 
     def machine_price(self, code: str, _depth: int = 0) -> tuple[float, str, str, str] | None:
         """③ 運転1日あたり = 損料×時間 + 燃料(L/h)×時間×燃料単価 + 運転手×労務単価、に諸雑費を足す。"""
@@ -376,8 +393,14 @@ class Calculator:
                     unit_price = q[0] * self.factor(conds, "全体", code)
                     how = "見積" if how == "未設定" else how
                 else:
-                    self.warnings.append(f"明細{row['seq']}「{row['name']}」のコード {code} が見つかりません")
-                    how = "未設定"
+                    pub = self.public_item(code)
+                    if pub:
+                        self.warnings.append(f"明細{row['seq']}「{row['name']}」の {code}（{pub['name']} {pub['spec']}）は"
+                                             f"県の単価資料で「{pub['source']}」のため単価がありません。"
+                                             "「物価資料の単価」で入れてください。")
+                    else:
+                        self.warnings.append(f"明細{row['seq']}「{row['name']}」のコード {code} が見つかりません")
+                    how = "物価資料待ち" if pub and pub["source"] == "物価資料" else "未設定"
         amount = floor_yen(unit_price * row["qty"])
         return ItemResult(
             row["id"], row["seq"], row["level1"], row["level2"], row["level3"], row["name"], row["spec"],
