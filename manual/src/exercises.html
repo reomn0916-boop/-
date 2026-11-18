@@ -1,0 +1,242 @@
+<title>現場CAD 練習問題集</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=BIZ+UDGothic:wght@400;700&display=swap">
+<style>
+/* 印刷（A4 縦）向けの問題集。問題は罫線の囲み、答えは別ページ */
+:root {
+  --fg: #1a2430; --muted: #556170; --line: #c9d1db; --navy: #1f3a5f; --stake: #c2410c; --soft: #f2f5f9; --paper: #ffffff;
+  --font: "BIZ UDPGothic", "IPAPGothic", "Yu Gothic", Meiryo, sans-serif;
+  --mono: "BIZ UDGothic", "IPAGothic", ui-monospace, monospace;
+}
+@page { size: A4; margin: 16mm 15mm 16mm 15mm; }
+body { background: var(--paper); color: var(--fg); font-family: var(--font); font-size: 10.5pt; line-height: 1.7; }
+.wrap { max-width: 180mm; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.cover { padding: 30mm 0 10mm; border-bottom: 3px solid var(--navy); }
+.cover .k { color: var(--stake); font-weight: 700; letter-spacing: .1em; font-size: 10pt; }
+h1 { font-size: 26pt; color: var(--navy); margin: 4px 0 8px; line-height: 1.3; }
+.cover p { margin: 4px 0; color: var(--muted); }
+.meta { display: grid; grid-template-columns: 30mm 1fr; gap: 4px 10px; margin: 14mm 0 0; font-size: 10.5pt; }
+.meta dt { font-weight: 700; } .meta dd { margin: 0; }
+.name { margin-top: 14mm; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8mm; }
+.name div { border-bottom: 1px solid var(--fg); padding-bottom: 2px; font-size: 9.5pt; color: var(--muted); height: 12mm; display: flex; align-items: flex-end; }
+h2 { font-size: 16pt; color: var(--navy); border-bottom: 2px solid var(--navy); padding-bottom: 3px; margin: 0 0 4mm; }
+.part { break-before: page; }
+.intro { background: var(--soft); border-radius: 4px; padding: 3mm 4mm; margin-bottom: 4mm; }
+.q { border: 1px solid var(--line); border-radius: 4px; padding: 3mm 4mm; margin: 0 0 4mm; break-inside: avoid; }
+.q h3 { margin: 0 0 1.5mm; font-size: 11.5pt; display: flex; gap: 8px; align-items: baseline; }
+.q h3 .no { background: var(--navy); color: #fff; border-radius: 3px; padding: 0 6px; font-family: var(--mono); font-size: 10pt; }
+.q h3 .lv { margin-left: auto; font-size: 8.5pt; color: var(--muted); font-weight: 400; }
+.q p { margin: 1mm 0; }
+.q ol, .q ul { margin: 1mm 0; padding-left: 6mm; }
+.ans { display: grid; grid-template-columns: max-content 1fr; gap: 2mm 4mm; margin-top: 2mm; align-items: end; }
+.ans span { font-size: 10pt; }
+.ans i { display: block; border-bottom: 1px solid var(--fg); height: 6mm; }
+.ans.two { grid-template-columns: max-content 1fr max-content 1fr; }
+.choice { display: flex; flex-wrap: wrap; gap: 2mm 6mm; margin: 1mm 0; }
+code { font-family: var(--mono); background: var(--soft); border: 1px solid var(--line); border-radius: 3px; padding: 0 3px; font-size: .95em; }
+pre { font-family: var(--mono); background: var(--soft); border: 1px solid var(--line); border-radius: 3px; padding: 2mm 3mm; margin: 1mm 0; font-size: 9.5pt; line-height: 1.5; overflow-x: auto; }
+.btn { font-weight: 700; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; padding: 0 4px; white-space: nowrap; }
+figure { margin: 2mm 0 4mm; }
+figure svg { width: 100%; height: auto; display: block; }
+figcaption { font-size: 9pt; color: var(--muted); text-align: center; }
+table { border-collapse: collapse; width: 100%; font-size: 9.5pt; margin: 1mm 0; }
+th, td { border: 1px solid var(--line); padding: 1mm 2mm; text-align: left; }
+th { background: var(--soft); }
+td.n { font-family: var(--mono); text-align: right; white-space: nowrap; }
+.a { border-left: 3px solid var(--stake); padding: 1mm 0 1mm 4mm; margin: 0 0 4mm; break-inside: avoid; }
+.a h3 { margin: 0; font-size: 11pt; }
+.a p { margin: .8mm 0; }
+.a .r { font-weight: 700; color: var(--stake); }
+.small { font-size: 9pt; color: var(--muted); }
+svg .ln { stroke: #1a2430; fill: none; stroke-width: 1.3; }
+svg .bd { stroke: #c2410c; fill: none; stroke-width: 1.6; }
+svg .dm { stroke: #556170; fill: none; stroke-width: .8; }
+svg .t { font-family: var(--font); font-size: 11px; fill: #1a2430; }
+svg .ts { font-family: var(--font); font-size: 9.5px; fill: #556170; }
+svg .tk { font-family: var(--font); font-size: 11px; fill: #1d4ed8; font-weight: 700; }
+svg .pk { fill: #1d4ed8; }
+</style>
+
+<div class="wrap">
+<section class="cover">
+  <div class="k">教育用</div>
+  <h1>現場CAD 練習問題集</h1>
+  <p>練習用の現場「倉庫A 新築工事」のデータを使って、スマホ版とパソコン版の操作を一通り練習します。</p>
+  <dl class="meta">
+    <dt>基礎編</dt><dd>問1〜問10　スマホ版（読み込み・縮尺合わせ・座標合わせ・測る・位置出し・逃げ杭・SIMA・連携）</dd>
+    <dt>応用編</dt><dd>問11〜問18　パソコン版（縮尺合わせ・杭打ち表・求積表・寸法・横断図・縦断図・印刷）</dd>
+    <dt>解答・解説</dt><dd>最後のページ。答えは小数第3位（mm）まで。角度は ±1″ の差は正解とします。</dd>
+    <dt>使うデータ</dt><dd><code>練習_倉庫平面図_mm.dxf</code>（mm で描かれた図面）<br><code>練習_基準点.sim</code>（境界点 K1・K2・K3 の座標）</dd>
+  </dl>
+  <div class="name"><div>実施日</div><div>所属</div><div>氏名</div></div>
+</section>
+
+<section class="part">
+<h2>練習の現場</h2>
+<div class="intro">
+  <p>倉庫A（24 m × 12 m）を建てます。図面は CAD の原点で <b>mm 単位</b> で描かれていて、現場の座標とは縮尺も向きも位置も合っていません。現場には座標の分かっている境界点 K1・K2・K3 があり、図面にも同じ点が描かれています。</p>
+</div>
+<figure>
+  <svg viewBox="0 0 520 250" role="img" aria-label="練習用図面の略図">
+    <rect class="bd" x="150" y="50" width="240" height="120"/>
+    <text class="t" x="270" y="114" text-anchor="middle">倉庫A</text>
+    <text class="ts" x="270" y="44" text-anchor="middle">基礎 φ300 杭 8本</text>
+    <line class="dm" x1="150" y1="190" x2="390" y2="190"/><text class="ts" x="270" y="204" text-anchor="middle">24,000</text>
+    <line class="dm" x1="410" y1="50" x2="410" y2="170"/><text class="ts" x="418" y="114">12,000</text>
+    <circle class="pk" cx="100" cy="210" r="4"/><text class="tk" x="82" y="232">K1</text>
+    <circle class="pk" cx="460" cy="210" r="4"/><text class="tk" x="452" y="232">K2</text>
+    <circle class="pk" cx="100" cy="10" r="4" transform="translate(0,20)"/><text class="tk" x="108" y="34">K3</text>
+    <text class="t" x="132" y="186">A</text><text class="t" x="394" y="186">B</text><text class="t" x="394" y="46">C</text><text class="t" x="132" y="46">D</text>
+  </svg>
+  <figcaption>図面の略図（実際の図面は北が上ではありません）。角は K1 に一番近いものを A、K2 に近いものを B、K3 に近いものを D、残りを C とします。</figcaption>
+</figure>
+
+<h2>基礎編（スマホ版）</h2>
+
+<div class="q"><h3><span class="no">問1</span>言葉の確認<span class="lv">知識</span></h3>
+  <p>(1) このアプリの座標で、X が表す向きはどれですか。</p>
+  <div class="choice"><span>ア．東</span><span>イ．北</span><span>ウ．上（高さ）</span></div>
+  <p>(2) 工事で本当の杭がなくなっても位置を戻せるように、少し離して打つ控えの杭を何と呼びますか。</p>
+  <p>(3) TS（測量機）に点の座標を送るときに使うファイルの形式は何ですか。</p>
+  <div class="ans two"><span>(1)</span><i></i><span>(2)</span><i></i><span>(3)</span><i></i></div>
+</div>
+
+<div class="q"><h3><span class="no">問2</span>データを読み込む<span class="lv">操作</span></h3>
+  <ol><li><span class="btn">☰</span> → <span class="btn">座標を読み込む</span> で <code>練習_基準点.sim</code> を読み込む。</li><li><span class="btn">☰</span> → <span class="btn">図面を読み込む（DXF）</span> で <code>練習_倉庫平面図_mm.dxf</code> を読み込む。</li></ol>
+  <p>(1) 基準点（▲）はいくつ読み込まれましたか。　(2) 基準点 K3 の座標を答えなさい（右上の <span class="btn">≡</span> の一覧で見られます）。</p>
+  <div class="ans two"><span>(1)</span><i></i><span>(2) X , Y</span><i></i></div>
+</div>
+
+<div class="q"><h3><span class="no">問3</span>図面の文字<span class="lv">確認</span></h3>
+  <p>図面の上の方に「基礎 □300 杭 8本」という文字があります。□ に表示されている記号を書きなさい。（DXF の中では <code>%%c</code> と書かれています）</p>
+  <div class="ans"><span>記号</span><i></i></div>
+</div>
+
+<div class="q"><h3><span class="no">問4</span>縮尺を合わせる<span class="lv">操作</span></h3>
+  <p>この図面は mm で描かれているので、そのままだと 1000 倍の大きさです。<span class="btn">☰</span> → <span class="btn">図面の縮尺を合わせる</span> → <span class="btn">寸法線を選ぶ</span> で、寸法線「24,000」をタップし、<span class="btn">確認</span> → <span class="btn">合わせる</span>。</p>
+  <p>(1) 確認で表示された倍率は？　(2) 合わせた後、<span class="btn">距離</span> で建物の短い辺を測ると何 m ですか。</p>
+  <div class="ans two"><span>(1) 倍率</span><i></i><span>(2) m</span><i></i></div>
+</div>
+
+<div class="q"><h3><span class="no">問5</span>長さと面積を測る<span class="lv">操作</span></h3>
+  <p>(1) <span class="btn">距離</span> で建物の対角線（角 A から角 C）の長さを測りなさい。　(2) <span class="btn">面積</span> で建物の面積を測りなさい。角をタップすると、角にぴったり吸い付きます。</p>
+  <div class="ans two"><span>(1) m</span><i></i><span>(2) ㎡</span><i></i></div>
+</div>
+
+<div class="q"><h3><span class="no">問6</span>図面を現場の座標に合わせる<span class="lv">操作</span></h3>
+  <p><span class="btn">☰</span> → <span class="btn">図面を現場の座標に合わせる</span> を開き、1組目に「図面の K1 の印（📍でタップ）」と「K1」、2組目に「図面の K2 の印」と「K2」を入れて <span class="btn">確認</span>。</p>
+  <p>(1) 「2点間の距離」の差は何 mm ですか。　(2) <span class="btn">合わせる</span> を押した後、図面の K3 の印の座標を調べなさい（検測）。基準点 K3 と比べて何 mm ずれていますか。</p>
+  <div class="ans two"><span>(1) mm</span><i></i><span>(2) mm</span><i></i></div>
+</div>
+
+<div class="q"><h3><span class="no">問7</span>位置出し点を置く<span class="lv">操作</span></h3>
+  <p><span class="btn">点</span>（種別「位置出し」）で建物の4つの角に点を置き、角 A と角 C の座標を答えなさい。</p>
+  <div class="ans two"><span>A　X , Y</span><i></i><span>C　X , Y</span><i></i></div>
+</div>
+
+<div class="q"><h3><span class="no">問8</span>逃げ杭を作る<span class="lv">操作</span></h3>
+  <p><span class="btn">逃げ</span> で作り方を「角」、距離を <code>1</code> にして、角 A をタップしなさい。</p>
+  <p>(1) 逃げ杭は何本できましたか。　(2) それぞれの座標を答えなさい。</p>
+  <div class="ans"><span>(1) 本</span><i></i><span>(2) X , Y</span><i></i><span>　　X , Y</span><i></i></div>
+</div>
+
+<div class="q"><h3><span class="no">問9</span>計算と TS への送り出し<span class="lv">操作</span></h3>
+  <p>(1) <span class="btn">計算</span> → 「2点間の計算（逆計算）」で K1 から K2 の距離と方向角を求めなさい。</p>
+  <p>(2) 問7・問8 のとおりに作ったとき、<span class="btn">☰</span> → <span class="btn">SIMA で書き出す</span> で「位置出し」と「逃げ」だけにチェックを付けると、何点が書き出されますか。</p>
+  <div class="ans two"><span>(1) 距離 m</span><i></i><span>方向角</span><i></i><span>(2) 点</span><i></i></div>
+</div>
+
+<div class="q"><h3><span class="no">問10</span>スマホからパソコンへ<span class="lv">手順</span></h3>
+  <p>現場で作った点をパソコンの図面に取り込みます。正しい順に並べなさい。</p>
+  <div class="choice"><span>ア．パソコン版で「現場データ取込」を押す</span><span>イ．スマホ版で「パソコンへ送る（.gcad）」を押す</span><span>ウ．「取り込む（差分）」を選ぶ</span><span>エ．LINE やメールでファイルをパソコンに送る</span><span>オ．送られたファイルを選ぶ</span></div>
+  <div class="ans"><span>順番</span><i></i></div>
+</div>
+</section>
+
+<section class="part">
+<h2>応用編（パソコン版）</h2>
+<div class="intro"><p>パソコン版で <code>練習_倉庫平面図_mm.dxf</code> を開き（<span class="btn">ファイル</span> → <span class="btn">開く</span>）、<span class="btn">ファイル</span> → <span class="btn">座標 SIMA・CSV</span> で <code>練習_基準点.sim</code> を読み込んでから始めます。</p></div>
+
+<div class="q"><h3><span class="no">問11</span>縮尺・向き・位置をまとめて合わせる<span class="lv">操作</span></h3>
+  <p><span class="btn">図形編集</span> → <span class="btn">縮尺合わせ</span> の方法「座標」で、図面の K1・K2・K3 の印をクリックし、それぞれ <code>K1</code>・<code>K2</code>・<code>K3</code> と入力して <kbd>Enter</kbd> で合わせなさい。（「回転・位置も合わせる」はオン）</p>
+  <p>(1) 倍率　(2) 回転の角度と向き　(3) 最大のずれは 1 mm 未満になりましたか。</p>
+  <div class="ans two"><span>(1)</span><i></i><span>(2)</span><i></i><span>(3)</span><i></i></div>
+</div>
+
+<div class="q"><h3><span class="no">問12</span>杭打ち表<span class="lv">操作</span></h3>
+  <p>建物の角に点（位置出し）を置き、<span class="btn">土木</span> → <span class="btn">杭打ち表</span> で、器械点 K1・後視点 K2 から角 A〜D の夾角と距離を求め、図面に表を置きなさい。</p>
+  <table><tr><th>角</th><th>夾角（右回り）</th><th>水平距離 m</th></tr><tr><td>A</td><td></td><td></td></tr><tr><td>B</td><td></td><td></td></tr><tr><td>C</td><td></td><td></td></tr><tr><td>D</td><td></td><td></td></tr></table>
+</div>
+
+<div class="q"><h3><span class="no">問13</span>求積表<span class="lv">操作</span></h3>
+  <p>建物の外形線（閉じた連続線）を選び、<span class="btn">土木</span> → <span class="btn">求積表</span> で座標求積表を置きなさい。倍面積と面積を答えなさい。</p>
+  <div class="ans two"><span>倍面積</span><i></i><span>面積 ㎡</span><i></i></div>
+</div>
+
+<div class="q"><h3><span class="no">問14</span>寸法を入れる<span class="lv">操作</span></h3>
+  <p>(1) <span class="btn">作図</span> → <span class="btn">平行寸法</span> で角 A から角 C の寸法を入れなさい（寸法表示は mm）。表示された値は？</p>
+  <p>(2) 同じ2点に <span class="btn">水平寸法</span> を入れると、値が (1) と違います。理由を一言で書きなさい。</p>
+  <div class="ans"><span>(1)</span><i></i><span>(2)</span><i></i></div>
+</div>
+
+<div class="q"><h3><span class="no">問15</span>横断図<span class="lv">操作</span></h3>
+  <p><span class="btn">土木</span> → <span class="btn">横断図</span>。測点名 <code>No.5</code>、縦横とも 1:100、計画線は「標準断面から作る」で次のとおり入力して <span class="btn">面積を計算</span>、その後 <span class="btn">図面に配置</span>。</p>
+<pre>現況地盤（距離, 地盤高）      標準断面
+-10,20.50                       計画高 21.30
+-5,20.80                        幅員 左 3.0 / 右 3.0
+0,21.10                         横断勾配 左 2 / 右 2 %
+5,21.60                         法勾配 切土 1:1.0 / 盛土 1:1.5
+10,22.30                        基準高 DL 空欄（自動）</pre>
+  <div class="ans two"><span>切土 CA ㎡</span><i></i><span>盛土 BA ㎡</span><i></i><span>DL</span><i></i></div>
+</div>
+
+<div class="q"><h3><span class="no">問16</span>縦断図<span class="lv">操作</span></h3>
+  <p><span class="btn">土木</span> → <span class="btn">縦断図</span>。横 1:1000・縦 1:100・杭間隔 20 m。測点と縦断線形（VIP）を次のとおり入力して配置しなさい。</p>
+<pre>測点（測点, 追加距離, 地盤高, 計画高）   VIP（追加距離, 計画高, VCL）
+No.0,,19.80,   No.1,,20.70,   No.2,,21.10,      0,20.00
+No.3,,21.60,   No.4,,21.20,   No.5,,21.70,      80,21.60,40
+No.6,,21.30,   No.7,,20.90,   No.8,,20.60,      160,20.80</pre>
+  <p>※ 測点は1行に1つずつ入力します。(1) No.3・No.4・No.5 の計画高　(2) No.4 の切土高・盛土高　(3) 2つの勾配</p>
+  <div class="ans two"><span>(1) No.3</span><i></i><span>No.4</span><i></i><span>No.5</span><i></i><span>(2)</span><i></i><span>(3)</span><i></i></div>
+</div>
+
+<div class="q"><h3><span class="no">問17</span>図面を仕上げて印刷<span class="lv">課題</span></h3>
+  <p>次をすべて満たす図面を PDF で保存し、提出しなさい。</p>
+  <ul><li>用紙 A3 横・縮尺 1:200。建物と横断図が用紙枠の中に入っている（<span class="btn">表示</span> → <span class="btn">用紙枠の移動</span>）</li><li>レイヤ「寸法」を新しく作り、寸法をそのレイヤに入れる（色は青）</li><li>表題欄の工事名「倉庫A 新築工事」、図面名「配置図」、作成者に自分の名前</li><li>座標表を付ける</li></ul>
+</div>
+
+<div class="q"><h3><span class="no">問18</span>スマホとパソコンの連動<span class="lv">課題</span></h3>
+  <p>(1) 問17 の図面を <span class="btn">現場連携</span> → <span class="btn">現場へ送る</span> でスマホに送り、スマホ版で開きなさい。</p>
+  <p>(2) スマホで角 B に距離 <code>1,2</code> の逃げ杭を作り、パソコンへ送り返して「取り込む（差分）」で取り込みなさい。取り込み結果に表示された「追加」の数は？</p>
+  <div class="ans"><span>(2) 追加</span><i></i></div>
+</div>
+</section>
+
+<section class="part">
+<h2>解答・解説</h2>
+<p class="small">数値はこの問題集のデータとアプリで実際に操作した結果です。操作の順番や点の置き方で、点名（P1 など）は変わることがあります。</p>
+
+<div class="a"><h3>問1</h3><p class="r">(1) イ（北）　(2) 逃げ杭　(3) SIMA</p><p>測量の座標は X が北、Y が東です。学校の数学と逆なので注意。</p></div>
+<div class="a"><h3>問2</h3><p class="r">(1) 3 点　(2) X 1017.321 , Y 1990.000</p></div>
+<div class="a"><h3>問3</h3><p class="r">φ（直径の記号）</p><p>CAD は「φ」を <code>%%c</code> という記号で保存します。アプリが読み込むときに φ に戻しています。</p></div>
+<div class="a"><h3>問4</h3><p class="r">(1) 0.001000　(2) 12.000 m</p><p>寸法線「24,000」を選ぶと、正しい長さに 24000 mm が自動で入ります。図面の今の長さが 24000 m なので、倍率は 1/1000 です。</p></div>
+<div class="a"><h3>問5</h3><p class="r">(1) 26.833 m　(2) 288.000 ㎡</p><p>対角線は √(24² + 12²) = 26.833。</p></div>
+<div class="a"><h3>問6</h3><p class="r">(1) 0 mm　(2) 0 mm（X 1017.321 , Y 1990.000）</p><p>2組で合わせた後、合わせに使っていない K3 で確かめるのが「検測」です。ずれが大きいときは、点の組み合わせの間違いや図面の誤りを疑います。図面は約 30° 回ります。</p></div>
+<div class="a"><h3>問7</h3><p class="r">A　X 1005.964 , Y 2002.330　／　C　X 1028.356 , Y 2017.115</p><p>参考: B　1017.964 , 2023.115　／　D　1016.356 , 1996.330</p></div>
+<div class="a"><h3>問8</h3><p class="r">(1) 2 本　(2) X 1005.464 , Y 2001.464 と X 1005.098 , Y 2002.830</p><p>角 A につながる2本の辺（A–B と A–D）を、それぞれ外側へ 1 m 延ばした位置です。点名は角の点名に -1・-2 が付きます。</p></div>
+<div class="a"><h3>問9</h3><p class="r">(1) 36.000 m、60°00′00″　(2) 6 点（位置出し 4 ＋ 逃げ 2）</p></div>
+<div class="a"><h3>問10</h3><p class="r">イ → エ → ア → オ → ウ</p><p>「開く（置き換え）」を選ぶとパソコンの図面がまるごと入れ替わるので、現場の点を足すときは必ず「取り込む（差分）」。</p></div>
+<div class="a"><h3>問11</h3><p class="r">(1) 0.001000　(2) 30°00′00″ 左回り　(3) なった（丸めの差で 1 mm 未満）</p><p>座標で合わせると、縮尺・回転・移動を一度に求めます。3組以上で各点のずれが出るので、検測も同時にできます。</p></div>
+<div class="a"><h3>問12</h3>
+  <table><tr><th>角</th><th>夾角（右回り）</th><th>水平距離 m</th></tr>
+  <tr><td>A</td><td class="n">321°20′22″</td><td class="n">6.403</td></tr>
+  <tr><td>B</td><td class="n">352°08′50″</td><td class="n">29.275</td></tr>
+  <tr><td>C</td><td class="n">331°06′51″</td><td class="n">33.121</td></tr>
+  <tr><td>D</td><td class="n">287°21′12″</td><td class="n">16.763</td></tr></table>
+  <p>夾角は後視点 K2 の方向から右回りに測った角度です。±1″ の差は正解とします。</p></div>
+<div class="a"><h3>問13</h3><p class="r">倍面積 576.0000　面積 288.0000 ㎡</p><p>座標法では Yn ×（Xn+1 − Xn−1）を合計したものが倍面積で、その半分が面積です（符号は回る向きで変わるので絶対値を取ります）。</p></div>
+<div class="a"><h3>問14</h3><p class="r">(1) 26,833　(2) 水平寸法は東西方向の長さだけを測るため</p><p>図面が回転しているので、水平・垂直寸法は建物の辺の長さになりません。斜めの2点の実長は平行寸法で入れます。</p></div>
+<div class="a"><h3>問15</h3><p class="r">切土 CA 0.121 ㎡　盛土 BA 1.031 ㎡　DL 19.00</p><p>左の路肩は地盤より高いので盛土（法勾配 1:1.5 で下がる）、右の路肩は地盤より低いので切土（1:1.0 で上がる）になります。</p></div>
+<div class="a"><h3>問16</h3><p class="r">(1) No.3 21.20　No.4 21.45　No.5 21.40　(2) 切土高 なし・盛土高 0.25　(3) +2.000%（L=80.00）、−1.000%（L=80.00）</p><p>縦断曲線（VCL 40 m）は No.3〜No.5 の区間です。No.4 は VIP（21.60）から縦距 0.15 下がって 21.45 になります。</p></div>
+<div class="a"><h3>問17・問18</h3><p class="r">課題（作品で確認）。問18 の追加は 6（逃げ杭 4 本 ＋ 逃げ線 2 本。角 B に点がなかった場合は位置出し点が増えて 7）</p><p>確認のポイント: 寸法の色がレイヤ色（青）になっているか、表題欄の内容、座標表に位置出し点・逃げ杭が入っているか。差分取り込みで、パソコンで作った図面が消えていないか。</p></div>
+</section>
+</div>
