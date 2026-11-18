@@ -101,8 +101,8 @@ svg .pk { fill: #1d4ed8; }
 </div>
 
 <div class="q"><h3><span class="no">問2</span>データを読み込む<span class="lv">操作</span></h3>
-  <ol><li><span class="btn">☰</span> → <span class="btn">座標を読み込む</span> で <code>練習_基準点.sim</code> を読み込む。</li><li><span class="btn">☰</span> → <span class="btn">図面を読み込む（DXF）</span> で <code>練習_倉庫平面図_mm.dxf</code> を読み込む。</li></ol>
-  <p>(1) 基準点（▲）はいくつ読み込まれましたか。　(2) 基準点 K3 の座標を答えなさい（右上の <span class="btn">≡</span> の一覧で見られます）。</p>
+  <ol><li>最初の画面の <span class="btn">座標を読み込む</span>（または <span class="btn">☰</span> → <span class="btn">座標を読み込む</span>）で <code>練習_基準点.sim</code> を読み込む。</li><li><span class="btn">☰</span> → <span class="btn">図面を読み込む（DXF）</span> で <code>練習_倉庫平面図_mm.dxf</code> を読み込む。</li></ol>
+  <p>(1) 基準点（▲）はいくつ読み込まれましたか。　(2) 基準点 K3 の座標を答えなさい（右上の一覧のボタンで見られます）。</p>
   <div class="ans two"><span>(1)</span><i></i><span>(2) X , Y</span><i></i></div>
 </div>
 
@@ -154,7 +154,7 @@ svg .pk { fill: #1d4ed8; }
 
 <section class="part">
 <h2>応用編（パソコン版）</h2>
-<div class="intro"><p>パソコン版で <code>練習_倉庫平面図_mm.dxf</code> を開き（<span class="btn">ファイル</span> → <span class="btn">開く</span>）、<span class="btn">ファイル</span> → <span class="btn">座標 SIMA・CSV</span> で <code>練習_基準点.sim</code> を読み込んでから始めます。</p></div>
+<div class="intro"><p>パソコン版のスタート画面で <span class="btn">練習用の図面を開く</span> を押すと、図面と基準点がまとめて入ります。（または <span class="btn">ファイル</span> → <span class="btn">開く</span> で <code>練習_倉庫平面図_mm.dxf</code> を開き、<span class="btn">ファイル</span> → <span class="btn">座標</span> で <code>練習_基準点.sim</code> を読み込む）コマンドが見つからないときは <kbd>Ctrl</kbd>+<kbd>K</kbd> で名前を打つと探せます。</p></div>
 
 <div class="q"><h3><span class="no">問11</span>縮尺・向き・位置をまとめて合わせる<span class="lv">操作</span></h3>
   <p><span class="btn">図形編集</span> → <span class="btn">縮尺合わせ</span> の方法「座標」で、図面の K1・K2・K3 の印をクリックし、それぞれ <code>K1</code>・<code>K2</code>・<code>K3</code> と入力して <kbd>Enter</kbd> で合わせなさい。（「回転・位置も合わせる」はオン）</p>
@@ -199,6 +199,11 @@ No.6,,21.30,   No.7,,20.90,   No.8,,20.60,      160,20.80</pre>
   <div class="ans two"><span>(1) No.3</span><i></i><span>No.4</span><i></i><span>No.5</span><i></i><span>(2)</span><i></i><span>(3)</span><i></i></div>
 </div>
 
+<div class="q"><h3><span class="no">問16-2</span>つまみで形を直す<span class="lv">操作</span></h3>
+  <p>問16 の縦断図とは別に、建物の外形線をクリックで選ぶと、角に四角いつまみが出ます。角 C のつまみをドラッグして少し動かし、プロパティの「面積」が変わることを確かめてから、<kbd>Ctrl</kbd>+<kbd>Z</kbd> で元に戻しなさい。戻した後の面積は？</p>
+  <div class="ans"><span>面積 ㎡</span><i></i></div>
+</div>
+
 <div class="q"><h3><span class="no">問17</span>図面を仕上げて印刷<span class="lv">課題</span></h3>
   <p>次をすべて満たす図面を PDF で保存し、提出しなさい。</p>
   <ul><li>用紙 A3 横・縮尺 1:200。建物と横断図が用紙枠の中に入っている（<span class="btn">表示</span> → <span class="btn">用紙枠の移動</span>）</li><li>レイヤ「寸法」を新しく作り、寸法をそのレイヤに入れる（色は青）</li><li>表題欄の工事名「倉庫A 新築工事」、図面名「配置図」、作成者に自分の名前</li><li>座標表を付ける</li></ul>
@@ -237,6 +242,7 @@ No.6,,21.30,   No.7,,20.90,   No.8,,20.60,      160,20.80</pre>
 <div class="a"><h3>問14</h3><p class="r">(1) 26,833　(2) 水平寸法は東西方向の長さだけを測るため</p><p>図面が回転しているので、水平・垂直寸法は建物の辺の長さになりません。斜めの2点の実長は平行寸法で入れます。</p></div>
 <div class="a"><h3>問15</h3><p class="r">切土 CA 0.121 ㎡　盛土 BA 1.031 ㎡　DL 19.00</p><p>左の路肩は地盤より高いので盛土（法勾配 1:1.5 で下がる）、右の路肩は地盤より低いので切土（1:1.0 で上がる）になります。</p></div>
 <div class="a"><h3>問16</h3><p class="r">(1) No.3 21.20　No.4 21.45　No.5 21.40　(2) 切土高 なし・盛土高 0.25　(3) +2.000%（L=80.00）、−1.000%（L=80.00）</p><p>縦断曲線（VCL 40 m）は No.3〜No.5 の区間です。No.4 は VIP（21.60）から縦距 0.15 下がって 21.45 になります。</p></div>
+<div class="a"><h3>問16-2</h3><p class="r">288.000 ㎡</p><p>つまみはその頂点だけを動かします。動かしている間は新しい位置の座標がカーソルの横に出ます。</p></div>
 <div class="a"><h3>問17・問18</h3><p class="r">課題（作品で確認）。問18 の追加は 6（逃げ杭 4 本 ＋ 逃げ線 2 本。角 B に点がなかった場合は位置出し点が増えて 7）</p><p>確認のポイント: 寸法の色がレイヤ色（青）になっているか、表題欄の内容、座標表に位置出し点・逃げ杭が入っているか。差分取り込みで、パソコンで作った図面が消えていないか。</p></div>
 </section>
 </div>

@@ -144,36 +144,43 @@ footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line);
 
 <h2 id="screen">スマホの画面の見かた</h2>
 <figure>
-  <svg viewBox="0 0 640 380" role="img" aria-label="スマホ版の画面の配置図">
-    <rect class="box" x="40" y="10" width="220" height="360" rx="22"/>
-    <rect class="bar" x="52" y="30" width="196" height="34" rx="4"/>
-    <text class="tw" x="60" y="52">☰  図面の名前</text>
-    <text class="tw" x="176" y="52">施工図 ≡</text>
-    <rect class="box" x="52" y="70" width="196" height="196" rx="2" style="fill:var(--paper)"/>
+  <svg viewBox="0 0 640 400" role="img" aria-label="スマホ版の画面の配置図">
+    <rect class="box" x="40" y="10" width="220" height="380" rx="22"/>
+    <rect class="bar" x="52" y="30" width="196" height="38" rx="4"/>
+    <text class="tw" x="60" y="47">☰</text><text class="tw" x="78" y="46">図面の名前</text><text class="tw" x="78" y="60" style="font-size:9.5px;opacity:.75">図形 14 ・ 点 6</text>
+    <rect x="160" y="38" width="48" height="20" rx="10" style="fill:none;stroke:#fff;stroke-opacity:.5"/><text class="tw" x="166" y="52" style="font-size:10px">施工図</text>
+    <text class="tw" x="226" y="52">▤</text>
+    <rect class="box" x="52" y="72" width="196" height="196" rx="2" style="fill:var(--paper)"/>
+    <rect x="58" y="78" width="70" height="16" rx="5" class="box"/><text class="txs" x="62" y="90">X 0.000 Y 24.0</text>
     <path class="ln" d="M80 220 L120 120 L200 140 L210 230 Z"/>
     <circle class="accf" cx="120" cy="120" r="4"/><circle class="accf" cx="200" cy="140" r="4"/>
-    <rect class="box" x="52" y="272" width="196" height="40" rx="4"/>
-    <text class="txs" x="62" y="297">選んだ線の長さ・座標など</text>
-    <rect class="bar" x="52" y="318" width="196" height="34" rx="4"/>
-    <text class="tw" x="58" y="340">選択 点 線 寸法 文字 距離 …</text>
-    <path class="acc" d="M262 47 H330"/><text class="tacc" x="336" y="44">上のバー</text>
-    <text class="txs" x="336" y="62">☰ メニュー（読み込み・書き出し・合わせる）</text>
-    <text class="txs" x="336" y="78">施工図: 印刷用の図面を作る ／ ≡: 点の一覧</text>
-    <path class="acc" d="M262 168 H330"/><text class="tacc" x="336" y="165">図面</text>
-    <text class="txs" x="336" y="183">指2本で広げる・縮める、1本でずらす</text>
-    <text class="txs" x="336" y="199">⤢ ボタンで全体が見える大きさに戻る</text>
-    <path class="acc" d="M262 292 H330"/><text class="tacc" x="336" y="289">情報の欄</text>
-    <text class="txs" x="336" y="307">タップしたものの長さや座標が出る</text>
-    <path class="acc" d="M262 335 H330"/><text class="tacc" x="336" y="332">道具のボタン</text>
-    <text class="txs" x="336" y="350">今から何をするかを選ぶ（右端は「戻す」）</text>
+    <rect x="214" y="232" width="26" height="26" rx="7" class="box"/>
+    <rect class="box" x="52" y="272" width="196" height="62" rx="10"/>
+    <rect x="60" y="280" width="180" height="18" rx="5" style="fill:var(--warn-soft);stroke:var(--warn-line)"/><text class="txs" x="66" y="293">タップで点を追加</text>
+    <rect x="60" y="304" width="138" height="22" rx="6" class="box" style="fill:var(--paper)"/><rect x="202" y="304" width="38" height="22" rx="6" style="fill:var(--navy)"/><text class="tw" x="208" y="319" style="font-size:10px">入力</text>
+    <rect class="bar" x="52" y="340" width="196" height="38" rx="4"/>
+    <circle cx="86" cy="355" r="9" style="fill:var(--stake);opacity:.45"/>
+    <text class="tw" x="58" y="372" style="font-size:9.5px">選択 点 線 寸法 文字 距離 …</text>
+    <path class="acc" d="M262 49 H330"/><text class="tacc" x="336" y="46">上の帯</text>
+    <text class="txs" x="336" y="64">☰ メニュー ／ 名前の下に図形と点の数</text>
+    <text class="txs" x="336" y="80">施工図: 印刷用の図面を作る ／ ▤: 点の一覧</text>
+    <path class="acc" d="M262 150 H330"/><text class="tacc" x="336" y="147">図面</text>
+    <text class="txs" x="336" y="165">指2本で広げる・縮める、1本でずらす</text>
+    <text class="txs" x="336" y="181">左上に今の座標。右下の四角いボタンで全体表示</text>
+    <path class="acc" d="M262 302 H330"/><text class="tacc" x="336" y="299">指示の欄</text>
+    <text class="txs" x="336" y="317">黄色い枠に「次に何をするか」が出る</text>
+    <text class="txs" x="336" y="333">座標や長さはここに打ち込める</text>
+    <path class="acc" d="M262 358 H330"/><text class="tacc" x="336" y="355">道具のボタン</text>
+    <text class="txs" x="336" y="373">今使っている道具は橙色に光る（右端は「戻す」）</text>
   </svg>
   <figcaption>スマホ版の画面。下の道具を選んでから、図面をタップします。</figcaption>
 </figure>
+<div class="tip"><b>最初の画面</b>まだ何も入っていないときは、図面の上に「図面を読み込む」「座標を読み込む」「パソコンから受け取る」「白紙でかく」の4つのボタンが出ます。ここから始めるのがいちばん簡単です。</div>
 <div class="tip"><b>まちがえたら</b>右下の <span class="btn">戻す</span> を押すと、ひとつ前に戻ります。何度でも戻せます。</div>
 
 <h2 id="look">図面を開いて長さを測る</h2>
 <ol class="steps">
-  <li>左上の <span class="btn">☰</span> → <span class="btn">図面を読み込む（DXF）</span> を押し、もらった DXF ファイルを選ぶ。</li>
+  <li>最初の画面の <span class="btn">図面を読み込む</span>（または左上の <span class="btn">☰</span> → <span class="btn">図面を読み込む（DXF）</span>）を押し、もらった DXF ファイルを選ぶ。</li>
   <li>図面が出たら、指で広げて見たい所を大きくする。</li>
   <li>下の <span class="btn">距離</span> を押し、測りたい2か所を順にタップ。長さが出ます。線の端や角に近い所をタップすると、ぴったりその点に吸い付きます。</li>
   <li>面積を知りたいときは <span class="btn">面積</span> を押して、角を順にタップ。</li>
@@ -183,7 +190,7 @@ footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line);
 <h2 id="stake">位置出しと逃げ杭を作る</h2>
 <p>図面の建物の角などを現場に出すための点と、その控えの逃げ杭を作ります。</p>
 <ol class="steps">
-  <li><b>基準点を入れる</b>: <span class="btn">☰</span> → <span class="btn">座標を読み込む（SIMA / CSV）</span> で、測量会社からもらった座標のファイルを選ぶ。▲ の点が出ます。</li>
+  <li><b>基準点を入れる</b>: 最初の画面の <span class="btn">座標を読み込む</span> か <span class="btn">☰</span> → <span class="btn">座標を読み込む（SIMA / CSV）</span> で、測量会社からもらった座標のファイルを選ぶ。▲ の点が出ます。</li>
   <li><b>図面の位置を合わせる</b>: 図面の座標が現場と違うときは <span class="btn">☰</span> → <span class="btn">図面を現場の座標に合わせる</span>。図面の上の点と、それに当たる基準点を2組選んで <span class="btn">確認</span> → <span class="btn">合わせる</span>。ずれが mm で出るので、大きすぎないか見ます。</li>
   <li><b>位置出し点を置く</b>: 下の <span class="btn">点</span> を押し、建物の角をタップ。P1、P2… と名前が付きます。</li>
   <li><b>逃げ杭を作る</b>: 下の <span class="btn">逃げ</span> を押す。距離に <code>1</code>（1 m 離す）と入れて、角をタップ。線の延長の上に ⊗ の逃げ杭ができます。名前は「P1-1」のように元の点の名前に番号が付きます。</li>
@@ -234,35 +241,46 @@ footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line);
 
 <h2 id="pc">パソコン版の基本</h2>
 <figure>
-  <svg viewBox="0 0 640 300" role="img" aria-label="パソコン版の画面の配置図">
-    <rect class="bar" x="20" y="10" width="600" height="26" rx="3"/>
-    <text class="tw" x="30" y="28">ファイル  ホーム  作図  図形編集  土木  測量計算  現場連携  表示</text>
-    <rect class="box" x="20" y="38" width="600" height="38"/>
-    <text class="txs" x="30" y="62">リボン: ボタンがならぶ（線・円・寸法・移動…）</text>
-    <rect class="box" x="20" y="78" width="600" height="20"/>
-    <text class="txs" x="30" y="92">スタイルバー: レイヤ・色・線の種類・縮尺・用紙</text>
-    <rect class="box" x="20" y="100" width="130" height="170"/>
-    <text class="tacc" x="30" y="122">マルチボックス</text>
-    <text class="txs" x="30" y="142">今やっている</text><text class="txs" x="30" y="158">ことの説明と</text><text class="txs" x="30" y="174">数字の入力欄</text>
-    <rect class="box" x="152" y="100" width="336" height="170" style="fill:var(--paper)"/>
-    <rect x="200" y="118" width="240" height="134" style="fill:none;stroke:var(--muted);stroke-dasharray:4 3"/>
-    <text class="tx" x="270" y="190">図面（白い紙が印刷範囲）</text>
-    <rect class="box" x="490" y="100" width="130" height="170"/>
-    <text class="tacc" x="500" y="122">プロパティ</text>
-    <text class="txs" x="500" y="142">選んだ線の長さ</text><text class="txs" x="500" y="158">や座標を直せる</text>
-    <text class="tacc" x="500" y="196">レイヤ</text>
-    <text class="txs" x="500" y="216">表示のオン・オフ</text>
-    <rect class="box" x="20" y="272" width="600" height="20"/>
-    <text class="txs" x="30" y="286">座標（X・Y）　｜　吸い付く場所の切り替え（端点・中点・交点…）</text>
+  <svg viewBox="0 0 640 320" role="img" aria-label="パソコン版の画面の配置図">
+    <rect class="bar" x="20" y="10" width="600" height="22" rx="3"/>
+    <text class="tw" x="28" y="25" style="font-size:11px">現場CAD　💾 ↶ ↷ 🖨　図面の名前［保存済み］</text>
+    <rect x="430" y="14" width="140" height="14" rx="4" style="fill:#ffffff;fill-opacity:.15"/><text class="tw" x="436" y="25" style="font-size:9.5px">🔍 コマンドを検索 Ctrl K</text>
+    <rect class="box" x="20" y="34" width="600" height="18"/>
+    <text class="txs" x="28" y="47">ファイル　ホーム　作図　図形編集　土木　測量計算　現場連携　表示（タブ）</text>
+    <rect class="box" x="20" y="54" width="600" height="38"/>
+    <text class="txs" x="28" y="77">リボン: よく使うものは大きいボタン、ほかは小さいボタン。ボタンに乗せると説明が出る</text>
+    <rect class="box" x="20" y="94" width="600" height="18"/>
+    <text class="txs" x="28" y="107">スタイルバー: レイヤ・色・線の種類・縮尺・用紙</text>
+    <rect class="box" x="20" y="114" width="130" height="172"/>
+    <text class="tacc" x="30" y="136">マルチボックス</text>
+    <text class="txs" x="30" y="156">今やっていること</text><text class="txs" x="30" y="172">と次の指示、数字</text><text class="txs" x="30" y="188">の入力欄</text>
+    <rect class="box" x="152" y="114" width="336" height="172" style="fill:var(--paper)"/>
+    <rect x="200" y="132" width="240" height="134" style="fill:none;stroke:var(--muted);stroke-dasharray:4 3"/>
+    <text class="tx" x="262" y="204">図面（白い紙が印刷範囲）</text>
+    <rect x="460" y="226" width="20" height="50" rx="4" class="box"/>
+    <rect class="box" x="490" y="114" width="130" height="172"/>
+    <text class="tacc" x="500" y="136">プロパティ</text>
+    <text class="txs" x="500" y="156">選んだ線の長さ</text><text class="txs" x="500" y="172">や座標を直せる</text>
+    <text class="tacc" x="500" y="210">レイヤ</text>
+    <text class="txs" x="500" y="230">目のボタンで</text><text class="txs" x="500" y="246">表示のオン・オフ</text>
+    <rect class="bar" x="20" y="288" width="600" height="20"/>
+    <text class="tw" x="28" y="302" style="font-size:10px">座標（X・Y）　｜　吸い付く場所の切り替え（端点・中点・交点…）　｜　表示倍率</text>
   </svg>
-  <figcaption>パソコン版の画面。左の「マルチボックス」に、次に何をすればいいかが出ます。</figcaption>
+  <figcaption>パソコン版の画面。左の「マルチボックス」に、次に何をすればいいかが出ます。図面の右下には全体表示・拡大・縮小のボタン。</figcaption>
 </figure>
+<div class="tip"><b>最初の画面</b>図面が空のときは「白紙からかく」「ファイルを開く」「スマホのデータを取り込む」「練習用の図面を開く」のボタンが出ます。</div>
 <h3>線を1本引いてみる</h3>
 <ol class="steps">
   <li>上の <span class="btn">作図</span> タブ → <span class="btn">単線</span> を押す。</li>
   <li>図面の上で、始まりの場所をクリック、終わりの場所をクリック。線が引けます。</li>
   <li>長さを決めたいときは、始まりをクリックしたあと、キーボードで <code>5</code> と打って <kbd>Enter</kbd>。マウスの向きに 5 m の線が引けます。</li>
   <li>終わるときは <kbd>Esc</kbd>。</li>
+</ol>
+<h3>形を直す（つまみ）</h3>
+<ol class="steps">
+  <li>直したい線や図形をクリックして選ぶ。角に小さな四角い「つまみ」が出ます。</li>
+  <li>つまみをドラッグして、新しい場所で離す。その角だけが動きます。線のまん中のつまみは線ごと、円の右のつまみは大きさが変わります。</li>
+  <li>まちがえたら <kbd>Ctrl</kbd> + <kbd>Z</kbd>。</li>
 </ol>
 <h3>覚えておくと楽な操作</h3>
 <dl class="words">
@@ -271,17 +289,20 @@ footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line);
   <dt><kbd>Ctrl</kbd> + <kbd>Z</kbd></dt><dd>まちがえたら1つ戻す。</dd>
   <dt><kbd>Ctrl</kbd> + <kbd>S</kbd></dt><dd>保存。こまめに押す。</dd>
   <dt><kbd>Ctrl</kbd> + <kbd>P</kbd></dt><dd>印刷・PDF。図面枠と表題欄が付きます。</dd>
+  <dt><kbd>Ctrl</kbd> + <kbd>K</kbd></dt><dd>コマンドを名前で探す。「寸法」「逃げ」などと打って <kbd>Enter</kbd>。どのタブにあるか分からなくても使えます。</dd>
+  <dt>右上の月のボタン</dt><dd>暗い表示に切り替える。夜や暗い部屋で目が楽です。</dd>
   <dt><kbd>F1</kbd></dt><dd>アプリの中の「使い方」。</dd>
 </dl>
 
 <h2 id="trouble">困ったとき</h2>
 <div class="qa">
-  <details><summary>図面が見えなくなった・どこにあるか分からない</summary><p>スマホは右下の <span class="btn">⤢</span>、パソコンは <kbd>Home</kbd> キー（または マウスの中ボタンを2回）で、全体が見える大きさに戻ります。</p></details>
+  <details><summary>図面が見えなくなった・どこにあるか分からない</summary><p>スマホは右下の四角いボタン（全体表示）、パソコンは <kbd>Home</kbd> キー（または マウスの中ボタンを2回）で、全体が見える大きさに戻ります。</p></details>
   <details><summary>まちがえて消してしまった</summary><p>スマホは <span class="btn">戻す</span>、パソコンは <kbd>Ctrl</kbd> + <kbd>Z</kbd>。何回か押すと、もっと前に戻ります。</p></details>
   <details><summary>図面の大きさがおかしい（1000 倍など）</summary><p><span class="btn">図面の縮尺を合わせる</span>（パソコンは <span class="btn">図形編集</span> タブの <span class="btn">縮尺合わせ</span>）で、寸法を1か所選ぶと直ります。</p></details>
   <details><summary>文字が「%%c300」のように変になる</summary><p>今のアプリでは φ300 のように直して読み込みます。それでも変な文字があれば、その DXF を担当の人に見せてください。</p></details>
   <details><summary>GPS の位置がずれる</summary><p>スマホの GPS は数 m ずれることがあります。杭打ちなど正確さが必要な作業は、必ず TS などの測量機で確かめてください。GPS は「だいたいの場所を知る」ために使います。</p></details>
   <details><summary>別のスマホやパソコンでデータが見えない</summary><p>データはその機械の中にだけ保存されます。別の機械で使うときは .gcad ファイルで送ってください（<a href="#link">やりとりの方法</a>）。スマホの「Safari の履歴を消す」などをするとデータが消えることがあるので、大事な図面は .gcad で保存しておきましょう。</p></details>
+  <details><summary>スマホ版の「使い方」はどこ？</summary><p><span class="btn">☰</span> メニューのいちばん下の <span class="btn">使い方</span> です。最初の画面の「使い方を見る」からも開けます。</p></details>
   <details><summary>パソコン版でボタンを押しても何も起きない</summary><p>何かの作業の途中かもしれません。<kbd>Esc</kbd> を押して終わらせてから、もう一度押してください。左のマルチボックスに今の作業の説明が出ています。</p></details>
 </div>
 
