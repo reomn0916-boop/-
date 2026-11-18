@@ -361,11 +361,17 @@ export function transformEntity(e, tf) {
   const rot = Math.atan2(tf.b, tf.a) * R2D;
   switch (e.type) {
     case 'point': e.p = T(e.p); break;
-    case 'line': case 'dim': e.a = T(e.a); e.b = T(e.b); break;
+    case 'line': case 'leader': e.a = T(e.a); e.b = T(e.b); break;
+    case 'dim': e.a = T(e.a); e.b = T(e.b); if (e.pa) e.pa = T(e.pa); if (e.pb) e.pb = T(e.pb); if (e.off) e.off *= k; break;
     case 'poly': e.pts = e.pts.map(T); break;
+    case 'hatch': e.pts = e.pts.map(T); e.ang = norm360((e.ang ?? 45) - rot); break;
     case 'circle': e.c = T(e.c); e.r *= k; break;
     case 'arc': e.c = T(e.c); e.r *= k; e.a0 = norm360(e.a0 - rot); e.a1 = norm360(e.a1 - rot); break;
-    case 'text': e.p = T(e.p); if (e.h) e.h *= k; break;
+    case 'text':
+      e.p = T(e.p);
+      // 実寸の文字（DXF）は図面と一緒に拡大・回転。用紙基準の文字（hmm）は大きさ・向きを保つ
+      if (!e.hmm) { if (e.h) e.h *= k; if (Math.abs(rot) > 1e-12) e.rot = norm360((e.rot || 0) - rot); }
+      break;
     case 'align': e.ips = e.ips.map(T); e.radii = (e.radii || []).map((r) => r * k); break;
   }
   return e;

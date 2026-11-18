@@ -110,6 +110,7 @@
     <div class="menu-group">
       <h3>現場（位置出し）</h3>
       <button data-act="openFit">図面を現場の座標に合わせる</button>
+      <button data-act="openScale">図面の縮尺を合わせる（寸法・座標）</button>
       <button data-act="toolNige">逃げ杭を作る</button>
       <button data-act="openSima">SIMA で書き出す・送る</button>
       <button data-act="openSheet">施工図を作る（PDF・画像・DXF）</button>
@@ -244,11 +245,37 @@
     <p class="small">図面上の点と、それに対応する現場の点（座標が分かっている点・GPS）を指定すると、図面を移動・回転して現場の座標に合わせます。1組で移動のみ、2組で移動＋回転。<b>種別が「基準点」の点と GPS で取った点は動きません。</b></p>
     <div id="fitPairs"></div>
     <label class="toggle"><input type="checkbox" id="fitScale"> 縮尺も合わせる（通常はオフ）</label>
+    <p class="small"><a href="#" id="fitToScale">寸法（長さ）で縮尺だけ合わせるとき →</a></p>
     <div id="fitResult" class="small"></div>
     <div class="row">
       <button class="btn" id="fitCheck">確認</button>
       <button class="btn primary" id="fitApply">合わせる</button>
       <button class="btn" data-close>閉じる</button>
+    </div>
+  </dialog>
+
+  <!-- 縮尺合わせ -->
+  <dialog id="scaleDialog" class="modal tall">
+    <h2>図面の縮尺を合わせる</h2>
+    <p class="small">長さの分かっている区間（寸法の両端など）と正しい長さから、図面全体を拡大・縮小します。1点目は動きません。mm で描かれた DXF（1000 倍の大きさ）もこれで直せます。<b>種別が「基準点」の点と GPS で取った点は動きません。</b></p>
+    <div class="chips" id="scMode">
+      <button class="chip-btn" data-scmode="pts">2点で指定</button>
+      <button class="chip-btn" data-scmode="dim">寸法線を選ぶ</button>
+    </div>
+    <div id="scPts"></div>
+    <div id="scDim" hidden>
+      <button class="btn wide" id="scPickDim">📍 図面の寸法線・線・数字の文字をタップ</button>
+      <p class="small" id="scDimInfo"></p>
+    </div>
+    <label class="field"><span>正しい長さ</span>
+      <div class="in"><input id="scReal" type="text" inputmode="decimal" autocomplete="off" placeholder="例 5.000 / 5000"><select id="scUnit" class="mini-sel"><option value="m">m</option><option value="mm">mm</option></select></div>
+    </label>
+    <div id="scResult" class="small"></div>
+    <p class="small">座標で合わせるときは <a href="#" id="scToFit">「図面を現場の座標に合わせる」</a>で「縮尺も合わせる」をオンにします（2組以上）。</p>
+    <div class="row">
+      <button class="btn" data-close>閉じる</button>
+      <button class="btn" id="scCheck">確認</button>
+      <button class="btn primary" id="scApply">合わせる</button>
     </div>
   </dialog>
 
@@ -391,6 +418,7 @@
       <ol>
         <li>メニュー「図面を読み込む」で DXF を入れる。基準点・境界杭の座標は「座標を読み込む」で SIMA/CSV から（種別「基準点」になります）。</li>
         <li>図面が任意座標なら、メニュー「図面を現場の座標に合わせる」で、図面上の点と現場の点を1〜2組指定して合わせる。</li>
+        <li>図面の縮尺が違う（mm で描かれた DXF など）ときは、メニュー「図面の縮尺を合わせる」で、寸法の両端の2点か寸法線を選び、正しい長さを入れる。</li>
         <li>「点」ツールで図面の角・交点をタップして位置出し点を登録（種別・頭文字を指定可）。</li>
         <li>「逃げ」ツールで逃げ杭を作る：<b>角・交点</b>（辺の延長上）／<b>線の延長</b>（両端の先）／<b>平行</b>（図形をタップ → 逃げる側をタップ）。距離は <code>1</code> や <code>1,2</code>（2本ずつ）。点名は「K1-1」のように元の点名に番号が付きます。</li>
         <li>メニュー「SIMA で書き出す・送る」で、種別を選んで保存・共有。TS やほかの CAD に取り込めます。</li>

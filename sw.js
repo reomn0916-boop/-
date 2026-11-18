@@ -1,5 +1,5 @@
 // オフライン用キャッシュ。ファイルを更新したら VERSION を上げる
-const VERSION = 'genbacad-v5';
+const VERSION = 'genbacad-v6';
 const FILES = [
   './', './index.html', './css/style.css', './js/app.js', './js/geo.js', './js/io.js', './js/cogo.js', './js/calc.js', './js/sheet.js',
   './js/draft.js', './js/sync.js',

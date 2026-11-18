@@ -347,13 +347,13 @@ function snapAt(sx, sy, { ignoreTemp = false } = {}) {
 // ============================================================
 // 当たり判定（選択）
 // ============================================================
-function hitTest(sx, sy) {
+function hitTest(sx, sy, filter) {
   const w = toW(sx, sy);
   const tol = 18 / view.s;
   let best = null;
   const take = (e, d) => { if (d <= tol && (!best || d < best.d)) best = { e, d }; };
   for (const e of doc.entities) {
-    if (!visible(e)) continue;
+    if (!visible(e) || (filter && !filter(e))) continue;
     switch (e.type) {
       case 'point': take(e, dist(e.p, w) * 0.6); break; // 点は優先
       case 'text': take(e, dist(e.p, w)); break;
@@ -1187,6 +1187,14 @@ cv.addEventListener('wheel', (ev) => {
 const clampScale = (s) => Math.min(Math.max(s, 1e-4), 5000);
 
 function onTap(sx, sy) {
+  if (picker && picker.ent) {
+    // 点ではなく図形を選ぶ
+    const e = hitTest(sx, sy, picker.filter);
+    if (!e) { toast(picker.miss || '図形が見つかりません。線の上をタップしてください'); return; }
+    picker.cb(e);
+    endPick();
+    return;
+  }
   if (picker) {
     const sn = snapAt(sx, sy, { ignoreTemp: true });
     const tol = SNAP_PX / view.s;
@@ -1690,6 +1698,7 @@ const actions = {
     });
   },
   openFit() { openFit(); },
+  openScale() { openScale(); },
   toolNige() { setTool('nige'); },
   nigeCornersSel() {
     const e = getEnt(selected); const ds = nigeDistances(); if (!e || !ds) return;
@@ -2090,6 +2099,112 @@ $('#fitApply').addEventListener('click', () => {
   changed(); fitAll();
   toast(`図面を現場の座標に合わせました（${n} 個の図形・元に戻す可）`);
 });
+
+$('#fitToScale').addEventListener('click', (ev) => { ev.preventDefault(); $('#fitDialog').close(); openScale(); });
+
+// ---------- 縮尺合わせ（寸法で） ----------
+const scState = { mode: 'pts', a: '', b: '', ent: null, real: '', unit: '' };
+/** 文字の数値と単位（小数点がなければ mm とみなす: 5,000 → 5000 mm、5.000 → 5 m） */
+function lengthFromText(t) {
+  const m = String(t ?? '').replace(/[,，\s]/g, '').match(/\d+(?:\.\d+)?/);
+  if (!m) return null;
+  return { v: m[0], unit: m[0].includes('.') ? 'm' : 'mm' };
+}
+const scTarget = (e) => !(e.type === 'point' && (grpOf(e) === '基準点' || e.gps));
+function renderScale() {
+  document.querySelectorAll('#scMode [data-scmode]').forEach((b) => b.classList.toggle('active', b.dataset.scmode === scState.mode));
+  $('#scPts').hidden = scState.mode !== 'pts';
+  $('#scDim').hidden = scState.mode !== 'dim';
+  $('#scPts').innerHTML = [['a', '1点目（動かない基準点）'], ['b', '2点目']].map(([k, l]) => `
+    <label class="field"><span>${l}</span><div class="in"><input data-sc="${k}" value="${esc(scState[k])}" list="ptNames" autocomplete="off" autocapitalize="off" placeholder="点名 / X,Y"><button class="pick" data-scpick="${k}">📍</button></div></label>`).join('');
+  const e = scState.ent != null ? getEnt(scState.ent) : null;
+  $('#scDimInfo').innerHTML = e ? `選んだ${{ dim: '寸法線', line: '線' }[e.type] || '図形'}：今の長さ <b>${fmt(dist(e.a, e.b))} m</b>${e.txt ? `（寸法値「${esc(e.txt)}」）` : ''}` : 'まだ選んでいません';
+  $('#scReal').value = scState.real;
+  $('#scUnit').value = scState.unit || (settings.dimUnit === 'mm' ? 'mm' : 'm');
+}
+function scaleCompute() {
+  let base, L;
+  if (scState.mode === 'pts') {
+    if (!scState.a.trim() || !scState.b.trim()) throw new Error('長さの両端の2点を入力してください');
+    const A = resolvePt(scState.a).p, B = resolvePt(scState.b).p;
+    base = A; L = dist(A, B);
+  } else {
+    const e = scState.ent != null ? getEnt(scState.ent) : null;
+    if (!e) throw new Error('寸法線か線を選んでください');
+    base = e.pa || e.a; L = dist(e.a, e.b);
+  }
+  if (!(L > 1e-9)) throw new Error('2点が同じ位置です');
+  const v = Number(String(scState.real).replace(/[,，\s]/g, ''));
+  if (!(v > 0)) throw new Error('正しい長さを入力してください');
+  const unit = $('#scUnit').value;
+  const R = unit === 'mm' ? v / 1000 : v;
+  const k = R / L;
+  const html = `今の長さ ${fmt(L)} m → 正しい長さ ${fmt(R)} m<br>倍率 <b>${k.toFixed(6)}</b>` +
+    (Math.abs(k - 0.001) < 1e-7 ? '（mm で描かれた図面を m に直します）' : '') +
+    `<br>${doc.entities.filter(scTarget).length} 個の図形が対象`;
+  return { base, k, L, R, html };
+}
+function openScale() {
+  renderNames();
+  if (!scState.unit) scState.unit = settings.dimUnit === 'mm' ? 'mm' : 'm';
+  // 選択中の寸法線・線があれば使う
+  const sel = getEnt(selected);
+  if (sel && (sel.type === 'dim' || sel.type === 'line')) { scState.mode = 'dim'; scState.ent = sel.id; const t = lengthFromText(sel.txt); if (t) { scState.real = t.v; scState.unit = t.unit; } }
+  renderScale();
+  $('#scResult').innerHTML = '';
+  $('#scaleDialog').showModal();
+}
+$('#scMode').addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-scmode]'); if (!b) return;
+  scState.mode = b.dataset.scmode; renderScale(); $('#scResult').innerHTML = '';
+});
+$('#scPts').addEventListener('input', (ev) => { const k = ev.target.dataset.sc; if (k) scState[k] = ev.target.value; });
+$('#scReal').addEventListener('input', (ev) => { scState.real = ev.target.value; });
+$('#scUnit').addEventListener('change', (ev) => { scState.unit = ev.target.value; });
+$('#scPts').addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-scpick]'); if (!b) return;
+  ev.preventDefault();
+  const k = b.dataset.scpick;
+  $('#scaleDialog').close();
+  pick((v) => { scState[k] = v; }, false, () => { renderScale(); $('#scaleDialog').showModal(); }, { msg: k === 'a' ? '長さの1点目（動かない点）をタップ' : '長さの2点目をタップ' });
+});
+$('#scPickDim').addEventListener('click', (ev) => {
+  ev.preventDefault();
+  $('#scaleDialog').close();
+  pick((e) => {
+    if (e.type === 'text') {
+      // 数字の文字: 値を正しい長さに入れて、2点の指定へ
+      const t = lengthFromText(e.text);
+      if (t) { scState.real = t.v; scState.unit = t.unit; }
+      scState.mode = 'pts';
+      toast(`「${e.text}」を正しい長さに入れました。長さの両端の2点を指定してください`);
+      return;
+    }
+    scState.ent = e.id;
+    const t = lengthFromText(e.txt);
+    if (t) { scState.real = t.v; scState.unit = t.unit; }
+  }, false, () => { renderScale(); $('#scaleDialog').showModal(); }, {
+    ent: true, msg: '寸法線・線、または寸法値の文字をタップ', miss: '寸法線・線・数字の文字が見つかりません',
+    filter: (e) => e.type === 'dim' || e.type === 'line' || (e.type === 'text' && !!lengthFromText(e.text)),
+  });
+});
+$('#scCheck').addEventListener('click', () => {
+  try { $('#scResult').innerHTML = scaleCompute().html; } catch (err) { $('#scResult').innerHTML = `<span class="err">${esc(err.message)}</span>`; }
+});
+$('#scApply').addEventListener('click', () => {
+  let r;
+  try { r = scaleCompute(); } catch (err) { $('#scResult').innerHTML = `<span class="err">${esc(err.message)}</span>`; return; }
+  snapshot();
+  const tf = { a: r.k, b: 0, tx: r.base.x * (1 - r.k), ty: r.base.y * (1 - r.k), scale: r.k };
+  let n = 0;
+  for (const e of doc.entities) { if (!scTarget(e)) continue; transformEntity(e, tf); n++; }
+  doc.entities = doc.entities.map((e) => (e.type === 'align' ? { ...e } : e)); // 路線の形状を作り直す
+  Object.assign(scState, { a: '', b: '', ent: null, real: '' });
+  $('#scaleDialog').close();
+  changed(); fitAll();
+  toast(`倍率 ${r.k.toFixed(6)} で縮尺を合わせました（${n} 個の図形・元に戻す可）`);
+});
+$('#scToFit').addEventListener('click', (ev) => { ev.preventDefault(); $('#scaleDialog').close(); $('#fitScale').checked = true; openFit(); });
 
 // ---------- 施工図 ----------
 function sheetCfg() {
