@@ -102,4 +102,11 @@ export const ICONS = {
   layer: S('<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 16l9 5 9-5"/>'),
   help: S('<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.8.4-1 1-1 1.7v.5"/>' + dot(12, 17, 1)),
   select: S('<path d="M5 3l14 8-6 2-2 6z"/>'),
+  gps: S('<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.4" fill="currentColor" stroke="none"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>'),
+  menu: S('<path d="M4 7h16M4 12h16M4 17h16"/>'),
+  list: S('<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 12.5h8M8 16h5"/>'),
+  locate: S('<path d="M12 3l7 18-7-4-7 4z"/>'),
+  sheetdoc: S('<rect x="3" y="5" width="18" height="14" rx="1"/><path d="M14 14h7M14 14v5M6 9h6"/>'),
+  ok: S('<path d="M5 12l5 5 9-10"/>'),
+  close: S('<path d="M6 6l12 12M18 6L6 18"/>'),
 };

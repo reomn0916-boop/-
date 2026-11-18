@@ -15,11 +15,11 @@
 </head>
 <body>
   <header id="top">
-    <button id="btnMenu" class="icon" aria-label="メニュー">☰</button>
-    <div id="title">無題</div>
+    <button id="btnMenu" class="icon" aria-label="メニュー"><i data-ic="menu"></i></button>
+    <div class="titlebox"><div id="title">無題</div><div id="subTitle">現場CAD</div></div>
     <button id="btnZone" class="chip" aria-label="座標系">系: —</button>
-    <button id="btnSheet" class="chip" aria-label="施工図">施工図</button>
-    <button id="btnList" class="icon" aria-label="座標一覧">≡</button>
+    <button id="btnSheet" class="chip strong" aria-label="施工図"><i data-ic="sheetdoc"></i>施工図</button>
+    <button id="btnList" class="icon" aria-label="座標一覧"><i data-ic="list"></i></button>
   </header>
 
   <main id="stage">
@@ -30,11 +30,25 @@
     </div>
     <div id="gpsHud" hidden></div>
     <div id="viewBtns">
-      <button id="btnFit" class="fab" aria-label="全体表示">⤢</button>
-      <button id="btnGoGps" class="fab" aria-label="現在地へ" hidden>◎</button>
+      <button id="btnGoGps" class="fab" aria-label="現在地へ" hidden><i data-ic="locate"></i></button>
+      <button id="btnFit" class="fab" aria-label="全体表示"><i data-ic="zoomall"></i></button>
+    </div>
+    <div id="emptyState" hidden>
+      <div class="es-card">
+        <b>図面を入れて始めましょう</b>
+        <p>図面（DXF）や基準点（SIMA）を読み込むか、パソコン版から送られたデータを開きます。</p>
+        <div class="es-acts">
+          <button data-es="openDxf"><i data-ic="import"></i><span>図面を読み込む<small>DXF</small></span></button>
+          <button data-es="openPts"><i data-ic="sima"></i><span>座標を読み込む<small>SIMA ・ CSV</small></span></button>
+          <button data-es="recvPc"><i data-ic="recv"></i><span>パソコンから受け取る<small>.gcad</small></span></button>
+          <button data-es="blank"><i data-ic="pline"></i><span>白紙でかく<small>点・線を置く</small></span></button>
+        </div>
+        <button class="es-help" data-es="help">使い方を見る</button>
+      </div>
     </div>
     <div id="toast" role="status"></div>
     <div id="pickBar" hidden>
+      <i data-ic="point" class="pk-ic"></i>
       <span id="pickMsg"></span>
       <button id="pickDone" class="btn primary">完了</button>
       <button id="pickCancel" class="btn">戻る</button>
@@ -82,17 +96,17 @@
   </div>
 
   <nav id="tools">
-    <button data-tool="select" class="tool active"><span>↖</span>選択</button>
-    <button data-tool="point" class="tool"><span>•</span>点</button>
-    <button data-tool="line" class="tool"><span>╱</span>線</button>
-    <button data-tool="dimension" class="tool"><span>⟷</span>寸法</button>
-    <button data-tool="text" class="tool"><span>A</span>文字</button>
-    <button data-tool="measure" class="tool"><span>↔</span>距離</button>
-    <button data-tool="area" class="tool"><span>▱</span>面積</button>
-    <button data-tool="nige" class="tool"><span>⇉</span>逃げ</button>
-    <button id="btnCalc" class="tool"><span>∑</span>計算</button>
-    <button id="btnGps" class="tool"><span>⌖</span>GPS</button>
-    <button id="btnUndo" class="tool"><span>↶</span>戻す</button>
+    <button data-tool="select" class="tool active"><span><i data-ic="select"></i></span>選択</button>
+    <button data-tool="point" class="tool"><span><i data-ic="point"></i></span>点</button>
+    <button data-tool="line" class="tool"><span><i data-ic="line"></i></span>線</button>
+    <button data-tool="dimension" class="tool"><span><i data-ic="dim"></i></span>寸法</button>
+    <button data-tool="text" class="tool"><span><i data-ic="text"></i></span>文字</button>
+    <button data-tool="measure" class="tool"><span><i data-ic="mdist"></i></span>距離</button>
+    <button data-tool="area" class="tool"><span><i data-ic="marea"></i></span>面積</button>
+    <button data-tool="nige" class="tool"><span><i data-ic="nige"></i></span>逃げ</button>
+    <button id="btnCalc" class="tool"><span><i data-ic="calc"></i></span>計算</button>
+    <button id="btnGps" class="tool"><span><i data-ic="gps"></i></span>GPS</button>
+    <button id="btnUndo" class="tool"><span><i data-ic="undo"></i></span>戻す</button>
   </nav>
 
   <!-- メニュー -->

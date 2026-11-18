@@ -2,6 +2,7 @@ import { llToXY, xyToLL, guessZone, toDMS, parseAngle, azimuth, ZONES, ZONE_AREA
 import { decodeText, parseDXF, toDXF, parseSIMA, toSIMA, parseCSV, toCSV, encodeSJIS } from './io.js';
 import { buildAlignment, alignPoint, alignStation, alignStakes, fmtStation, intersect, fitTransform, applyTransform, invertTransform, orientation, offsetPolyline, extendFrom, transformEntity } from './cogo.js';
 import { initCalc, reportHtml, reportsCSV } from './calc.js';
+import { ICONS } from '../pc/icons.js';
 import { makeTracker, packProject, unpackProject, mergeProjects, mergeSummary, EXT } from './sync.js';
 import { explodeForDxf, dimLabel, hatchSegments, LTYPES } from './draft.js';
 import { SCALES, defaultSheet, layout as sheetLayout, makeXf, fitRange, autoScale, renderSheet, makePdf, sheetFrameEntities, sheetInfo, inViewport, dimGeom, dimText } from './sheet.js';
@@ -101,7 +102,7 @@ function undo() {
   changed();
   toast('元に戻しました');
 }
-function changed() { save(); renderPanel(); draw(); }
+function changed() { save(); renderPanel(); draw(); updateTitle(); }
 
 function addEntity(e, { snap = true } = {}) {
   if (snap) snapshot();
@@ -385,7 +386,10 @@ function niceStep(px) {
   return 10 * p;
 }
 
+let emptyOff = false;
+function updateEmpty() { const el = $('#emptyState'); if (el) el.hidden = emptyOff || doc.entities.length > 0; }
 function draw() {
+  updateEmpty();
   if (!W) return;
   const dark = settings.dark;
   const ent = dark ? '#e8eef4' : '#1a2530';
@@ -1612,7 +1616,11 @@ function toast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
 }
-function updateTitle() { $('#title').textContent = doc.name; document.title = `${doc.name} - 現場CAD`; }
+function updateTitle() {
+  $('#title').textContent = doc.name; document.title = `${doc.name} - 現場CAD`;
+  const n = doc.entities.length, pts = doc.entities.filter((e) => e.type === 'point').length;
+  $('#subTitle').textContent = n ? `図形 ${n} ・ 点 ${pts}` : '現場CAD';
+}
 function updateZoneChip() { $('#btnZone').textContent = doc.zone ? `${doc.zone}系` : '系: 未設定'; }
 
 function openPointDialog(e) {
@@ -1851,7 +1859,8 @@ function endPick() {
   const d = picker && picker.done;
   picker = null;
   $('#pickBar').hidden = true;
-  if (d) d();
+  // タップの後に届く click が、開き直したダイアログのボタンに当たらないよう少し待つ
+  if (d) setTimeout(d, 350);
 }
 $('#pickDone').addEventListener('click', endPick);
 $('#pickCancel').addEventListener('click', endPick);
@@ -2395,7 +2404,18 @@ updateTitle();
 updateZoneChip();
 new ResizeObserver(resize).observe($('#stage'));
 resize();
-if (!doc.entities.length && !localStorage.getItem(STORE_KEY)) setTimeout(() => $('#helpDialog').showModal(), 300);
+document.querySelectorAll('i[data-ic]').forEach((i) => { i.innerHTML = ICONS[i.dataset.ic] || ''; });
+document.querySelectorAll('#menu .menu-group > button[data-act]').forEach((b) => {
+  const MI = { new: 'new', rename: 'zone', sendPc: 'send', recvPc: 'recv', openFit: 'fit', openScale: 'scalefit', toolNige: 'nige', openSima: 'sima', openSheet: 'sheetdoc', openCalc: 'calc', openReports: 'report', openCal: 'gps', openLayers: 'layer', openDxf: 'import', openPts: 'sima', openJson: 'open', saveDxf: 'export', saveCsv: 'export', saveJson: 'save', help: 'help' };
+  const ic = ICONS[MI[b.dataset.act]]; if (ic && !b.querySelector('svg')) b.insertAdjacentHTML('afterbegin', `<i class="mi">${ic}</i>`);
+});
+$('#emptyState').addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-es]'); if (!b) return;
+  const a = b.dataset.es;
+  if (a === 'blank') { emptyOff = true; updateEmpty(); setTool('point'); toast('図面をタップすると点を置けます。下のボタンで道具を変えられます'); return; }
+  actions[a]?.();
+});
+updateEmpty();
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('sw.js').catch(() => {});
