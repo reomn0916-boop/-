@@ -281,7 +281,8 @@ export function toDXF(entities, opt = {}) {
 export function parseSIMA(text) {
   const out = [];
   for (const line of text.split(/\r\n|\r|\n/)) {
-    const c = line.split(',');
+    // 全角のカンマ・空白、行頭の空白・BOM にも対応
+    const c = line.replace(/^\uFEFF/, '').replace(/，/g, ',').split(',').map((t) => t.trim());
     if (c[0] !== 'A01') continue;
     const x = parseFloat(c[3]), y = parseFloat(c[4]);
     if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
