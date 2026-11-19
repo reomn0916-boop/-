@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#1b2a3a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="現場CAD">
+  <title>現場CAD</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header id="top">
+    <button id="btnMenu" class="icon" aria-label="メニュー"><i data-ic="menu"></i></button>
+    <div class="titlebox"><div id="title">無題</div><div id="subTitle">現場CAD</div></div>
+    <button id="btnZone" class="chip" aria-label="座標系">系: —</button>
+    <button id="btnSheet" class="chip strong" aria-label="施工図"><i data-ic="sheetdoc"></i>施工図</button>
+    <button id="btnList" class="icon" aria-label="座標一覧"><i data-ic="list"></i></button>
+  </header>
+
+  <main id="stage">
+    <canvas id="cv"></canvas>
+    <div id="hud">
+      <div id="hudXY">X — / Y —</div>
+      <div id="hudSnap"></div>
+    </div>
+    <div id="gpsHud" hidden></div>
+    <div id="viewBtns">
+      <button id="btnGoGps" class="fab" aria-label="現在地へ" hidden><i data-ic="locate"></i></button>
+      <button id="btnFit" class="fab" aria-label="全体表示"><i data-ic="zoomall"></i></button>
+    </div>
+    <div id="emptyState" hidden>
+      <div class="es-card">
+        <b>図面を入れて始めましょう</b>
+        <p>図面（DXF）や基準点（SIMA）を読み込むか、パソコン版から送られたデータを開きます。</p>
+        <div class="es-acts">
+          <button data-es="openDxf"><i data-ic="import"></i><span>図面を読み込む<small>DXF</small></span></button>
+          <button data-es="openPts"><i data-ic="sima"></i><span>座標を読み込む<small>SIMA ・ CSV</small></span></button>
+          <button data-es="recvPc"><i data-ic="recv"></i><span>パソコンから受け取る<small>.gcad</small></span></button>
+          <button data-es="blank"><i data-ic="pline"></i><span>白紙でかく<small>点・線を置く</small></span></button>
+        </div>
+        <button class="es-help" data-es="help">使い方を見る</button>
+      </div>
+    </div>
+    <div id="toast" role="status"></div>
+    <div id="pickBar" hidden>
+      <i data-ic="point" class="pk-ic"></i>
+      <span id="pickMsg"></span>
+      <button id="pickDone" class="btn primary">完了</button>
+      <button id="pickCancel" class="btn">戻る</button>
+    </div>
+  </main>
+
+  <section id="panel" hidden>
+    <div id="panelBody"></div>
+  </section>
+
+  <div id="cmdbar" hidden>
+    <div id="cmdHint"></div>
+    <div class="row" id="kindRow" hidden>
+      <select id="kindSel"></select>
+    </div>
+    <div class="row" id="ptRow" hidden>
+      <label class="mini-label">種別
+        <select id="ptGrp">
+          <option value="位置出し">位置出し</option>
+          <option value="基準点">基準点</option>
+          <option value="逃げ">逃げ</option>
+          <option value="その他">その他</option>
+        </select>
+      </label>
+      <label class="mini-label">頭文字 <input id="ptPrefix" type="text" class="mini" maxlength="8"></label>
+    </div>
+    <div class="row" id="nigeRow" hidden>
+      <select id="nigeMode">
+        <option value="corner">角・交点（辺の延長）</option>
+        <option value="ext">線の延長（両端）</option>
+        <option value="par">平行（外側/内側）</option>
+      </select>
+      <label class="mini-label">距離 <input id="nigeDist" type="text" class="mini" placeholder="1"></label>
+      <span class="small">m</span>
+    </div>
+    <div class="row" id="cmdRow">
+      <input id="cmd" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="">
+      <button id="cmdOk" class="btn primary">入力</button>
+    </div>
+    <div class="row" id="cmdBtns">
+      <button id="cmdUndoPt" class="btn">1点戻す</button>
+      <button id="cmdClose" class="btn" hidden>閉じる</button>
+      <button id="cmdDone" class="btn primary">完了</button>
+    </div>
+  </div>
+
+  <nav id="tools">
+    <button data-tool="select" class="tool active"><span><i data-ic="select"></i></span>選択</button>
+    <button data-tool="point" class="tool"><span><i data-ic="point"></i></span>点</button>
+    <button data-tool="line" class="tool"><span><i data-ic="line"></i></span>線</button>
+    <button data-tool="dimension" class="tool"><span><i data-ic="dim"></i></span>寸法</button>
+    <button data-tool="text" class="tool"><span><i data-ic="text"></i></span>文字</button>
+    <button data-tool="measure" class="tool"><span><i data-ic="mdist"></i></span>距離</button>
+    <button data-tool="area" class="tool"><span><i data-ic="marea"></i></span>面積</button>
+    <button data-tool="nige" class="tool"><span><i data-ic="nige"></i></span>逃げ</button>
+    <button id="btnCalc" class="tool"><span><i data-ic="calc"></i></span>計算</button>
+    <button id="btnGps" class="tool"><span><i data-ic="gps"></i></span>GPS</button>
+    <button id="btnUndo" class="tool"><span><i data-ic="undo"></i></span>戻す</button>
+  </nav>
+
+  <!-- メニュー -->
+  <dialog id="menu" class="sheet left">
+    <h2>現場CAD</h2>
+    <div class="menu-group">
+      <button data-act="new">新規作成</button>
+      <button data-act="rename">名前を変更</button>
+    </div>
+    <div class="menu-group">
+      <h3>パソコン連携</h3>
+      <button data-act="sendPc">パソコンへ送る（.gcad）</button>
+      <button data-act="recvPc">パソコンから受け取る</button>
+    </div>
+    <div class="menu-group">
+      <h3>現場（位置出し）</h3>
+      <button data-act="openFit">図面を現場の座標に合わせる</button>
+      <button data-act="openScale">図面の縮尺を合わせる（寸法・座標）</button>
+      <button data-act="toolNige">逃げ杭を作る</button>
+      <button data-act="openSima">SIMA で書き出す・送る</button>
+      <button data-act="openSheet">施工図を作る（PDF・画像・DXF）</button>
+    </div>
+    <div class="menu-group">
+      <h3>計算・帳票</h3>
+      <button data-act="openCalc">計算メニュー（座標・路線・面積）</button>
+      <button data-act="openReports">計算書を見る・印刷</button>
+      <button data-act="openCal">GPS 基準点補正</button>
+      <button data-act="openLayers">画層の表示 / 非表示</button>
+    </div>
+    <div class="menu-group">
+      <h3>読み込み</h3>
+      <button data-act="openDxf">図面を読み込む（DXF）</button>
+      <button data-act="openPts">座標を読み込む（SIMA / CSV）</button>
+      <button data-act="openJson">プロジェクトを開く（.gcad / .json）</button>
+    </div>
+    <div class="menu-group">
+      <h3>書き出し</h3>
+      <button data-act="saveDxf">DXF で書き出す</button>
+      <button data-act="openSima">座標を SIMA で書き出す</button>
+      <button data-act="saveCsv">座標を CSV で書き出す</button>
+      <button data-act="saveJson">プロジェクトを保存（.gcad）</button>
+    </div>
+    <div class="menu-group">
+      <h3>設定</h3>
+      <label class="toggle"><input type="checkbox" id="optSnap" checked> 端点・中点にスナップ</label>
+      <label class="toggle"><input type="checkbox" id="optOnLine" checked> 線上にスナップ</label>
+      <label class="toggle"><input type="checkbox" id="optLen" checked> 線の長さを表示</label>
+      <label class="toggle"><input type="checkbox" id="optNames" checked> 点名を表示</label>
+      <label class="toggle"><input type="checkbox" id="optStakes" checked> 路線の No.杭を表示</label>
+      <label class="toggle">寸法の単位
+        <select id="optDimUnit" class="mini-sel"><option value="m">m（0.000）</option><option value="mm">mm（1,000）</option></select>
+      </label>
+      <label class="toggle"><input type="checkbox" id="optDark"> ダーク表示</label>
+      <label class="toggle">点名の頭文字 <input type="text" id="optPrefix" class="mini" maxlength="8"></label>
+    </div>
+    <div class="menu-group">
+      <button data-act="help">使い方</button>
+    </div>
+    <p class="small">データはこの端末内に自動保存されます。</p>
+    <button class="btn close-sheet" data-close>閉じる</button>
+  </dialog>
+
+  <!-- 座標一覧 -->
+  <dialog id="listSheet" class="sheet right">
+    <h2>座標一覧</h2>
+    <p class="small" id="listInfo"></p>
+    <div id="ptList"></div>
+    <div class="chips" id="listFilter">
+      <button class="chip-btn active" data-grp="">すべて</button>
+      <button class="chip-btn" data-grp="基準点">基準点</button>
+      <button class="chip-btn" data-grp="位置出し">位置出し</button>
+      <button class="chip-btn" data-grp="逃げ">逃げ</button>
+      <button class="chip-btn" data-grp="その他">その他</button>
+    </div>
+    <div class="row">
+      <button class="btn" data-act="saveCsv">CSV</button>
+      <button class="btn primary" data-act="openSima">SIMA</button>
+      <button class="btn" data-close>閉じる</button>
+    </div>
+  </dialog>
+
+  <!-- 計算 -->
+  <dialog id="calcSheet" class="sheet full">
+    <div class="sheet-head">
+      <button id="calcBack" class="btn" hidden>‹ 一覧</button>
+      <h2 id="calcTitle">計算</h2>
+      <button class="btn" data-close>閉じる</button>
+    </div>
+    <p class="small calc-tip">点は点名・「X,Y」・「GPS」（現在地）で指定できます。📍 で図面からも選べます。</p>
+    <div id="calcBody"></div>
+  </dialog>
+  <datalist id="ptNames"></datalist>
+
+  <!-- 計算書 -->
+  <dialog id="reportSheet" class="sheet full">
+    <div class="sheet-head">
+      <h2>計算書</h2>
+      <button class="btn" data-close>閉じる</button>
+    </div>
+    <div class="row">
+      <button class="btn primary" data-act="printReports">印刷 / PDF</button>
+      <button class="btn" data-act="exportReportsCsv">CSV</button>
+      <button class="btn danger" data-act="clearReports">全削除</button>
+    </div>
+    <div id="reportList"></div>
+  </dialog>
+
+  <!-- 画層 -->
+  <dialog id="layerSheet" class="sheet right">
+    <h2>画層</h2>
+    <p class="small">チェックを外した画層は表示・スナップ・選択の対象外になります。</p>
+    <div id="layerList"></div>
+    <div class="row">
+      <button class="btn" id="layerAll">すべて表示</button>
+      <button class="btn" data-close>閉じる</button>
+    </div>
+  </dialog>
+
+  <!-- GPS 基準点補正 -->
+  <dialog id="calDialog" class="modal tall">
+    <h2>GPS 基準点補正</h2>
+    <p class="small">座標が分かっている点（基準点・境界杭など）に立って GPS を取ると、GPS の位置をその座標に合わせます。2点以上で向きも合わせられるので、任意座標の現場でも使えます。</p>
+    <label>補正の方法
+      <select id="calMode">
+        <option value="shift">平行移動のみ</option>
+        <option value="rigid">平行移動＋回転（2点以上・おすすめ）</option>
+        <option value="helmert">平行移動＋回転＋縮尺（3点以上）</option>
+      </select>
+    </label>
+    <div id="calPairs"></div>
+    <p class="small" id="calInfo"></p>
+    <h3>基準点を追加</h3>
+    <div class="in">
+      <input id="calPt" type="text" list="ptNames" placeholder="点名" autocomplete="off" autocapitalize="off">
+      <button class="pick" id="calPick" aria-label="図から選ぶ">📍</button>
+    </div>
+    <p class="small" id="calStatus"></p>
+    <div class="row">
+      <button class="btn primary" id="calAdd">この点に立って GPS 取得（10回平均）</button>
+    </div>
+    <div class="row">
+      <button class="btn danger" id="calClear">補正を解除</button>
+      <button class="btn" data-close>閉じる</button>
+    </div>
+  </dialog>
+
+  <!-- 図面の位置合わせ -->
+  <dialog id="fitDialog" class="modal tall">
+    <h2>図面を現場の座標に合わせる</h2>
+    <p class="small">図面上の点と、それに対応する現場の点（座標が分かっている点・GPS）を指定すると、図面を移動・回転して現場の座標に合わせます。1組で移動のみ、2組で移動＋回転。<b>種別が「基準点」の点と GPS で取った点は動きません。</b></p>
+    <div id="fitPairs"></div>
+    <label class="toggle"><input type="checkbox" id="fitScale"> 縮尺も合わせる（通常はオフ）</label>
+    <p class="small"><a href="#" id="fitToScale">寸法（長さ）で縮尺だけ合わせるとき →</a></p>
+    <div id="fitResult" class="small"></div>
+    <div class="row">
+      <button class="btn" id="fitCheck">確認</button>
+      <button class="btn primary" id="fitApply">合わせる</button>
+      <button class="btn" data-close>閉じる</button>
+    </div>
+  </dialog>
+
+  <!-- 縮尺合わせ -->
+  <dialog id="scaleDialog" class="modal tall">
+    <h2>図面の縮尺を合わせる</h2>
+    <p class="small">長さの分かっている区間（寸法の両端など）と正しい長さから、図面全体を拡大・縮小します。1点目は動きません。mm で描かれた DXF（1000 倍の大きさ）もこれで直せます。<b>種別が「基準点」の点と GPS で取った点は動きません。</b></p>
+    <div class="chips" id="scMode">
+      <button class="chip-btn" data-scmode="pts">2点で指定</button>
+      <button class="chip-btn" data-scmode="dim">寸法線を選ぶ</button>
+    </div>
+    <div id="scPts"></div>
+    <div id="scDim" hidden>
+      <button class="btn wide" id="scPickDim">📍 図面の寸法線・線・数字の文字をタップ</button>
+      <p class="small" id="scDimInfo"></p>
+    </div>
+    <label class="field"><span>正しい長さ</span>
+      <div class="in"><input id="scReal" type="text" inputmode="decimal" autocomplete="off" placeholder="例 5.000 / 5000"><select id="scUnit" class="mini-sel"><option value="m">m</option><option value="mm">mm</option></select></div>
+    </label>
+    <div id="scResult" class="small"></div>
+    <p class="small">座標で合わせるときは <a href="#" id="scToFit">「図面を現場の座標に合わせる」</a>で「縮尺も合わせる」をオンにします（2組以上）。</p>
+    <div class="row">
+      <button class="btn" data-close>閉じる</button>
+      <button class="btn" id="scCheck">確認</button>
+      <button class="btn primary" id="scApply">合わせる</button>
+    </div>
+  </dialog>
+
+  <!-- SIMA 出力 -->
+  <dialog id="simaDialog" class="modal tall">
+    <h2>SIMA で書き出す</h2>
+    <label>ファイル名 <input id="simaName" type="text"></label>
+    <p class="small">書き出す点の種別</p>
+    <div id="simaGroups"></div>
+    <label class="toggle"><input type="checkbox" id="simaArea"> 閉じた図形を区画（画地）として出力</label>
+    <p class="small" id="simaInfo"></p>
+    <div class="row">
+      <button class="btn" data-close>閉じる</button>
+      <button class="btn" id="simaShare" hidden>共有（メール・LINE など）</button>
+      <button class="btn primary" id="simaSave">保存</button>
+    </div>
+  </dialog>
+
+  <!-- 文字の入力 -->
+  <dialog id="linkDialog" class="modal">
+    <h2>パソコンから受け取る</h2>
+    <p id="linkMsg" class="small"></p>
+    <div class="row" style="flex-wrap:wrap">
+      <button class="btn" data-close>やめる</button>
+      <button class="btn" id="linkOpen">開く（置き換え）</button>
+      <button class="btn primary" id="linkMerge">取り込む（差分）</button>
+    </div>
+  </dialog>
+
+  <dialog id="textDialog" class="modal">
+    <h2 id="textTitle">文字</h2>
+    <label>内容 <input id="textVal" type="text" autocomplete="off"></label>
+    <label>大きさ（印刷したときの文字の高さ）
+      <select id="textSize">
+        <option value="2.5">小（2.5 mm）</option>
+        <option value="3.5" selected>中（3.5 mm）</option>
+        <option value="5">大（5 mm）</option>
+        <option value="7">特大（7 mm）</option>
+      </select>
+    </label>
+    <div class="row">
+      <button class="btn" data-close>キャンセル</button>
+      <button class="btn primary" id="textOk">OK</button>
+    </div>
+  </dialog>
+
+  <!-- 施工図 -->
+  <dialog id="sheetDialog" class="sheet full">
+    <div class="sheet-head">
+      <h2>施工図</h2>
+      <button class="btn" data-close>閉じる</button>
+    </div>
+    <div class="sheet-preview"><canvas id="sheetCv"></canvas></div>
+    <p class="small" id="sheetInfo"></p>
+    <div class="form">
+      <h3>範囲</h3>
+      <div class="row wrap">
+        <button class="btn" id="shRangeView">今の画面</button>
+        <button class="btn" id="shRangePick">2点で指定</button>
+        <button class="btn" id="shRangeSel">選択した図形</button>
+        <button class="btn" id="shRangeAll">全体</button>
+      </div>
+      <div class="grid2">
+        <label>用紙 <select id="shPaper"><option>A4</option><option>A3</option><option>A2</option><option>A1</option></select></label>
+        <label>向き <select id="shOrient"><option value="landscape">横</option><option value="portrait">縦</option></select></label>
+        <label>縮尺 <select id="shScale"></select></label>
+        <label>図の回転（度） <input id="shRot" type="text" autocomplete="off"></label>
+      </div>
+      <div class="row"><button class="btn" id="shRotSel">選択した線を縦に合わせる</button><button class="btn" id="shRot0">北を上に</button></div>
+      <h3>表題欄</h3>
+      <label>工事名 <input id="shKoji" type="text"></label>
+      <label>図面名 <input id="shTitle" type="text"></label>
+      <label>作成者 <input id="shAuthor" type="text"></label>
+      <h3>内容</h3>
+      <label class="toggle"><input type="checkbox" id="shTable"> 座標表を入れる</label>
+      <div class="chips" id="shGroups"></div>
+      <label class="toggle"><input type="checkbox" id="shLen"> 線の長さを入れる</label>
+      <label class="toggle"><input type="checkbox" id="shGrid"> 座標グリッドを入れる</label>
+    </div>
+    <div class="row wrap sheet-out">
+      <button class="btn primary" id="shPdf">PDF で保存</button>
+      <button class="btn" id="shShare" hidden>PDF を共有</button>
+      <button class="btn" id="shPng">画像（PNG）</button>
+      <button class="btn" id="shPrint">印刷</button>
+      <button class="btn" id="shDxf">DXF</button>
+    </div>
+  </dialog>
+
+  <!-- 系の選択 -->
+  <dialog id="zoneDialog" class="modal">
+    <h2>平面直角座標系</h2>
+    <p class="small">GPS の緯度経度をこの系の X・Y に変換します。図面の座標が公共座標なら、図面と同じ系を選んでください。</p>
+    <select id="zoneSel"></select>
+    <p class="small" id="zoneGuess"></p>
+    <div class="row">
+      <button class="btn" data-close>キャンセル</button>
+      <button class="btn primary" id="zoneOk">決定</button>
+    </div>
+  </dialog>
+
+  <!-- 点の編集 -->
+  <dialog id="ptDialog" class="modal">
+    <h2>点の編集</h2>
+    <label>点名 <input id="ptName" type="text"></label>
+    <label>X（北）m <input id="ptX" type="text"></label>
+    <label>Y（東）m <input id="ptY" type="text"></label>
+    <label>Z（高さ）m <input id="ptZ" type="text"></label>
+    <label>種別
+      <select id="ptGrpEdit">
+        <option value="位置出し">位置出し</option>
+        <option value="基準点">基準点</option>
+        <option value="逃げ">逃げ</option>
+        <option value="その他">その他</option>
+      </select>
+    </label>
+    <div class="row">
+      <button class="btn" data-close>キャンセル</button>
+      <button class="btn primary" id="ptOk">保存</button>
+    </div>
+  </dialog>
+
+  <!-- 使い方 -->
+  <dialog id="helpDialog" class="modal tall">
+    <h2>使い方</h2>
+    <div class="help">
+      <h3>画面操作</h3>
+      <p>2本指でつまんで拡大・縮小、2本指で移動。「選択」ツールでは1本指でも移動できます。⤢ で全体表示。</p>
+      <h3>座標の考え方</h3>
+      <p>測量と同じく <b>X＝北、Y＝東</b>（単位 m）。方向角は北から時計回りです。</p>
+      <h3>作図・計測</h3>
+      <p>ツールを選んで画面をタップ。近くの端点・中点・線上に自動で吸着（スナップ）します。下の入力欄でも位置を指定できます：</p>
+      <ul>
+        <li><code>100,200</code> … 座標 X=100, Y=200</li>
+        <li><code>@3,4</code> … 前の点から ΔX=3, ΔY=4</li>
+        <li><code>@5&lt;90</code> … 前の点から 距離5m・方向角90°（東）</li>
+        <li><code>@5&lt;45-30-15</code> … 角度は 度-分-秒 でも可</li>
+        <li>円ツールで中心を決めた後、数字だけ入力すると半径</li>
+      </ul>
+      <h3>現場での位置出し → 逃げ → SIMA</h3>
+      <ol>
+        <li>メニュー「図面を読み込む」で DXF を入れる。基準点・境界杭の座標は「座標を読み込む」で SIMA/CSV から（種別「基準点」になります）。</li>
+        <li>図面が任意座標なら、メニュー「図面を現場の座標に合わせる」で、図面上の点と現場の点を1〜2組指定して合わせる。</li>
+        <li>図面の縮尺が違う（mm で描かれた DXF など）ときは、メニュー「図面の縮尺を合わせる」で、寸法の両端の2点か寸法線を選び、正しい長さを入れる。</li>
+        <li>「点」ツールで図面の角・交点をタップして位置出し点を登録（種別・頭文字を指定可）。</li>
+        <li>「逃げ」ツールで逃げ杭を作る：<b>角・交点</b>（辺の延長上）／<b>線の延長</b>（両端の先）／<b>平行</b>（図形をタップ → 逃げる側をタップ）。距離は <code>1</code> や <code>1,2</code>（2本ずつ）。点名は「K1-1」のように元の点名に番号が付きます。</li>
+        <li>メニュー「SIMA で書き出す・送る」で、種別を選んで保存・共有。TS やほかの CAD に取り込めます。</li>
+      </ol>
+      <h3>施工図をかいて出力する</h3>
+      <ul>
+        <li><b>寸法</b>：始点 → 終点 → 寸法線を置く位置 の順にタップ（離れは数値入力も可）。単位は m / mm をメニューで切替。</li>
+        <li><b>文字</b>：置く位置をタップして入力。<b>引出線・円</b>は「線」ボタン、<b>角度</b>は「距離」ボタンの中で切り替えます。</li>
+        <li>出力したい部分を画面に表示して、上の <b>施工図</b> ボタン。範囲（今の画面／2点で指定／選択した図形）、用紙、縮尺（自動可）、図の回転、表題欄、座標表を設定して <b>PDF・画像・印刷・DXF</b> で出力。</li>
+      </ul>
+      <h3>計算（∑ ボタン）</h3>
+      <ul>
+        <li><b>座標計算</b>：逆計算・放射・杭打ち（TS の夾角と距離）・交点・距離交会（引照点から杭の復元）・垂線・幅杭</li>
+        <li><b>面積</b>：座標求積表（座標法・倍面積）</li>
+        <li><b>路線</b>：IP 法の路線計算（単曲線）で中心杭・幅杭の座標。測点⇔座標の変換。単曲線の要素</li>
+        <li><b>その他</b>：勾配・法長</li>
+      </ul>
+      <p>点は点名・<code>X,Y</code>・<code>GPS</code>（現在地）で指定でき、📍 で図面から拾えます。結果は「点登録」「図で確認」「計算書に追加」ができ、計算書はメニューから印刷・PDF・CSV にできます。</p>
+      <p>路線を追加すると、点を選んだときや GPS の現在地に <b>測点（No.3+12.35 右 2.40m など）</b> が出ます。</p>
+      <h3>GPS</h3>
+      <p>GPS ボタンで現在地を表示し、平面直角座標（X・Y）に変換します。「平均して点を追加」で10回分を平均して点を登録します。点を選択すると現在地からの距離・方向が出ます（杭探しに便利）。</p>
+      <p>「基準点で補正」で、座標が分かっている点に立って GPS を取ると、GPS の位置を現場の座標に合わせられます（2点以上で回転も補正。任意座標の現場にも対応）。</p>
+      <p class="small">スマホの GPS の精度は数m程度です。境界確定や杭打ちの精度が必要な作業には、測量機器で確認してください。</p>
+      <h3>図面・データ</h3>
+      <p>メニューから DXF 図面、SIMA・CSV の座標を読み込めます。書き出しも同様です。</p>
+    </div>
+    <div class="row"><button class="btn primary" data-close>閉じる</button></div>
+  </dialog>
+
+  <input type="file" id="fileDxf" accept=".dxf,.DXF" hidden>
+  <input type="file" id="filePts" accept=".sim,.SIM,.csv,.CSV,.txt" hidden>
+  <input type="file" id="fileJson" hidden>
+  <input type="file" id="fileGcad" hidden>
+
+  <div id="printArea"></div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
