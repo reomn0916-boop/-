@@ -1,0 +1,230 @@
+<title>現場CAD 導入手順</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=BIZ+UDGothic:wght@400;700&display=swap">
+<style>
+/* 配置: 1列の手順書。4つの段階（公開・スマホ・パソコン・確認）を色の帯で区切る */
+:root {
+  --bg: #f4f6f9;
+  --paper: #ffffff;
+  --fg: #1a2531;
+  --muted: #586473;
+  --line: #d6dde6;
+  --navy: #1f3a5f;
+  --stake: #c2410c;
+  --soft: #eef3f9;
+  --ok: #19733a;
+  --ok-soft: #e7f4ec;
+  --warn-soft: #fff6d6;
+  --warn-line: #e8c74f;
+  --font: "BIZ UDPGothic", "Hiragino Sans", "Yu Gothic", Meiryo, sans-serif;
+  --mono: "BIZ UDGothic", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12171d; --paper: #1a2129; --fg: #e8edf2; --muted: #9eabb9; --line: #2e3945; --navy: #8fb4e6;
+    --stake: #f08a52; --soft: #1e2833; --ok: #6fcf8e; --ok-soft: #173023; --warn-soft: #34300f; --warn-line: #8a7621; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12171d; --paper: #1a2129; --fg: #e8edf2; --muted: #9eabb9; --line: #2e3945; --navy: #8fb4e6;
+  --stake: #f08a52; --soft: #1e2833; --ok: #6fcf8e; --ok-soft: #173023; --warn-soft: #34300f; --warn-line: #8a7621; color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 16px; line-height: 1.8; }
+.wrap { max-width: 800px; margin: 0 auto; padding-block: 28px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+header.top { display: grid; gap: 6px; padding-bottom: 18px; border-bottom: 3px solid var(--navy); }
+.kicker { font-size: 13px; letter-spacing: .08em; color: var(--stake); font-weight: 700; }
+h1 { font-size: clamp(28px, 6vw, 38px); line-height: 1.3; margin: 0; color: var(--navy); text-wrap: balance; }
+.lead { margin: 0; color: var(--muted); }
+h2 { font-size: 23px; line-height: 1.4; margin: 52px 0 10px; text-wrap: balance; display: flex; align-items: baseline; gap: 10px; }
+h2 .st { flex: none; font-family: var(--mono); font-size: 13px; color: var(--paper); background: var(--navy); border-radius: 6px; padding: 2px 8px; letter-spacing: .04em; }
+h3 { font-size: 18px; margin: 28px 0 6px; }
+p { margin: 8px 0; }
+.who { display: inline-block; font-size: 12.5px; font-weight: 700; color: var(--stake); border: 1px solid var(--stake); border-radius: 999px; padding: 0 10px; margin-left: 2px; }
+.flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 18px 0 6px; padding: 0; list-style: none; counter-reset: f; }
+.flow li { counter-increment: f; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+.flow li::before { content: "段階 " counter(f); display: block; font-size: 11.5px; color: var(--stake); font-weight: 700; letter-spacing: .06em; }
+.flow b { display: block; color: var(--navy); }
+.flow span { font-size: 13.5px; color: var(--muted); line-height: 1.6; display: block; }
+.flow a { color: inherit; text-decoration: none; display: block; }
+@media (max-width: 640px) { .flow { grid-template-columns: 1fr 1fr; } }
+.need { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin: 12px 0; }
+.need dt { font-weight: 700; color: var(--navy); }
+.need dd { margin: 0; min-width: 0; }
+@media (max-width: 520px) { .need { grid-template-columns: 1fr; gap: 2px; } .need dd { margin-bottom: 10px; } }
+ol.steps { list-style: none; counter-reset: s; margin: 12px 0; padding: 0; display: grid; gap: 10px; }
+ol.steps > li { counter-increment: s; position: relative; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px 12px 54px; min-width: 0; }
+ol.steps > li::before { content: counter(s); position: absolute; left: 14px; top: 13px; width: 28px; height: 28px; border-radius: 50%; background: var(--stake); color: #fff; font-family: var(--mono); font-weight: 700; font-size: 15px; display: grid; place-items: center; line-height: 1; }
+ol.steps small { display: block; color: var(--muted); font-size: 13.5px; line-height: 1.6; margin-top: 2px; }
+.btn { display: inline-block; font-size: 14px; line-height: 1.4; padding: 1px 8px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px; background: var(--paper); white-space: nowrap; font-weight: 700; }
+code, kbd { font-family: var(--mono); font-size: .9em; background: var(--soft); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; overflow-wrap: anywhere; }
+.url { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--soft); border: 1px dashed var(--navy); border-radius: 8px; padding: 8px 12px; margin: 8px 0; font-family: var(--mono); font-size: 14.5px; }
+.url span { min-width: 0; overflow-wrap: anywhere; }
+.url button { font: inherit; font-family: var(--font); font-size: 13px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper); color: var(--fg); padding: 2px 10px; cursor: pointer; }
+.url button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--stake); outline-offset: 2px; }
+.note { border-radius: 10px; padding: 12px 16px; margin: 14px 0; border: 1px solid var(--warn-line); background: var(--warn-soft); }
+.tip { border-radius: 10px; padding: 12px 16px; margin: 14px 0; border: 1px solid var(--ok); background: var(--ok-soft); }
+.note b, .tip b { display: block; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0 20px; }
+.cols > div { min-width: 0; }
+.tbl { overflow-x: auto; margin: 12px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+th, td { text-align: left; vertical-align: top; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+th { background: var(--soft); white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td.c { text-align: center; width: 44px; }
+.box { display: inline-block; width: 18px; height: 18px; border: 2px solid var(--muted); border-radius: 4px; vertical-align: -3px; }
+.qa { display: grid; gap: 10px; margin: 12px 0; }
+.qa details { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
+.qa summary { cursor: pointer; font-weight: 700; }
+.memo { background: var(--paper); border: 2px solid var(--navy); border-radius: 12px; padding: 16px 18px; margin: 14px 0; }
+.memo h3 { margin: 0 0 6px; color: var(--navy); }
+.memo .line { border-bottom: 1px solid var(--fg); height: 28px; margin: 6px 0 12px; }
+footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 14px; color: var(--muted); }
+</style>
+
+<div class="wrap">
+<header class="top">
+  <div class="kicker">導入する人・管理する人向け</div>
+  <h1>現場CAD 導入手順</h1>
+  <p class="lead">アプリを公開して、スマホとパソコンに入れ、使える状態か確かめるまでの手順です。上から順に進めてください。全部で 30 分ほどです。</p>
+  <ol class="flow">
+    <li><a href="#publish"><b>公開する</b><span>GitHub で一度だけ。管理する人が行う</span></a></li>
+    <li><a href="#phone"><b>スマホに入れる</b><span>現場で使う人が、それぞれのスマホで</span></a></li>
+    <li><a href="#pc"><b>パソコンに入れる</b><span>事務所のパソコンで</span></a></li>
+    <li><a href="#check"><b>動くか確かめる</b><span>練習データで一通り試す</span></a></li>
+  </ol>
+</header>
+
+<h2>準備するもの</h2>
+<dl class="need">
+  <dt>GitHub のアカウント</dt><dd>アプリの置き場所として使います（管理する人だけ）。アプリのファイルが入ったリポジトリが必要です。</dd>
+  <dt>スマホ</dt><dd>iPhone（iOS 16.4 以降・Safari）または Android（Chrome）。GPS を使うなら位置情報が使えるもの。</dd>
+  <dt>パソコン</dt><dd>Windows 10 / 11 に <b>Google Chrome</b> か <b>Microsoft Edge</b>。ほかのブラウザでも動きますが、上書き保存・連携フォルダ・アプリとしてのインストールは Chrome / Edge だけです。</dd>
+  <dt>あると便利</dt><dd>Google ドライブ（パソコン版）や OneDrive など、スマホとパソコンで共有できるクラウドの保存場所。LINE やメールでも代わりになります。</dd>
+</dl>
+<div class="note"><b>データの置き場所について</b>図面や座標のデータは、使っているスマホ・パソコンの中だけに保存されます。インターネット上のサーバーには送りません。端末どうしは .gcad ファイルを送ってやりとりします。</div>
+
+<h2 id="publish"><span class="st">段階 1</span>アプリを公開する <span class="who">管理する人</span></h2>
+<p>アプリはインターネットのページとして公開します。GPS（位置情報）は https のページでしか使えないため、GitHub Pages を使います。一度設定すれば、あとは何もしなくて構いません。</p>
+<ol class="steps">
+  <li>GitHub でアプリのリポジトリを開き、上の <span class="btn">Settings</span> を押す。</li>
+  <li>左の一覧から <span class="btn">Pages</span> を選ぶ。</li>
+  <li>「Build and deployment」の Source を <span class="btn">Deploy from a branch</span> にする。</li>
+  <li>Branch でアプリが入っているブランチ（今は <code>claude/mobile-cad-app-kns1zg</code>）を選び、フォルダは <span class="btn">/ (root)</span> のまま <span class="btn">Save</span>。<small>あとで main ブランチにまとめたら、ここを main に変えます。</small></li>
+  <li>1〜2 分待って画面を更新すると、上に「Your site is live at …」とアドレスが出ます。これが<b>スマホ版のアドレス</b>です。</li>
+</ol>
+<p>アドレスは次の形です。このリポジトリなら、次のようになるはずです（表示されたものを正としてください）。</p>
+<div class="url"><span id="urlPhone">https://reomn0916-boop.github.io/-/</span><button type="button" data-copy="urlPhone">コピー</button></div>
+<p><b>パソコン版のアドレス</b>は、その最後に <code>pc/</code> を付けたものです。</p>
+<div class="url"><span id="urlPc">https://reomn0916-boop.github.io/-/pc/</span><button type="button" data-copy="urlPc">コピー</button></div>
+<div class="note"><b>公開範囲の注意</b>
+GitHub Pages のページは、アドレスを知っていれば誰でも開けます。開けるのはアプリの画面だけで、各自が入れた図面や座標は見えません。
+無料のプランでは、公開（Public）のリポジトリしか Pages を使えません。リポジトリを非公開にしたい場合は、GitHub の有料プラン（Pro / Team など）が必要です。</div>
+<h3>アプリを新しくするとき</h3>
+<p>同じブランチに新しいファイルを入れると、1 分ほどで公開中のアプリも新しくなります。スマホ・パソコンでは、次にアプリを開いたときに新しい版が読み込まれます。古いままのときは、アプリを一度完全に閉じて開き直します。</p>
+
+<h2 id="phone"><span class="st">段階 2</span>スマホに入れる <span class="who">現場で使う人</span></h2>
+<div class="cols">
+<div>
+<h3>iPhone</h3>
+<ol class="steps">
+  <li><b>Safari</b> でスマホ版のアドレスを開く。</li>
+  <li>下の <span class="btn">共有</span>（四角から矢印が出たマーク）を押す。</li>
+  <li><span class="btn">ホーム画面に追加</span> → <span class="btn">追加</span>。ホーム画面に「現場CAD」のアイコンができます。</li>
+  <li>以後は<b>必ずホーム画面のアイコンから</b>開く。</li>
+</ol>
+</div>
+<div>
+<h3>Android</h3>
+<ol class="steps">
+  <li><b>Chrome</b> でスマホ版のアドレスを開く。</li>
+  <li>右上の <span class="btn">⋮</span> → <span class="btn">ホーム画面に追加</span>（または「アプリをインストール」）。</li>
+  <li><span class="btn">インストール</span> を押す。アプリの一覧とホーム画面にアイコンができます。</li>
+  <li>以後はアイコンから開く。</li>
+</ol>
+</div>
+</div>
+<div class="note"><b>iPhone はホーム画面のアイコンから使う</b>iPhone では、Safari で開いたページと、ホーム画面のアイコンで開いたアプリは、別々にデータを持ちます。Safari で作った図面は、アイコンのアプリからは見えません。最初からアイコンのほうで使ってください。</div>
+<h3>はじめに一度だけ設定すること</h3>
+<ol class="steps">
+  <li><b>位置情報を許可する</b>: 下の <span class="btn">GPS</span> を押すと「位置情報の利用を許可しますか」と出るので <span class="btn">許可</span>。
+    <small>出ないとき（iPhone）: 設定 → プライバシーとセキュリティ → 位置情報サービス → Safari の Web サイト → 「使用中のみ」、「正確な位置情報」をオン。<br>（Android）: Chrome の ⋮ → 設定 → サイトの設定 → 位置情報 で、このアドレスを許可。</small></li>
+  <li><b>座標系を決める</b>: 上の帯の <span class="btn">系: 未設定</span> を押して、現場の平面直角座標系（例: 東京は第 9 系）を選ぶ。GPS を ON にすると自動で決まります。</li>
+  <li><b>表示の好みを決める</b>: <span class="btn">☰</span> メニューの下の「設定」で、寸法の単位（m / mm）、点名の頭文字（例: P、K）、ダーク表示などを選ぶ。</li>
+</ol>
+
+<h2 id="pc"><span class="st">段階 3</span>パソコンに入れる <span class="who">事務所</span></h2>
+<ol class="steps">
+  <li>Chrome か Edge で<b>パソコン版のアドレス</b>（最後が <code>pc/</code>）を開く。</li>
+  <li>アドレス欄の右にある <span class="btn">インストール</span> のマーク（画面と下向き矢印）を押し、<span class="btn">インストール</span>。
+    <small>マークがないとき: Chrome は ⋮ → <span class="btn">キャスト、保存、共有</span> → <span class="btn">ページをアプリとしてインストール</span>。Edge は … → <span class="btn">アプリ</span> → <span class="btn">このサイトをアプリとしてインストール</span>。</small></li>
+  <li>アプリが別の窓で開きます。スタートメニューやタスクバーから、ふつうのソフトと同じように開けます。</li>
+</ol>
+<h3>はじめに一度だけ設定すること</h3>
+<ol class="steps">
+  <li><b>名前と座標系</b>: <span class="btn">ファイル</span> タブ → <span class="btn">名前・座標系</span> で、座標系と点名の頭文字を決める。</li>
+  <li><b>縮尺・用紙・入力単位</b>: リボンの下の帯で、よく使う縮尺（例 1:100）、用紙（例 A3 横）、入力単位（m / mm）、寸法の表示（mm / m）を選ぶ。次に開いたときも同じ設定になります。</li>
+  <li><b>.gcad をダブルクリックで開けるようにする</b>: インストールした後、エクスプローラーで .gcad ファイルをダブルクリックし、「このファイルを開く方法」で <b>現場CAD PC</b> を選んで「常にこのアプリを使う」。
+    <small>Chrome / Edge のアプリとしてインストールしたときだけ出ます。出ないときは、アプリの <span class="btn">ファイル</span> → <span class="btn">開く</span> か、画面へのドラッグで開けます。</small></li>
+  <li><b>連携フォルダ（使う場合）</b>: Google ドライブ（パソコン版）や OneDrive をパソコンに入れ、同期されるフォルダを作っておく。アプリの <span class="btn">現場連携</span> タブ → <span class="btn">フォルダ設定</span> → <span class="btn">フォルダを選ぶ</span> で、そのフォルダを選び、「ファイルの編集を許可」で <span class="btn">許可</span>。
+    <small>アプリを開き直すと、また許可を聞かれることがあります。そのときも許可してください。</small></li>
+</ol>
+<div class="tip"><b>現場の人へアドレスを渡す</b>パソコン版の <span class="btn">現場連携</span> タブ → <span class="btn">スマホ版の開き方</span> で、スマホ版のアドレスと QR コードが出ます。スマホのカメラで読み取れば、すぐ開けます。</div>
+
+<h2 id="check"><span class="st">段階 4</span>動くか確かめる</h2>
+<p>練習用のデータ（倉庫A）で、スマホとパソコンのやりとりまで一通り試します。全部にチェックが付けば導入完了です。</p>
+<div class="tbl"><table>
+  <tr><th class="c">済</th><th>確かめること</th><th>うまくいった印</th></tr>
+  <tr><td class="c"><span class="box"></span></td><td>パソコン版のスタート画面で <span class="btn">練習用の図面を開く</span></td><td>倉庫A の図面と K1〜K3 が出る</td></tr>
+  <tr><td class="c"><span class="box"></span></td><td>パソコン版の <span class="btn">図形編集</span> → <span class="btn">縮尺合わせ</span> で寸法線「24,000」を選んで合わせる</td><td>建物の長い辺が 24.000 m になる</td></tr>
+  <tr><td class="c"><span class="box"></span></td><td><kbd>Ctrl</kbd>+<kbd>P</kbd> → <span class="btn">PDF を保存</span></td><td>図面枠と表題欄の付いた PDF が開ける</td></tr>
+  <tr><td class="c"><span class="box"></span></td><td><span class="btn">現場連携</span> → <span class="btn">現場へ送る</span> → 保存して、LINE やメールでスマホへ</td><td>スマホに .gcad が届く</td></tr>
+  <tr><td class="c"><span class="box"></span></td><td>スマホ版の <span class="btn">☰</span> → <span class="btn">パソコンから受け取る</span> でそのファイルを選ぶ</td><td>同じ図面がスマホに出る</td></tr>
+  <tr><td class="c"><span class="box"></span></td><td>外で <span class="btn">GPS</span> を押す</td><td>左上に現在地の X・Y が出る（誤差は数 m）</td></tr>
+  <tr><td class="c"><span class="box"></span></td><td>スマホで建物の角に点を 1 つ置き、<span class="btn">パソコンへ送る</span> → パソコンで <span class="btn">現場データ取込</span></td><td>「追加 1」と出て、パソコンの図面にその点が出る</td></tr>
+  <tr><td class="c"><span class="box"></span></td><td>スマホの <span class="btn">SIMA で書き出す・送る</span> → いつも使っている TS に取り込む</td><td>点名が化けずに入る</td></tr>
+  <tr><td class="c"><span class="box"></span></td><td>パソコン版の <span class="btn">ファイル</span> → <span class="btn">DXF</span> で書き出し、いつも使っている CAD で開く</td><td>画層・色・文字が読める</td></tr>
+</table></div>
+<p>最後の 2 つ（TS と CAD）は機種やソフトによって違うので、使っているもので必ず一度試してください。うまくいかないときは、その機種名と症状を記録しておくと直しやすくなります。</p>
+
+<h2>データの保存とバックアップ</h2>
+<ul>
+  <li>アプリは自動で保存しますが、保存先はその端末の中だけです。大事な図面は、ときどき <b>.gcad で保存</b>して、クラウドやパソコンに残してください（スマホ: ☰ → プロジェクトを保存、パソコン: <kbd>Ctrl</kbd>+<kbd>S</kbd>）。</li>
+  <li>スマホを買い替えるときは、古いスマホで .gcad を保存して新しいスマホで開きます。</li>
+  <li>ブラウザの「履歴とWebサイトデータを消去」などをすると、アプリの中のデータも消えます。消す前に .gcad で保存してください。</li>
+</ul>
+
+<h2>困ったとき</h2>
+<div class="qa">
+  <details><summary>アドレスを開くと「404」になる</summary><p>公開の設定から 1〜2 分たっていないか、Pages で選んだブランチが違います。Settings → Pages の表示を確かめてください。パソコン版はアドレスの最後に <code>pc/</code> が必要です。</p></details>
+  <details><summary>GPS が動かない・位置が出ない</summary><p>アドレスが https で始まっているか、位置情報を許可したか（段階 2）を確かめてください。屋内やビルの谷間では出にくいので、空の見える場所で試します。</p></details>
+  <details><summary>新しくしたはずなのに古い画面のまま</summary><p>アプリを一度完全に閉じて（iPhone は下から上にスワイプして消す）、開き直してください。それでも古いときは、少し時間をおいてもう一度。</p></details>
+  <details><summary>iPhone で、Safari で作った図面がアイコンのアプリにない</summary><p>Safari とホーム画面のアプリは別々にデータを持ちます。Safari 側で ☰ → プロジェクトを保存（.gcad）して、アプリ側で開いてください。</p></details>
+  <details><summary>スマホで送られてきた .gcad が選べない</summary><p>iPhone は LINE やメールの添付を「ファイルに保存」してから、アプリの ☰ → パソコンから受け取る で「ファイル」の中から選びます。Android は「ダウンロード」フォルダに入っています。</p></details>
+  <details><summary>パソコンでインストールのマークが出ない</summary><p>Chrome か Edge で開いているか、アドレスの最後が <code>pc/</code> になっているかを確かめてください。会社のパソコンで管理者が制限している場合は、インストールせずにブラウザのまま使えます（上書き保存は「名前を付けて保存」になります）。</p></details>
+  <details><summary>連携フォルダで毎回「許可」を聞かれる</summary><p>ブラウザの安全のための動きです。アプリを開き直したときに一度許可すれば、その間は聞かれません。</p></details>
+</div>
+
+<h2>現場の人に渡すメモ</h2>
+<p>下を印刷して、スマホ版のアドレスを書き込んで渡してください。</p>
+<div class="memo">
+  <h3>現場CAD（スマホ版）の入れ方</h3>
+  <p>アドレス</p>
+  <div class="line"></div>
+  <p>① iPhone は Safari、Android は Chrome で上のアドレスを開く　② 共有（⋮）→ ホーム画面に追加　③ ホーム画面のアイコンから開く　④ GPS ボタンを押して位置情報を許可　⑤ 分からないときは ☰ → 使い方</p>
+</div>
+
+<footer>使い方は「現場CAD はじめてガイド」、操作の早見表は「現場CAD 操作リファレンス」、練習は「現場CAD 練習問題集」を見てください。</footer>
+</div>
+
+<script>
+document.addEventListener('click', async (ev) => {
+  const b = ev.target.closest('[data-copy]'); if (!b) return;
+  const el = document.getElementById(b.dataset.copy);
+  try { await navigator.clipboard.writeText(el.textContent.trim()); b.textContent = 'コピーしました'; }
+  catch { const r = document.createRange(); r.selectNodeContents(el); const s = getSelection(); s.removeAllRanges(); s.addRange(r); b.textContent = '選択しました'; }
+  setTimeout(() => { b.textContent = 'コピー'; }, 1800);
+});
+</script>

@@ -2247,6 +2247,13 @@ async function boot() {
   if (!restored) { sheet().center = { x: 0, y: 0 }; zoomPaper(); }
   setDirty(dirty);
   link.init();
+  // インストールしたアプリで .gcad をダブルクリックして開いたとき
+  if ('launchQueue' in window) {
+    window.launchQueue.setConsumer(async (params) => {
+      const h = params.files?.[0]; if (!h) return;
+      try { const f = await h.getFile(); if (await confirmDiscard()) await loadFile(f, /\.(gcad|json)$/i.test(f.name) ? h : null); } catch (err) { toast('開けませんでした: ' + err.message); }
+    });
+  }
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('../sw.js', { scope: '../' }).catch(() => {});
 }
 boot();
