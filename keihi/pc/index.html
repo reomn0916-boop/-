@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0d7a55">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="レシートの画像や PDF を入れるだけで経費精算。読み取り・確認・精算書 PDF まで、パソコンでまとめて片づけます。">
+  <title>ラク経費</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="../icons/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="pc.css">
+  <script>
+    // 表示の明るさ（自動・明るい・暗い）を最初に決めて、ちらつかないようにする
+    try { const t = localStorage.getItem('rakukeihi.pcTheme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (_) { /* 使えない環境 */ }
+  </script>
+</head>
+<body>
+  <div id="app" class="app">
+    <aside class="side" aria-label="メニュー">
+      <a class="brand" href="#home" aria-label="ラク経費 ホーム">
+        <img src="../icons/icon.svg" alt="" width="30" height="30">
+        <span><b>ラク経費</b><small>経費精算</small></span>
+      </a>
+      <div class="side-actions">
+        <div class="split">
+          <button class="btn primary" data-act="import" title="レシートの画像・PDF を選ぶ（Ctrl+O）"><i data-ic="upload"></i><span>取り込む</span></button>
+          <button class="btn primary caret" data-act="importMenu" aria-label="取り込みのほかの方法"><i data-ic="chevD"></i></button>
+        </div>
+        <div class="new-row">
+          <button class="btn sm" data-act="newManual" title="手で入力（N）"><i data-ic="pen"></i><span>手入力</span></button>
+          <button class="btn sm" data-act="newTransit" title="電車・バス"><i data-ic="train"></i><span>電車</span></button>
+          <button class="btn sm" data-act="newCar" title="車（距離）"><i data-ic="car"></i><span>車</span></button>
+        </div>
+      </div>
+      <nav class="nav">
+        <a href="#home" data-view="home"><i data-ic="home"></i><span>ホーム</span><kbd>1</kbd></a>
+        <a href="#review" data-view="review"><i data-ic="inbox"></i><span>確認待ち</span><em id="navReview"></em><kbd>2</kbd></a>
+        <a href="#list" data-view="list"><i data-ic="list"></i><span>経費一覧</span><kbd>3</kbd></a>
+        <a href="#report" data-view="report"><i data-ic="doc"></i><span>精算書</span><em id="navReport" class="sub"></em><kbd>4</kbd></a>
+        <a href="#templates" data-view="templates"><i data-ic="star"></i><span>よく使う</span><kbd>5</kbd></a>
+        <a href="#settings" data-view="settings"><i data-ic="sliders"></i><span>設定</span><kbd>6</kbd></a>
+      </nav>
+      <div class="side-foot" id="sideFoot"></div>
+    </aside>
+
+    <main class="main">
+      <header class="top">
+        <div class="top-title"><h1 id="pageTitle">ホーム</h1><p id="pageSub"></p></div>
+        <div class="top-tools">
+          <span id="reading" class="reading" aria-live="polite"></span>
+          <button class="search-btn" data-act="palette"><i data-ic="search"></i><span>検索・操作</span><span class="kbd" id="paletteKey"></span></button>
+          <button class="icon-btn" data-act="theme" id="themeBtn" title="表示の明るさ"><i data-ic="monitor"></i></button>
+          <button class="icon-btn" data-act="shortcuts" title="キーボードの操作（?）"><i data-ic="keyboard"></i></button>
+        </div>
+      </header>
+      <section id="view" class="view" tabindex="-1"></section>
+    </main>
+
+    <aside id="drawer" class="drawer" aria-label="経費の詳細" hidden></aside>
+  </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <div id="drop" class="drop" hidden>
+    <div class="drop-card">
+      <i data-ic="upload"></i>
+      <b>ここに落として取り込む</b>
+      <span>レシート・領収書の画像、PDF、スマホ版のバックアップ（.json）</span>
+    </div>
+  </div>
+  <div id="narrow" class="narrow">
+    <div><b>画面の幅が狭すぎます</b><p>パソコン版は横幅 900px 以上で使えます。スマホでは <a href="../">スマホ版</a> を使ってください。</p></div>
+  </div>
+
+  <input type="file" id="fileIn" accept="image/*,application/pdf,.pdf,.json" multiple hidden>
+  <input type="file" id="folderIn" webkitdirectory multiple hidden>
+  <input type="file" id="backupIn" accept=".json,application/json" hidden>
+  <datalist id="dlPayee"></datalist>
+  <datalist id="dlSite"></datalist>
+  <datalist id="dlPlace"></datalist>
+
+  <script type="module" src="pc.js"></script>
+</body>
+</html>

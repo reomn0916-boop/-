@@ -1,9 +1,11 @@
 // ラク経費のオフライン対応と、Android の「共有」から画像を受け取る処理
 // ファイルを更新したら VERSION を上げる
-const VERSION = 'rakukeihi-v2';
+const VERSION = 'rakukeihi-v3';
 const FILES = [
   './', './index.html', './app.css', './manifest.webmanifest',
   './js/app.js', './js/db.js', './js/ocr.js', './js/parse.js', './js/report.js', './js/crop.js',
+  './js/store.js', './js/pdfin.js',
+  './pc/', './pc/index.html', './pc/pc.css', './pc/pc.js', './pc/ui.js', './pc/editor.js', './pc/charts.js', './pc/manifest.webmanifest',
   './vendor/anthropic-sdk.mjs',
   './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png',
 ];
@@ -58,6 +60,6 @@ self.addEventListener('fetch', (e) => {
         if (res.ok) { const copy = res.clone(); caches.open(VERSION).then((c) => c.put(e.request, copy)); }
         return res;
       })
-      .catch(() => caches.match(e.request, { ignoreSearch: true }).then((r) => r || (e.request.mode === 'navigate' ? caches.match('./index.html') : Response.error()))),
+      .catch(() => caches.match(e.request, { ignoreSearch: true }).then((r) => r || (e.request.mode === 'navigate' ? caches.match(url.pathname.includes('/pc/') ? './pc/index.html' : './index.html') : Response.error()))),
   );
 });

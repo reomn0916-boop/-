@@ -67,6 +67,23 @@ export async function prepareImage(file) {
   return { blob, thumb, width: big.width, height: big.height, cropped: !!r };
 }
 
+// 画像を 90° 単位で回す（横向きに撮った写真を直す）
+export async function rotateBlob(blob, deg = 90) {
+  const src = await decode(blob);
+  const d = ((deg % 360) + 360) % 360;
+  const c = document.createElement('canvas');
+  const swap = d === 90 || d === 270;
+  c.width = swap ? src.height : src.width; c.height = swap ? src.width : src.height;
+  const g = c.getContext('2d');
+  g.translate(c.width / 2, c.height / 2);
+  g.rotate((d * Math.PI) / 180);
+  g.drawImage(src, -src.width / 2, -src.height / 2);
+  if (src.close) src.close();
+  const out = await canvasToBlob(c, 'image/jpeg', 0.85);
+  const thumb = await canvasToBlob(canvasOf(c, 320), 'image/jpeg', 0.7);
+  return { blob: out, thumb, width: c.width, height: c.height };
+}
+
 // OCR 用: 白黒にして明るさを伸ばし、文字が小さすぎないよう大きさをそろえる
 async function ocrCanvas(blob) {
   const src = await decode(blob);

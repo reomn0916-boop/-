@@ -1,8 +1,15 @@
-// ラク経費: 画面と操作
-import { db, newId, persist, usage } from './db.js';
-import { prepareImage, readReceipt, readWithClaude, AI_MODELS, AiError } from './ocr.js';
-import { DEFAULT_CATEGORIES, payeeKey, checkInvoiceNo, toISODate, guessCategory } from './parse.js';
-import { renderReport, pagesToPdf, toCSV, summarize, yen, isCompanyPaid, sortForReport } from './report.js';
+// ラク経費（スマホ版）: 画面と操作。データの扱いは store.js（パソコン版と共通）
+import { db, usage } from './db.js';
+import { readWithClaude, AI_MODELS, AiError } from './ocr.js';
+import { DEFAULT_CATEGORIES, checkInvoiceNo, toISODate, guessCategory } from './parse.js';
+import { renderReport, pagesToPdf, toCSV, summarize, yen, isCompanyPaid } from './report.js';
+import {
+  S, on, METHODS, saveSettings, saveTemplates, byId, cats, loadAll, saveExpense, newExpense,
+  recentSites, recentPayees, recentPlaces, thumbURL, importFiles as storeImport, enqueue, isReading, readingCount,
+  fillFromOcr, reread, learn, findDup, computeAmount, validate, commit, removeExpenses, restoreSnapshot,
+  templateFrom, addTemplate, removeTemplate, expenseFromTemplate, createReport, undoReport as storeUndoReport,
+  makeBackup, readBackup, mergeBackup, wipeAll, resumePending, DEF_SETTINGS,
+} from './store.js';
 
 // ---- 小さな道具 --------------------------------------------------------------
 
@@ -56,38 +63,13 @@ function paintIcons(root = document) { $$('i[data-ic]', root).forEach((el) => { 
 
 // ---- 保存しておく設定 ------------------------------------------------------------
 
-const LS = 'rakukeihi.';
-function lsGet(k, def) { try { const v = localStorage.getItem(LS + k); return v ? JSON.parse(v) : def; } catch (_) { return def; } }
-function lsSet(k, v) { try { localStorage.setItem(LS + k, JSON.stringify(v)); } catch (_) { toast('設定を保存できませんでした（容量不足？）'); } }
-
-const DEF_SETTINGS = {
-  company: '', dept: '', name: '',
-  ocrMode: 'device', apiKey: '', aiModel: 'claude-opus-5-5',
-  defaultMethod: '現金', cardMethod: '個人カード',
-  carRate: 15, carCategory: '旅費交通費',
-  categories: DEFAULT_CATEGORIES.slice(),
-  advance: 0,
-};
-const METHODS = ['現金', '個人カード', '電子マネー', '会社カード', '請求書払い'];
-
-const S = {
+// 画面の状態（データそのものは store.js の S）
+Object.assign(S, {
   tab: 'home',
-  expenses: [],
-  reports: [],
-  settings: { ...DEF_SETTINGS, ...lsGet('settings', {}) },
-  learned: lsGet('learned', { payeeCat: {}, tnoPayee: {} }),
-  templates: lsGet('templates', []),
-  thumbs: new Map(),
-  ocr: new Map(),
   list: { ym: ymOf(todayISO()), all: false, q: '', status: 'all' },
   rep: { mode: 'unsettled', from: '', to: '', includeDone: false, advance: '' },
   lastPdf: null,
-};
-const saveSettings = () => lsSet('settings', S.settings);
-const saveLearned = () => lsSet('learned', S.learned);
-const saveTemplates = () => lsSet('templates', S.templates);
-const byId = (id) => S.expenses.find((e) => e.id === id);
-const cats = () => (S.settings.categories && S.settings.categories.length ? S.settings.categories : DEFAULT_CATEGORIES);
+});
 
 // ---- トースト・シート -----------------------------------------------------------
 
@@ -140,55 +122,8 @@ function confirmBox(msg, okLabel = 'OK', { danger = false } = {}) {
   });
 }
 
-// ---- データの読み込み ----------------------------------------------------------
+// ---- 入力候補・サムネイル ----------------------------------------------------------
 
-async function loadAll() {
-  S.expenses = (await db.all('expenses')) || [];
-  S.reports = (await db.all('reports')) || [];
-}
-
-async function saveExpense(e) {
-  e.updated = Date.now();
-  await db.put('expenses', e);
-  const i = S.expenses.findIndex((x) => x.id === e.id);
-  if (i >= 0) S.expenses[i] = e; else S.expenses.push(e);
-  persist();
-}
-
-function newExpense(over = {}) {
-  return {
-    id: newId('e'),
-    kind: 'receipt',
-    status: 'draft',
-    date: todayISO(),
-    amount: null,
-    payee: '', category: '', site: recentSites()[0] || '',
-    method: S.settings.defaultMethod || '現金',
-    memo: '', invoiceNo: '', tax10: null, tax8: null,
-    people: null, guests: '',
-    route: null, fare: null, km: null, rate: null,
-    imageId: null, ocr: null,
-    auto: ['date', 'method'],
-    created: Date.now(), updated: Date.now(),
-    ...over,
-  };
-}
-
-function recentSites() {
-  const seen = new Map();
-  [...S.expenses].sort((a, b) => (b.updated || 0) - (a.updated || 0)).forEach((e) => { if (e.site && !seen.has(e.site)) seen.set(e.site, 1); });
-  return [...seen.keys()].slice(0, 30);
-}
-function recentPayees() {
-  const seen = new Set();
-  [...S.expenses].sort((a, b) => (b.updated || 0) - (a.updated || 0)).forEach((e) => { if (e.payee) seen.add(e.payee); });
-  return [...seen].slice(0, 60);
-}
-function recentPlaces() {
-  const seen = new Set();
-  [...S.expenses].sort((a, b) => (b.updated || 0) - (a.updated || 0)).forEach((e) => { if (e.route) { if (e.route.from) seen.add(e.route.from); if (e.route.to) seen.add(e.route.to); } });
-  return [...seen].slice(0, 40);
-}
 function fillDatalists() {
   $('#dlPayee').innerHTML = recentPayees().map((p) => `<option value="${esc(p)}">`).join('');
   $('#dlSite').innerHTML = recentSites().map((p) => `<option value="${esc(p)}">`).join('');
@@ -196,14 +131,6 @@ function fillDatalists() {
 }
 
 // サムネイル（画像はあとから非同期に入れる）
-async function thumbURL(imageId) {
-  if (S.thumbs.has(imageId)) return S.thumbs.get(imageId);
-  const rec = await db.get('images', imageId);
-  if (!rec) return '';
-  const url = URL.createObjectURL(rec.thumb || rec.blob);
-  S.thumbs.set(imageId, url);
-  return url;
-}
 function hydrateThumbs(root = document) {
   $$('img[data-thumb]', root).forEach(async (img) => {
     const url = await thumbURL(img.dataset.thumb);
@@ -212,94 +139,16 @@ function hydrateThumbs(root = document) {
   });
 }
 
-// ---- 画像の取り込み・読み取りの順番待ち ---------------------------------------------------
+// ---- 画像・PDF の取り込み（読み取りの順番待ちは store.js） -------------------------------------
 
 async function importFiles(files, { single = false } = {}) {
-  const list = [...files].filter((f) => /^image\//.test(f.type) || /\.(jpe?g|png|webp|heic|heif|gif|bmp)$/i.test(f.name || ''));
-  if (!list.length) { toast('画像のファイルを選んでください'); return; }
-  const made = [];
-  for (const f of list) {
-    try {
-      const img = await prepareImage(f);
-      const imageId = newId('i');
-      await db.put('images', { id: imageId, blob: img.blob, thumb: img.thumb, w: img.width, h: img.height });
-      const e = newExpense({ imageId, kind: 'receipt' });
-      await saveExpense(e);
-      made.push(e);
-      enqueue(e.id);
-    } catch (err) {
-      toast(`画像を読み込めませんでした: ${err.message || err}`);
-    }
-  }
-  if (!made.length) return;
-  if (single && made.length === 1) openEditor(made[0], { isNew: true, fromCamera: true });
+  const r = await storeImport(files);
+  r.failed.forEach((f) => toast(`読み込めませんでした: ${f.name} ${f.error}`));
+  if (!r.made.length) { if (!r.failed.length) toast('画像か PDF のファイルを選んでください'); return; }
+  if (single && r.made.length === 1) openEditor(r.made[0], { isNew: true, fromCamera: true });
   else {
-    toast(`${made.length}枚を読み取っています。終わったら「確認待ち」で確かめてください`);
+    toast(`${r.made.length}件を読み取っています。終わったら「確認待ち」で確かめてください`);
     go('home');
-  }
-  render();
-}
-
-const queue = [];
-let running = false;
-const isReading = (id) => { const o = S.ocr.get(id); return !!o && (o.state === 'run' || o.state === 'wait'); };
-function enqueue(id) {
-  if (!queue.includes(id)) queue.push(id);
-  S.ocr.set(id, { p: 0, msg: '順番待ち', state: 'wait' });
-  updateOcrViews(id);
-  pump();
-}
-async function pump() {
-  if (running) return;
-  running = true;
-  while (queue.length) {
-    const id = queue.shift();
-    const e = byId(id);
-    if (!e || !e.imageId) { S.ocr.delete(id); continue; }
-    S.ocr.set(id, { p: 0.02, msg: '準備しています', state: 'run' });
-    updateOcrViews(id);
-    try {
-      const rec = await db.get('images', e.imageId);
-      if (!rec) throw new Error('画像がありません');
-      const r = await readReceipt(rec.blob, {
-        settings: S.settings, learned: S.learned, categories: cats(),
-        onProgress: (p, msg) => { S.ocr.set(id, { p, msg, state: 'run' }); updateOcrViews(id); },
-      });
-      S.ocr.set(id, { p: 1, msg: r.warning || '', state: 'done', engine: r.engine });
-      await applyOcr(id, r);
-    } catch (err) {
-      S.ocr.set(id, { p: 1, msg: `読み取れませんでした（${err.message || err}）。手で入れてください`, state: 'error' });
-      render();
-    }
-    updateOcrViews(id);
-    setTimeout(() => { const o = S.ocr.get(id); if (o && o.state === 'done') { S.ocr.delete(id); updateOcrViews(id); } }, 4000);
-  }
-  running = false;
-}
-
-const OCR_FIELDS = ['amount', 'date', 'payee', 'category', 'memo', 'invoiceNo', 'tax10', 'tax8', 'method'];
-async function applyOcr(id, r) {
-  const f = { ...r.fields };
-  if (f.payment) f.method = f.payment === 'カード' ? S.settings.cardMethod : f.payment;
-  const fill = (target, touched) => {
-    const filled = [];
-    for (const k of OCR_FIELDS) {
-      const v = f[k];
-      if (v == null || v === '') continue;
-      if (touched && touched.has(k)) continue;
-      const cur = target[k];
-      const auto = (target.auto || []).includes(k);
-      if (cur == null || cur === '' || auto) { target[k] = v; filled.push(k); }
-    }
-    target.auto = (target.auto || []).filter((k) => !filled.includes(k));
-    target.ocr = { engine: r.engine, sure: f.sure || {}, notReceipt: !!f.notReceipt, at: Date.now(), filled };
-    return filled;
-  };
-  const e = byId(id);
-  if (e) { fill(e); await saveExpense(e); }
-  if (ED && ED.cur.id === id) {
-    const filled = fill(ED.cur, ED.touched);
-    syncEditor(filled);
   }
   render();
 }
@@ -313,23 +162,18 @@ function updateOcrViews(id) {
     const label = o.state === 'done' ? (o.msg || '読み取りました') : o.msg || '読み取り中';
     el.innerHTML = `${o.state === 'run' || o.state === 'wait' ? '<span class="spin"></span>' : o.state === 'error' ? ic('warn') : ic('check')}<span>${esc(label)}</span>${o.state === 'run' ? `<b>${Math.round(o.p * 100)}%</b>` : ''}`;
   });
-  const n = [...S.ocr.values()].filter((o) => o.state === 'run' || o.state === 'wait').length;
+  const n = readingCount();
   $('#topInfo').innerHTML = n ? `<span class="pill"><span class="spin"></span>読み取り中 ${n}</span>` : '';
 }
 
-// ---- 学習・重複 --------------------------------------------------------------
-
-function learn(e) {
-  const k = payeeKey(e.payee);
-  if (k && e.category) S.learned.payeeCat[k] = e.category;
-  if (e.invoiceNo && e.payee) S.learned.tnoPayee[e.invoiceNo] = e.payee;
-  saveLearned();
-}
-
-function findDup(e) {
-  if (!e.amount || !e.date) return null;
-  return S.expenses.find((x) => x.id !== e.id && x.amount === e.amount && x.date === e.date && (!e.payee || !x.payee || payeeKey(x.payee) === payeeKey(e.payee) || x.imageId)) || null;
-}
+// store からの知らせ
+on('ocr', (id) => updateOcrViews(id));
+on('ocr-result', (id, f, engine) => {
+  if (ED && ED.cur.id === id) syncEditor(fillFromOcr(ED.cur, f, engine, ED.touched));
+});
+let renderQueued = false;
+on('change', () => { if (renderQueued) return; renderQueued = true; requestAnimationFrame(() => { renderQueued = false; render(); }); });
+on('error', (msg) => toast(msg));
 
 // ---- 経費の編集 --------------------------------------------------------------
 
@@ -351,15 +195,6 @@ function openEditor(e, { isNew = false, fromCamera = false } = {}) {
       const img = $('#edImg'); if (img) img.src = ED.imageURL;
     });
   }
-}
-
-function computeAmount(c) {
-  if (c.kind === 'transit') return c.fare != null ? c.fare * (c.route && c.route.round ? 2 : 1) : c.amount;
-  if (c.kind === 'car') {
-    const rate = c.rate != null ? c.rate : S.settings.carRate;
-    return c.km != null ? Math.round(c.km * (c.route && c.route.round ? 2 : 1) * rate) : c.amount;
-  }
-  return c.amount;
 }
 
 function renderEditor() {
@@ -525,59 +360,28 @@ function edInput(el) {
 
 function edSave({ next = false } = {}) {
   const c = ED.cur;
-  if (c.kind !== 'receipt') c.amount = computeAmount(c);
-  if (c.kind === 'car' && c.rate == null) c.rate = S.settings.carRate;
-  if (!c.amount || c.amount <= 0) {
-    const o = S.ocr.get(c.id);
-    toast(o && (o.state === 'run' || o.state === 'wait') ? '読み取り中です。少し待つか、金額を入れてください' : '金額を入れてください');
-    const el = $('[data-f="amount"]') || $('[data-f="fare"]') || $('[data-f="km"]'); if (el) el.focus();
+  const bad = validate(c);
+  if (bad) {
+    toast(bad.msg);
+    const el = $(`[data-f="${bad.field}"]`); if (el) el.focus();
     return;
   }
-  if (!c.date) { toast('日付を入れてください'); return; }
-  if (c.kind === 'car' && !c.payee) c.payee = '自家用車';
-  if (c.kind === 'transit' && !c.payee) c.payee = '電車・バス';
-  if (!c.category) c.category = c.kind === 'car' ? S.settings.carCategory : c.kind === 'transit' ? '旅費交通費' : '';
-  if (!c.category) { toast('勘定科目を選んでください'); return; }
-  if (c.status === 'draft') c.status = 'ok';
-  c.auto = [];
   const wasNew = ED.isNew;
   // カメラはタップの流れの中で開かないと iPhone では開かない
   if (next) $('#camIn').click();
   closeSheet();
-  saveExpense(c).then(() => {
-    learn(c);
-    render();
+  commit(c).then(() => {
     toast(wasNew ? `保存しました ${yen(c.amount)}` : '保存しました');
   }).catch((err) => toast(`保存できませんでした: ${err.message || err}`));
 }
 
 // ---- よく使う（ワンタップで追加） -------------------------------------------------------
 
-function templateFrom(c) {
-  const amount = computeAmount(c);
-  const parts = [];
-  if (c.kind !== 'receipt' && c.route && (c.route.from || c.route.to)) parts.push(`${c.route.from || ''}→${c.route.to || ''}${c.route.round ? ' 往復' : ''}`);
-  else parts.push(c.payee || c.memo || c.category);
-  return {
-    id: newId('t'),
-    label: parts.join(' ').trim() || '経費',
-    kind: c.kind, payee: c.payee, amount, fare: c.fare, km: c.km, rate: c.rate, route: c.route ? { ...c.route } : null,
-    category: c.category || (c.kind === 'car' ? S.settings.carCategory : c.kind === 'transit' ? '旅費交通費' : ''),
-    site: c.site, method: c.method, memo: c.memo,
-  };
-}
-
 async function useTemplate(t) {
-  const e = newExpense({
-    kind: t.kind, payee: t.payee || (t.kind === 'car' ? '自家用車' : t.kind === 'transit' ? '電車・バス' : ''), amount: t.amount,
-    fare: t.fare ?? null, km: t.km ?? null, rate: t.rate ?? null, route: t.route ? { ...t.route } : null,
-    category: t.category, site: t.site || '', method: t.method || S.settings.defaultMethod, memo: t.memo || '',
-    status: 'ok', auto: [],
-  });
+  const e = expenseFromTemplate(t);
   if (!e.amount || !e.category) { openEditor(e, { isNew: true }); return; }
   await saveExpense(e);
-  render();
-  toast(`今日の分を追加しました: ${t.label} ${yen(e.amount)}`, { label: '元に戻す', run: async () => { await db.del('expenses', e.id); S.expenses = S.expenses.filter((x) => x.id !== e.id); render(); } });
+  toast(`今日の分を追加しました: ${t.label} ${yen(e.amount)}`, { label: '元に戻す', run: () => removeExpenses([e.id]) });
 }
 
 // ---- 画面: ホーム ------------------------------------------------------------------
@@ -789,23 +593,15 @@ async function makePdf(items, { from, to, advance, reportId = null } = {}) {
 
 async function settleLast() {
   const L = S.lastPdf; if (!L) return;
-  const rep = { id: newId('r'), created: Date.now(), from: L.from, to: L.to, ids: L.items.map((e) => e.id), reimb: L.sum.reimb, company: L.sum.company, advance: L.advance || 0 };
-  await db.put('reports', rep);
-  S.reports.push(rep);
-  for (const e of L.items) { const x = byId(e.id); if (x && x.status === 'ok') { x.status = 'done'; x.reportId = rep.id; await saveExpense(x); } }
+  const rep = await createReport(L.items, { from: L.from, to: L.to, advance: L.advance || 0, sum: L.sum });
   S.rep.advance = '';
   closeSheet();
-  render();
   toast(`${rep.ids.length}件を精算済みにしました`, { label: '元に戻す', run: () => undoReport(rep.id, true) });
 }
 
 async function undoReport(id, silent = false) {
   if (!silent && !(await confirmBox('この精算を取り消して、経費を「未精算」に戻しますか？', '未精算に戻す'))) return;
-  const rep = S.reports.find((r) => r.id === id); if (!rep) return;
-  for (const eid of rep.ids) { const x = byId(eid); if (x && x.reportId === id) { x.status = 'ok'; x.reportId = null; await saveExpense(x); } }
-  await db.del('reports', id);
-  S.reports = S.reports.filter((r) => r.id !== id);
-  render();
+  await storeUndoReport(id);
   toast('未精算に戻しました');
 }
 
@@ -874,7 +670,9 @@ function viewSettings() {
     <section class="block">
       <h2>${ic('box')}データ</h2>
       <p class="muted" id="usage">データはこの端末の中だけに保存しています。機種変更やもしものために、ときどきバックアップしてください。</p>
+      <p class="muted">パソコン版（このアドレスの最後に pc/ を付けたページ）では、送ったファイルをドラッグするだけで取り込めます。同じ経費は新しい方が残ります。</p>
       <div class="stack">
+        <button class="btn primary" data-act="sendPc">${ic('share')}パソコンへ送る（LINE・メール・ドライブ）</button>
         <button class="btn" data-act="backup">${ic('download')}バックアップを保存（画像も含む）</button>
         <button class="btn" data-act="restore">${ic('undo')}バックアップから戻す</button>
         <button class="btn ghost danger" data-act="wipe">${ic('trash')}すべてのデータを消す</button>
@@ -927,8 +725,7 @@ const ACTIONS = {
   settleOld: () => { S.rep.mode = 'custom'; S.rep.from = ''; const p = addMonth(ymOf(todayISO()), -1); const un = S.expenses.filter((e) => e.status === 'ok').map((e) => e.date).sort(); S.rep.from = un[0] || `${p}-01`; S.rep.to = monthEnd(p); go('report'); },
   confirmAll: async () => {
     const ready = S.expenses.filter((e) => e.status === 'draft' && e.amount && e.date && e.category && !isReading(e.id));
-    for (const e of ready) { e.status = 'ok'; e.auto = []; await saveExpense(e); learn(e); }
-    render();
+    for (const e of ready) await commit(e);
     toast(`${ready.length}件を確定しました`);
   },
   help: () => openSheet(`
@@ -945,18 +742,19 @@ const ACTIONS = {
   edSave: () => edSave(),
   edSaveNext: () => edSave({ next: true }),
   edDate: (b) => { const el = $('[data-f="date"]'); el.value = addDays(todayISO(), +b.dataset.d); edInput(el); },
-  edReread: () => { if (ED) { ED.touched.clear(); ED.cur.auto = ['date', 'method', 'amount', 'payee', 'category', 'memo', 'invoiceNo', 'tax10', 'tax8']; const e = byId(ED.cur.id); if (e) e.auto = ED.cur.auto.slice(); enqueue(ED.cur.id); } },
+  edReread: () => { if (ED) { ED.touched.clear(); ED.cur.auto = ['date', 'method', 'amount', 'payee', 'category', 'memo', 'invoiceNo', 'tax10', 'tax8']; reread(ED.cur.id); } },
   edDupOpen: (b) => { const d = byId(b.dataset.id); if (d) { closeSheet(); openEditor(d); } },
   edTemplate: () => {
     const c = ED.cur;
     const t = templateFrom(c);
     if (!t.amount) { toast('金額を入れてから登録してください'); return; }
-    S.templates.unshift(t); S.templates = S.templates.slice(0, 20); saveTemplates();
+    addTemplate(t);
     toast(`「${t.label}」をよく使うに登録しました`);
   },
   edCopy: async () => {
     const c = ED.cur;
-    const e = newExpense({ ...JSON.parse(JSON.stringify(c)), id: newId('e'), status: 'ok', date: todayISO(), imageId: null, ocr: null, reportId: null, auto: [], created: Date.now() });
+    const { id, ...rest } = JSON.parse(JSON.stringify(c)); void id;
+    const e = newExpense({ ...rest, status: 'ok', date: todayISO(), imageId: null, ocr: null, reportId: null, auto: [], created: Date.now() });
     closeSheet();
     openEditor(e, { isNew: true });
     toast('今日の日付で複製しました（画像は付きません）');
@@ -966,14 +764,9 @@ const ACTIONS = {
     const stored = byId(c.id);
     if (!stored) { closeSheet(); return; }
     if (stored.status === 'done' && !(await confirmBox('精算済みの経費です。削除しますか？', '削除', { danger: true }))) return;
-    const img = stored.imageId ? await db.get('images', stored.imageId) : null;
-    await db.del('expenses', stored.id);
-    if (img) await db.del('images', img.id);
-    S.expenses = S.expenses.filter((x) => x.id !== stored.id);
-    S.ocr.delete(stored.id);
     closeSheet();
-    render();
-    toast('削除しました', { label: '元に戻す', run: async () => { if (img) await db.put('images', img); await saveExpense(stored); render(); } });
+    const snap = await removeExpenses([stored.id]);
+    toast('削除しました', { label: '元に戻す', run: () => restoreSnapshot(snap) });
   },
   zoom: () => { if (!ED || !ED.imageURL) return; const v = $('#viewer'); v.innerHTML = `<img src="${ED.imageURL}" alt="領収書の画像"><button class="icon-btn close" aria-label="閉じる">${ic('x')}</button>`; v.hidden = false; v.onclick = (ev) => { if (ev.target.tagName === 'IMG') ev.target.classList.toggle('big'); else { v.hidden = true; v.innerHTML = ''; } }; },
   ym: (b) => { S.list.ym = addMonth(S.list.ym, +b.dataset.k); render(); },
@@ -1003,13 +796,12 @@ const ACTIONS = {
   addCat: () => { const i = $('#newCat'); const v = i.value.trim(); if (!v) return; if (!cats().includes(v)) { S.settings.categories = [...cats(), v]; saveSettings(); } render(); },
   resetCat: () => { S.settings.categories = DEFAULT_CATEGORIES.slice(); saveSettings(); render(); },
   backup: async () => backup(),
+  sendPc: async () => backup({ send: true }),
   restore: () => $('#restoreIn').click(),
   wipe: async () => {
     if (!(await confirmBox('すべての経費・画像・精算の記録を消します。元に戻せません。先にバックアップを保存しましたか？', 'すべて消す', { danger: true }))) return;
-    await db.clear('expenses'); await db.clear('images'); await db.clear('reports');
-    S.expenses = []; S.reports = []; S.templates = []; saveTemplates();
-    S.learned = { payeeCat: {}, tnoPayee: {} }; saveLearned();
-    render(); toast('すべて消しました');
+    await wipeAll();
+    toast('すべて消しました');
   },
 };
 
@@ -1125,43 +917,22 @@ window.addEventListener('paste', (ev) => {
   if (files.length) { ev.preventDefault(); importFiles(files, { single: files.length === 1 }); }
 });
 
-// ---- バックアップ ----------------------------------------------------------------
+// ---- バックアップ・パソコンへ送る ----------------------------------------------------------
 
-function blobToB64(blob) {
-  return new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(String(r.result).split(',')[1]); r.onerror = () => reject(r.error); r.readAsDataURL(blob); });
-}
-function b64ToBlob(b64, type) { const bin = atob(b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return new Blob([u], { type }); }
-
-async function backup() {
+async function backup({ send = false } = {}) {
   toast('バックアップを作っています…');
-  const images = await db.all('images');
-  const { apiKey, ...settings } = S.settings; void apiKey;
-  const parts = [`{"app":"rakukeihi","version":1,"exportedAt":${JSON.stringify(new Date().toISOString())},"settings":${JSON.stringify(settings)},"learned":${JSON.stringify(S.learned)},"templates":${JSON.stringify(S.templates)},"expenses":${JSON.stringify(S.expenses)},"reports":${JSON.stringify(S.reports)},"images":[`];
-  for (let i = 0; i < images.length; i++) {
-    const im = images[i];
-    parts.push(`${i ? ',' : ''}${JSON.stringify({ id: im.id, w: im.w, h: im.h, blob: await blobToB64(im.blob), thumb: im.thumb ? await blobToB64(im.thumb) : '' })}`);
-  }
-  parts.push(']}');
-  const blob = new Blob(parts, { type: 'application/json' });
-  download(blob, `ラク経費_バックアップ_${todayISO()}.json`);
+  const blob = await makeBackup();
+  const name = `ラク経費_バックアップ_${todayISO()}.json`;
+  if (send) await shareFile(blob, name); else download(blob, name);
 }
 
 async function restore(file) {
-  let j;
-  try { j = JSON.parse(await file.text()); } catch (_) { toast('バックアップのファイルを読めませんでした'); return; }
-  if (!j || j.app !== 'rakukeihi') { toast('ラク経費のバックアップではありません'); return; }
-  const n = (j.expenses || []).length;
-  if (!(await confirmBox(`${n}件の経費を戻します。同じ経費は上書き、いまある別の経費はそのまま残ります。`, '戻す'))) return;
-  for (const im of j.images || []) await db.put('images', { id: im.id, w: im.w, h: im.h, blob: b64ToBlob(im.blob, 'image/jpeg'), thumb: im.thumb ? b64ToBlob(im.thumb, 'image/jpeg') : null });
-  await db.putMany('expenses', j.expenses || []);
-  await db.putMany('reports', j.reports || []);
-  S.settings = { ...DEF_SETTINGS, ...(j.settings || {}), apiKey: S.settings.apiKey }; saveSettings();
-  S.learned = { payeeCat: { ...(j.learned?.payeeCat || {}), ...S.learned.payeeCat }, tnoPayee: { ...(j.learned?.tnoPayee || {}), ...S.learned.tnoPayee } }; saveLearned();
-  const tids = new Set(S.templates.map((t) => t.id));
-  S.templates = [...S.templates, ...(j.templates || []).filter((t) => !tids.has(t.id))]; saveTemplates();
-  await loadAll();
-  render();
-  toast(`${n}件を戻しました`);
+  let info;
+  try { info = await readBackup(file); } catch (e) { toast(e.message); return; }
+  const msg = `${info.total}件のうち、新しい経費 ${info.added}件・更新 ${info.updated}件を取り込みます。いまある経費は消えません。`;
+  if (!(await confirmBox(msg, '取り込む'))) return;
+  const n = await mergeBackup(info.j);
+  toast(`${n}件を取り込みました`);
 }
 
 // ---- Android の「共有」から受け取った画像 --------------------------------------------------
@@ -1174,7 +945,7 @@ async function takeShared() {
     const cache = await caches.open('rakukeihi-share');
     const keys = await cache.keys();
     const files = [];
-    for (const k of keys) { const r = await cache.match(k); if (r) files.push(new File([await r.blob()], 'shared.jpg', { type: r.headers.get('content-type') || 'image/jpeg' })); await cache.delete(k); }
+    for (const k of keys) { const r = await cache.match(k); if (r) { const t = r.headers.get('content-type') || 'image/jpeg'; files.push(new File([await r.blob()], t === 'application/pdf' ? 'shared.pdf' : 'shared.jpg', { type: t })); }; await cache.delete(k); }
     if (files.length) await importFiles(files, { single: files.length === 1 });
   } catch (_) { toast('共有された画像を受け取れませんでした'); }
 }
@@ -1184,8 +955,7 @@ async function takeShared() {
 async function start() {
   paintIcons();
   await loadAll();
-  // 読み取りの途中でアプリを閉じた下書きは、もう一度読み取る
-  S.expenses.filter((e) => e.status === 'draft' && e.imageId && !e.ocr).forEach((e) => enqueue(e.id));
+  resumePending();
   const tab = location.hash.replace('#', '');
   if (['home', 'list', 'report', 'settings'].includes(tab)) S.tab = tab;
   render();

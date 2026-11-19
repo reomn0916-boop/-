@@ -85,7 +85,7 @@ function shortMethod(m) {
   return { 現金: '現金', 個人カード: 'カード', 電子マネー: '電子M', 会社カード: '会社C', 請求書払い: '請求書' }[m] || (m || '');
 }
 
-function memoOf(e) {
+export function memoOf(e) {
   const parts = [];
   if (e.route && (e.route.from || e.route.to)) parts.push(`${e.route.from || ''}→${e.route.to || ''}${e.route.round ? '（往復）' : ''}`);
   if (e.kind === 'car' && e.km) parts.push(`${e.km}km`);
@@ -326,5 +326,27 @@ export function toCSV(items) {
     e.route ? e.route.from || '' : '', e.route ? e.route.to || '' : '', e.route && e.route.round ? '往復' : '', e.km || '',
     e.status === 'done' ? '精算済み' : e.status === 'draft' ? '確認待ち' : '未精算', e.imageId ? 'あり' : '',
   ]);
+  return '﻿' + [head, ...rows].map((r) => r.map(q).join(',')).join('\r\n') + '\r\n';
+}
+
+// ---- 会計ソフト用（仕訳）CSV ------------------------------------------------------
+// 借方 = 経費の科目、貸方 = 未払金など（設定で変更）。税率ごとの対象額が分かれていれば 2 行に分ける
+
+export function toJournalCSV(items, { credit = '未払金' } = {}) {
+  const head = ['日付', '借方勘定科目', '借方金額', '借方税区分', '貸方勘定科目', '貸方金額', '摘要', '取引先', '適格請求書', '登録番号', '現場・案件', '支払方法'];
+  const q = (v) => { const s = String(v ?? ''); return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const rows = [];
+  for (const e of sortForReport(items)) {
+    if (!e.amount) continue;
+    const desc = [e.payee, memoOf(e)].filter(Boolean).join(' ');
+    const date = (e.date || '').replace(/-/g, '/');
+    const inv = e.invoiceNo ? '有' : '無';
+    let parts;
+    if (e.category === '租税公課') parts = [[e.amount, '対象外']];
+    else if (e.tax10 && e.tax8 && e.tax10 + e.tax8 === e.amount) parts = [[e.tax10, '課対仕入10%'], [e.tax8, '課対仕入8%(軽)']];
+    else if (e.tax8 && !e.tax10) parts = [[e.amount, '課対仕入8%(軽)']];
+    else parts = [[e.amount, '課対仕入10%']];
+    for (const [amt, tax] of parts) rows.push([date, e.category, amt, tax, credit, amt, desc, e.payee, inv, e.invoiceNo || '', e.site || '', e.method || '']);
+  }
   return '﻿' + [head, ...rows].map((r) => r.map(q).join(',')).join('\r\n') + '\r\n';
 }
