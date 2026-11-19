@@ -1,0 +1,313 @@
+<title>現場CAD 操作リファレンス</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=BIZ+UDGothic:wght@400;700&display=swap">
+<style>
+/* 配置: 左に目次、右に早見表を詰めた2列。狭い画面では目次を上に */
+:root {
+  --bg: #f3f5f8;
+  --paper: #ffffff;
+  --fg: #18222d;
+  --muted: #5a6676;
+  --line: #d5dce5;
+  --head: #e8edf3;
+  --navy: #1f3a5f;
+  --stake: #c2410c;
+  --code: #eef2f7;
+  --font: "BIZ UDPGothic", "Hiragino Sans", "Yu Gothic", Meiryo, sans-serif;
+  --mono: "BIZ UDGothic", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11161c; --paper: #182029; --fg: #e6ebf1; --muted: #9aa8b7; --line: #2c3743; --head: #1f2a35;
+    --navy: #93b6e6; --stake: #f0905c; --code: #1e2833; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11161c; --paper: #182029; --fg: #e6ebf1; --muted: #9aa8b7; --line: #2c3743; --head: #1f2a35;
+  --navy: #93b6e6; --stake: #f0905c; --code: #1e2833; color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 15px; line-height: 1.7; }
+.wrap { max-width: 1120px; margin: 0 auto; padding-block: 24px 56px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 28px; }
+@media (max-width: 820px) { .wrap { grid-template-columns: minmax(0, 1fr); } nav.side { position: static !important; } }
+nav.side { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 16px); align-self: start; font-size: 13.5px; }
+nav.side b { display: block; color: var(--muted); font-size: 12px; letter-spacing: .08em; margin-bottom: 4px; }
+nav.side a { display: block; color: var(--fg); text-decoration: none; padding: 2px 0 2px 10px; border-left: 2px solid var(--line); }
+nav.side a:hover { border-left-color: var(--stake); color: var(--stake); }
+main { min-width: 0; }
+header.top { border-bottom: 3px solid var(--navy); padding-bottom: 12px; margin-bottom: 8px; }
+.kicker { font-size: 12px; letter-spacing: .1em; color: var(--stake); font-weight: 700; }
+h1 { margin: 2px 0 4px; font-size: clamp(24px, 4vw, 32px); color: var(--navy); line-height: 1.3; text-wrap: balance; }
+.lead { margin: 0; color: var(--muted); }
+h2 { font-size: 20px; margin: 36px 0 10px; padding-top: 4px; border-top: 1px solid var(--line); text-wrap: balance; }
+h3 { font-size: 16px; margin: 20px 0 6px; color: var(--navy); }
+p { margin: 6px 0; }
+code, kbd { font-family: var(--mono); font-size: .93em; background: var(--code); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; white-space: nowrap; }
+pre { font-family: var(--mono); font-size: 13px; background: var(--code); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; overflow-x: auto; line-height: 1.6; margin: 8px 0; }
+.tbl { overflow-x: auto; margin: 8px 0; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+th { background: var(--head); font-weight: 700; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td:first-child { white-space: nowrap; font-weight: 700; }
+td.n { font-variant-numeric: tabular-nums; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.grid2 > div { min-width: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; padding: 0; list-style: none; }
+.chips li { background: var(--paper); border: 1px solid var(--line); border-radius: 6px; padding: 1px 8px; font-size: 13.5px; }
+.chips li b { color: var(--stake); font-family: var(--mono); margin-right: 4px; }
+.warn { border-left: 3px solid var(--stake); background: var(--paper); padding: 8px 12px; border-radius: 0 8px 8px 0; margin: 10px 0; }
+ul.tight { margin: 6px 0; padding-left: 20px; }
+ul.tight li { margin: 2px 0; }
+a { color: var(--navy); }
+a:focus-visible { outline: 2px solid var(--stake); outline-offset: 2px; }
+footer { margin-top: 40px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 12px; }
+</style>
+
+<div class="wrap">
+<nav class="side" aria-label="目次">
+  <b>目次</b>
+  <a href="#conv">座標と角度の約束</a>
+  <a href="#input">点・数値の入力</a>
+  <a href="#phone">スマホ版</a>
+  <a href="#pcui">パソコン版の画面と操作</a>
+  <a href="#keys">キー操作</a>
+  <a href="#snap">スナップと選択</a>
+  <a href="#cmds">コマンド一覧</a>
+  <a href="#civil">土木（横断・縦断ほか）</a>
+  <a href="#fit">座標合わせ・縮尺合わせ</a>
+  <a href="#calc">測量計算</a>
+  <a href="#print">用紙・縮尺・印刷</a>
+  <a href="#link">スマホ⇔パソコン連携</a>
+  <a href="#formats">ファイル形式と文字コード</a>
+  <a href="#limits">対応していないこと</a>
+</nav>
+
+<main>
+<header class="top">
+  <div class="kicker">CAD・測量に慣れた人向け</div>
+  <h1>現場CAD 操作リファレンス</h1>
+  <p class="lead">スマホ版（現場）とパソコン版（事務所）の操作・入力書式・データの扱いをまとめた早見表です。</p>
+</header>
+
+<h2 id="conv">座標と角度の約束</h2>
+<div class="tbl"><table>
+  <tr><th>項目</th><th>このアプリでの扱い</th></tr>
+  <tr><td>座標</td><td><b>X = 北、Y = 東</b>（測量座標）。単位 m。入力も <code>X,Y</code> の順</td></tr>
+  <tr><td>方向角</td><td>北から右回り。<code>45-30-15</code>（度-分-秒）か <code>45.504</code>（度）</td></tr>
+  <tr><td>座標系</td><td>平面直角座標 1〜19 系（JGD2011・GRS80）。GPS から自動判定、手動変更可</td></tr>
+  <tr><td>DXF</td><td>DXF の X = 東、Y = 北として読み書き。円弧・文字の角度は DXF どおり東から左回り</td></tr>
+  <tr><td>文字高</td><td>パソコン版で書く文字・寸法は<b>用紙上の mm</b>（縮尺を変えても印刷の大きさは同じ）。DXF の文字は実寸（m）</td></tr>
+  <tr><td>距離</td><td>平面直角座標上の距離（縮尺係数の補正なし）</td></tr>
+</table></div>
+
+<h2 id="input">点・数値の入力</h2>
+<p>スマホは下の入力欄、パソコンは左のマルチボックスの「座標・数値入力」に打ちます。パソコンは図面にフォーカスがある状態で数字を打てば、そのまま入力欄に入ります。</p>
+<div class="tbl"><table>
+  <tr><th>書き方</th><th>意味</th><th>例</th></tr>
+  <tr><td><code>X,Y</code></td><td>絶対座標</td><td><code>-12345.678,23456.789</code></td></tr>
+  <tr><td><code>@ΔX,ΔY</code></td><td>前の点からの相対</td><td><code>@0,5</code>（東へ 5）</td></tr>
+  <tr><td><code>@距離&lt;方向角</code></td><td>前の点から距離と方向角</td><td><code>@5&lt;90</code>、<code>@12.3&lt;45-30-15</code></td></tr>
+  <tr><td>数値だけ</td><td>カーソルの方向へその長さ（パソコン）／円の半径など</td><td><code>2.5</code></td></tr>
+  <tr><td>点名</td><td>その点の座標</td><td><code>K1</code>、<code>P12</code></td></tr>
+  <tr><td><code>GPS</code></td><td>現在地（スマホの計算欄）</td><td></td></tr>
+</table></div>
+<p>パソコン版はスタイルバーの「入力単位」を mm にすると、相対・長さ・間隔を mm で打てます（絶対座標は常に m）。全角の数字・記号は自動で半角にします。</p>
+
+<h2 id="phone">スマホ版</h2>
+<h3>下のツール</h3>
+<div class="tbl"><table>
+  <tr><th>ツール</th><th>操作</th></tr>
+  <tr><td>選択</td><td>図形・点をタップで情報（長さ・座標・緯度経度・測点）。端点の点登録・逃げ一括作成・求積表など</td></tr>
+  <tr><td>点</td><td>タップで点を置く。種別（基準点／位置出し／逃げ／その他）と頭文字を指定</td></tr>
+  <tr><td>線</td><td>線・連続線・円・引出線を切り替え</td></tr>
+  <tr><td>寸法</td><td>始点 → 終点 → 寸法線の位置。離れは数値でも</td></tr>
+  <tr><td>文字</td><td>位置をタップして入力。大きさは印刷時の mm</td></tr>
+  <tr><td>距離</td><td>2点の水平距離・方向角・ΔX/ΔY。角度の計測に切り替え可</td></tr>
+  <tr><td>面積</td><td>頂点を順にタップ。㎡・坪・周長</td></tr>
+  <tr><td>逃げ</td><td>角の延長／線の延長／平行。距離は <code>1</code> か <code>1,2</code>。点名は <code>元の点名-番号</code></td></tr>
+  <tr><td>計算</td><td>測量計算（<a href="#calc">一覧</a>）</td></tr>
+  <tr><td>GPS</td><td>現在地の表示・追従。10 回平均で点登録。基準点で補正（1点: 移動、2点〜: 回転、3点〜: 縮尺）</td></tr>
+</table></div>
+<h3>メニュー（☰）</h3>
+<ul class="chips">
+  <li>パソコンへ送る</li><li>パソコンから受け取る</li><li>図面を現場の座標に合わせる</li><li>図面の縮尺を合わせる</li><li>逃げ杭を作る</li><li>SIMA で書き出す・送る</li><li>施工図を作る（PDF・画像・DXF）</li><li>計算書</li><li>GPS 基準点補正</li><li>画層の表示</li><li>DXF・SIMA・CSV・プロジェクトの読み書き</li>
+</ul>
+<p>図形がないときは図面の上に「図面を読み込む／座標を読み込む／パソコンから受け取る／白紙でかく」の案内が出ます（最初の説明は自動では開かず、メニューの「使い方」から）。下の道具は使用中が橙で表示されます。</p>
+<p>上の帯の <b>施工図</b> は表示中の範囲から図面枠・表題欄・座標表付きの図を作り、PDF・PNG・印刷・DXF に出します。<b>≡</b> は点の一覧（種別で絞り込み）。</p>
+
+<h2 id="pcui">パソコン版の画面と操作</h2>
+<div class="tbl"><table>
+  <tr><th>場所</th><th>役割</th></tr>
+  <tr><td>タイトルの段</td><td>保存・元に戻す・やり直し・印刷のボタン、保存状態（自動保存／保存済み／未保存の変更あり）、コマンド検索（Ctrl+K）、明るい／暗い表示の切替</td></tr>
+  <tr><td>リボン</td><td>ファイル／ホーム／作図／図形編集／土木／測量計算／現場連携／表示。主なコマンドは大きいボタン、関連は小さいボタン。ボタンに乗せると名前・説明・キーを表示。Ctrl+F1 かタブのダブルクリックでたたむ</td></tr>
+  <tr><td>スタイルバー</td><td>現在のレイヤ・色・線種・線幅・文字高、縮尺 1:N、用紙、入力単位、寸法の表示単位。図形を選んでいれば選択にも適用</td></tr>
+  <tr><td>マルチボックス（左）</td><td>実行中コマンドの指示・設定・数値入力・確定／1つ戻る／終了。計測結果もここ</td></tr>
+  <tr><td>プロパティ（右）</td><td>選択図形の座標・長さ・半径・文字・寸法の表示文字と端末・ハッチ。複数選択は色・線種・線幅・レイヤを一括</td></tr>
+  <tr><td>レイヤ（右）</td><td>クリックで現在レイヤ、チェックで表示。右クリック: このレイヤだけ表示・図形を選択・名前/色/線種・削除</td></tr>
+  <tr><td>図面の右下・左下</td><td>全体表示・用紙全体・拡大・縮小のボタン、X北・Y東の向きの印。空のときはスタート画面（白紙・開く・スマホ取込・練習用の図面）</td></tr>
+  <tr><td>ステータスバー</td><td>カーソル座標、スナップ切替（形のアイコン付き）、直交、グリッド、表示倍率、縮尺・用紙・座標系</td></tr>
+</table></div>
+<ul class="tight">
+  <li>左クリック: 点・選択 ／ ダブルクリック: プロパティの文字・点名へ</li>
+  <li><b>グリップ</b>: 選んだ図形の四角いつまみをドラッグで頂点を移動（スナップが効く）。線の中央 = 線ごと移動、円 = 中心と半径、円弧 = 中心と両端、寸法 = 両端と寸法線の位置</li>
+  <li>作図中はカーソル横に長さ・方向角、点の指示中は座標、吸着時はスナップの種類を札で表示</li>
+  <li>右クリック: コマンド中は「確定・1つ戻る・終了・スナップ」、選択中は「移動・複写・回転・反転・削除」など</li>
+  <li>ホイール: カーソル位置を中心に拡大縮小 ／ 中ボタンドラッグ: 画面移動 ／ 中ボタン2回: 全体表示</li>
+  <li>コマンドは Esc まで続きます（線を続けて引ける）。Enter で直前のコマンドを再実行</li>
+  <li>ファイルのドラッグ＆ドロップ: DXF・SIMA・CSV は追加、.gcad は「開く」か「取り込む」を選択</li>
+</ul>
+
+<h2 id="keys">キー操作（パソコン版）</h2>
+<div class="grid2">
+<div class="tbl"><table>
+  <tr><th>キー</th><th>動作</th></tr>
+  <tr><td><kbd>Enter</kbd> / <kbd>Space</kbd></td><td>確定・直前のコマンド</td></tr>
+  <tr><td><kbd>Esc</kbd></td><td>コマンド終了・選択解除</td></tr>
+  <tr><td><kbd>Backspace</kbd></td><td>1つ戻る（コマンド内）</td></tr>
+  <tr><td><kbd>Delete</kbd></td><td>選択図形を削除</td></tr>
+  <tr><td><kbd>F8</kbd></td><td>直交モード</td></tr>
+  <tr><td><kbd>F3</kbd></td><td>スナップ全体の ON/OFF</td></tr>
+  <tr><td><kbd>Home</kbd></td><td>全体表示</td></tr>
+  <tr><td><kbd>F1</kbd></td><td>使い方</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>K</kbd> / <kbd>F2</kbd></td><td>コマンド検索</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>F1</kbd></td><td>リボンをたたむ</td></tr>
+</table></div>
+<div class="tbl"><table>
+  <tr><th>キー</th><th>動作</th></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Y</kbd></td><td>元に戻す / やり直し</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>X</kbd> / <kbd>V</kbd></td><td>コピー / 切り取り / 貼り付け（位置を指示）</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>すべて選択</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>上書き保存（.gcad）</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></td><td>名前を付けて保存</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>O</kbd> / <kbd>N</kbd></td><td>開く / 新規</td></tr>
+  <tr><td><kbd>Ctrl</kbd>+<kbd>P</kbd></td><td>印刷・PDF</td></tr>
+</table></div>
+</div>
+
+<h2 id="snap">スナップと選択</h2>
+<p>カーソルから 12 px 以内の候補を、次の優先順で拾います（ステータスバーで個別に ON/OFF）。</p>
+<ul class="chips"><li><b>1</b>点（測点）</li><li><b>2</b>端点</li><li><b>3</b>交点</li><li><b>4</b>中点</li><li><b>5</b>中心（円周に近づくと中心）</li><li><b>6</b>垂点（前の点から）</li><li><b>7</b>線上</li></ul>
+<p>候補がないときは任意点。直交モード（F8）は前の点から縦・横に拘束します。</p>
+<ul class="tight">
+  <li>クリック: 単独選択 ／ <kbd>Shift</kbd> か <kbd>Ctrl</kbd>+クリック: 追加・解除</li>
+  <li>ドラッグ 左→右: 枠に<b>全部入った</b>図形 ／ 右→左: 枠に<b>かかった</b>図形</li>
+  <li>移動・複写・回転などは、先に選んでおけばすぐ基準点の指示へ。選んでいなければ選択 → Enter（右クリック）で確定</li>
+  <li>ホーム → 属性で選択: 種類・レイヤ・色・線種の組み合わせで選択</li>
+</ul>
+
+<h2 id="cmds">コマンド一覧（パソコン版）</h2>
+<div class="tbl"><table>
+  <tr><th>タブ・グループ</th><th>コマンドと要点</th></tr>
+  <tr><td>作図／線</td><td>単線（終点から続ける設定）・連続線（<code>C</code> で閉じる）・矩形（幅・高さ指定可）・平行線（間隔／通過点、線・連続線・円）</td></tr>
+  <tr><td>作図／円・円弧</td><td>円（中心＋半径の数値可）・3点円・円弧（中心・始点・終点、左右回り）・3点円弧</td></tr>
+  <tr><td>作図／点</td><td>点（種別・点名・Z）・等分点（線・円弧・円・連続線を n 等分）</td></tr>
+  <tr><td>作図／文字</td><td>文字（文字高 mm・角度・基点 左中右、複数行可）・引出線（旗上げ）</td></tr>
+  <tr><td>作図／寸法</td><td>平行・水平（東西）・垂直（南北）・直列（同じ寸法線上に連続）・半径／直径・角度（度分秒）。端末: 斜線・矢印・黒丸。表示文字の書き換え可</td></tr>
+  <tr><td>作図／その他</td><td>ハッチング（図形を選ぶ／点で囲む、斜線・格子・塗り、間隔 mm・角度）・求積図形（面積表示）・方位記号</td></tr>
+  <tr><td>図形編集／移動複写</td><td>移動・複写（連続配置）・回転（角度数値可）・反転（元を残す設定）・拡大縮小（倍率）・縮尺合わせ・配列複写（方向と間隔／縦横）</td></tr>
+  <tr><td>図形編集／修正</td><td>削除（クリック・範囲）・伸縮（基準線 → 動かす端）・部分消去（交点間を削除、円は円弧に）・角作成・面取り（2距離）・R面取り・分割・結合（つながった線を連続線に）・分解（連続線→線、寸法・引出線・ハッチ・路線→線と文字）</td></tr>
+  <tr><td>図形編集／計測</td><td>距離（累計・寸法線として残す）・角度・面積（求積図形として残す）・座標（緯度経度、点登録）</td></tr>
+  <tr><td>土木</td><td>座標一覧・頂点を点登録・座標合わせ・縮尺合わせ・横断図・縦断図・求積表・逃げ杭・杭打ち表（<a href="#civil">詳細</a>）</td></tr>
+  <tr><td>現場連携</td><td>現場へ送る・SIMA で送る・現場データ取込・連携フォルダ設定・新着を確認・スマホ版の開き方（QR）</td></tr>
+  <tr><td>表示</td><td>全体表示・用紙全体・範囲拡大・用紙枠の移動・用紙枠／グリッド／線幅／点名の表示・黒背景・レイヤ追加</td></tr>
+</table></div>
+
+<h2 id="civil">土木（横断・縦断ほか）</h2>
+<h3>横断図</h3>
+<p>現況地盤は1行に <code>中心からの距離, 地盤高</code>（左はマイナス）。Excel の2列をそのまま貼り付けられます。計画線は「点で入力」（<code>距離, 計画高</code>）か「標準断面」から作ります。</p>
+<pre>-12,10.20
+-6,10.60
+0,10.85
+5,11.30
+12,12.10</pre>
+<div class="tbl"><table>
+  <tr><th>標準断面の項目</th><th>内容</th></tr>
+  <tr><td>計画高・幅員</td><td>中心の計画高、左右の幅員 m</td></tr>
+  <tr><td>横断勾配</td><td>左右それぞれ %（下がりが＋）</td></tr>
+  <tr><td>法勾配</td><td>切土 1:n、盛土 1:n。路肩から地盤線と交わるまで自動</td></tr>
+  <tr><td>出力</td><td>現況線・計画線・中心線・DL・数値表（計画高・地盤高・距離）・切土 CA／盛土 BA の面積とハッチ。縦横の縮尺は別指定</td></tr>
+</table></div>
+<p>配置後、測点名の番号は自動で次へ進みます（No.1 → No.2）。</p>
+<h3>縦断図</h3>
+<p>測点は1行に <code>測点, 追加距離, 地盤高, 計画高</code>。追加距離が空欄なら No. と杭間隔から、計画高が空欄なら縦断線形（VIP）から計算します。</p>
+<pre>No.0,,10.20,
+No.2+10,,11.40,
+No.3,60,11.05,11.25</pre>
+<p>VIP は1行に <code>追加距離 か 測点, 計画高, 縦断曲線長 VCL</code>（放物線）。出力は地盤線・計画線・DL と、測点・単距離・追加距離・地盤高・計画高・切土高・盛土高・勾配（%・区間長）の表。</p>
+<h3>そのほか</h3>
+<div class="tbl"><table>
+  <tr><td>座標一覧</td><td>点名・X・Y・Z・種別を表で直接編集。種別で絞り込み、SIMA・CSV 読込、選んだ点を図で選択</td></tr>
+  <tr><td>求積表</td><td>閉じた連続線を選択 → 置く位置。座標法（Xn+1−Xn−1、倍面積、面積）。頂点に点がなければ V1… を記入</td></tr>
+  <tr><td>逃げ杭</td><td>角の延長・線の延長・平行（側をクリック）。スマホ版と同じ規則で作成し、逃げ線は「逃げ」レイヤの破線</td></tr>
+  <tr><td>杭打ち表</td><td>器械点・後視点・対象（種別名・<code>全点</code>・点名列挙）から夾角・距離・X・Y の表を図面に配置</td></tr>
+</table></div>
+
+<h2 id="fit">座標合わせ・縮尺合わせ</h2>
+<div class="tbl"><table>
+  <tr><th>機能</th><th>使いどころ</th><th>方法</th></tr>
+  <tr><td>座標合わせ</td><td>CAD 座標の図面を現場座標へ</td><td>図面上の点と現場の点（点名か <code>X,Y</code>）を組で。平行移動／回転＋移動／回転＋移動＋縮尺。各組の残差 mm を表示。基準点は動かさない</td></tr>
+  <tr><td>縮尺合わせ<br>2点と実寸</td><td>縮尺違い・mm 単位の DXF</td><td>2点 → 正しい長さ。1点目を中心に倍率 k = 正しい長さ ÷ 今の長さ</td></tr>
+  <tr><td>縮尺合わせ<br>寸法線</td><td>図面に寸法がある</td><td>寸法線・線・数字の文字を選ぶ。書き換えた寸法値（例 <code>3,000</code>）や文字の数値を自動で入れる。スマホ版は小数点なし → mm、あり → m とみなす</td></tr>
+  <tr><td>縮尺合わせ<br>座標</td><td>縮尺・向き・位置がすべて違う</td><td>図面の点をクリック → 正しい座標を入力 を2組以上。回転なし（縮尺と移動だけ）も選べる。残差表示</td></tr>
+</table></div>
+<p>実寸の文字（DXF の文字）は図面と一緒に拡大・回転し、用紙基準の文字・寸法は大きさを保ちます。どれも Ctrl+Z（スマホは「戻す」）で戻せます。</p>
+
+<h2 id="calc">測量計算</h2>
+<ul class="chips"><li>逆計算</li><li>放射計算</li><li>杭打ち計算（TS）</li><li>交点計算</li><li>距離交会</li><li>垂線計算</li><li>幅杭計算</li><li>座標求積</li><li>路線計算（IP 法・単曲線）</li><li>測点⇔座標</li><li>曲線要素</li><li>勾配・法長</li></ul>
+<ul class="tight">
+  <li>点の欄は点名・<code>X,Y</code>・<code>GPS</code>（スマホ）。📍 で図面から拾う（名前のない位置は点として登録）</li>
+  <li>複数点の欄は <code>全点</code>・<code>選択</code>（選んだ連続線の頂点）・種別名（<code>位置出し</code>・<code>逃げ</code> など）も可</li>
+  <li>結果は点登録・図で確認・計算書に追加。計算書は印刷・CSV</li>
+  <li>路線は図に追加すると、点や GPS の現在地に測点（例 <code>No.3+12.35 右 2.40 m</code>）を表示</li>
+</ul>
+
+<h2 id="print">用紙・縮尺・印刷</h2>
+<ul class="tight">
+  <li>パソコン版は白い紙が用紙枠＝印刷範囲。縮尺と用紙はスタイルバー、枠の位置は「表示 → 用紙枠の移動」</li>
+  <li>印刷・PDF: 工事名・図面名・作成者、上の方向角（図の回転）、座標表と凡例、座標グリッド、カラー／白黒、200〜400 dpi</li>
+  <li>出力: PDF（画像 1 枚のページ）・印刷・PNG・枠付き DXF（図枠・表題欄を縮尺に合わせて図形化）</li>
+  <li>スマホ版の施工図も同じ図面枠。範囲は 今の画面／2点／選択図形／全体、縮尺は自動か指定</li>
+</ul>
+
+<h2 id="link">スマホ⇔パソコン連携</h2>
+<p>データは <code>.gcad</code> ファイル（図面・点・路線・計算書・用紙設定・レイヤ定義の一式）で受け渡します。サーバーは使いません。</p>
+<div class="tbl"><table>
+  <tr><th>操作</th><th>内容</th></tr>
+  <tr><td>開く（置き換え）</td><td>今の図面を捨てて、ファイルの内容にする</td></tr>
+  <tr><td>取り込む（差分）</td><td>図形ごとの ID と更新時刻で突き合わせ。新しい図形は追加、両方にある図形は新しい方、相手で消した図形は（こちらで後から変えていなければ）削除</td></tr>
+  <tr><td>点名の重なり</td><td>同じ点名で位置が違う点は <code>P2-2</code> のように改名して取り込み（1 mm 未満の差は同じ点とみなす）</td></tr>
+  <tr><td>同じ現場の判定</td><td>プロジェクト ID が同じなら差分で更新。違えば図形を追加</td></tr>
+  <tr><td>連携フォルダ</td><td>Google ドライブ・OneDrive などの同期フォルダを指定（Chrome・Edge）。「現場へ送る」を直接保存し、新しい .gcad・SIMA・DXF を 15 秒ごとに確認して通知</td></tr>
+</table></div>
+<div class="warn">差分取り込みは取り消せます（Ctrl+Z／戻す）。同じ点を両方で動かした場合は時刻の新しい方が残るので、現場で直した点を PC で同時にいじらないのが安全です。</div>
+
+<h2 id="formats">ファイル形式と文字コード</h2>
+<div class="tbl"><table>
+  <tr><th>形式</th><th>読み込み</th><th>書き出し</th></tr>
+  <tr><td>DXF</td><td>LINE・LWPOLYLINE・POLYLINE・POINT・CIRCLE・ARC・TEXT・MTEXT・長さの DIMENSION、画層の色・線種、図形の色（ACI・真の色）・線種</td><td>R12・Shift_JIS（<code>$DWGCODEPAGE ANSI_932</code>）、LTYPE と LAYER の表付き。寸法・引出線・ハッチ・路線は線・円弧・文字に展開</td></tr>
+  <tr><td>SIMA</td><td>A01 座標</td><td>A01 座標、区画（D00/B01/D99）、Shift_JIS</td></tr>
+  <tr><td>CSV</td><td><code>点名,X,Y[,Z]</code> または <code>X,Y</code>、見出し行は自動で飛ばす</td><td>UTF-8・BOM 付き（Excel 用）</td></tr>
+  <tr><td>.gcad</td><td colspan="2">JSON（UTF-8）。以前の .json プロジェクトも開ける</td></tr>
+</table></div>
+<ul class="tight">
+  <li>文字コードは UTF-8 を試し、化けたら Shift_JIS で読み直す（自動）</li>
+  <li>DXF の <code>\U+XXXX</code>（Unicode）・<code>\M+1XXXX</code>（Shift_JIS）を日本語に、<code>%%c</code> → φ、<code>%%d</code> → °、<code>%%p</code> → ±、<code>%%%</code> → %、<code>%%u %%o</code> は除去、<code>%%nnn</code> は文字コード</li>
+  <li>MTEXT の書式（<code>\P</code> 改行、<code>\f</code> フォントなど）は外して本文だけを読む</li>
+  <li>Shift_JIS は Windows の文字（㎡・①・半角カナ）を含めて変換。Shift_JIS にない文字は書き出し時に <code>?</code></li>
+</ul>
+
+<h2 id="limits">対応していないこと</h2>
+<ul class="tight">
+  <li>SXF（.sfc / .p21）・Jw_cad・DWG の読み書き（DXF 経由で）</li>
+  <li>DXF のブロック（INSERT）・角度／半径の DIMENSION・スプライン・楕円</li>
+  <li>緩和曲線（クロソイド）の路線</li>
+  <li>PDF の線データ化（PDF は画像）</li>
+  <li>リアルタイム同期（ファイルの受け渡しで連携）</li>
+  <li>スマホの GPS は数 m の誤差。杭打ちは TS で確認</li>
+</ul>
+
+<footer>はじめて使う人には「現場CAD はじめてガイド」をすすめてください。</footer>
+</main>
+</div>

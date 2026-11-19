@@ -1,0 +1,310 @@
+<title>現場CAD はじめてガイド</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=BIZ+UDGothic:wght@400;700&display=swap">
+<style>
+/* 配置: 1列の読み物。手順は番号つきの段、用語や注意は横に寄せた小さな囲み */
+:root {
+  --bg: #f6f7f9;
+  --paper: #ffffff;
+  --fg: #1c2733;
+  --muted: #586473;
+  --line: #d8dee6;
+  --navy: #1f3a5f;
+  --stake: #c2410c;          /* 逃げ杭の橙 */
+  --stake-soft: #fdeee6;
+  --ok: #19733a;
+  --ok-soft: #e7f4ec;
+  --warn-soft: #fff6d6;
+  --warn-line: #e8c74f;
+  --font: "BIZ UDPGothic", "Hiragino Sans", "Yu Gothic", Meiryo, sans-serif;
+  --mono: "BIZ UDGothic", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12171d; --paper: #1a2129; --fg: #e8edf2; --muted: #9eabb9; --line: #2e3945;
+    --navy: #8fb4e6; --stake: #f08a52; --stake-soft: #3a2418; --ok: #6fcf8e; --ok-soft: #173023;
+    --warn-soft: #34300f; --warn-line: #8a7621; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12171d; --paper: #1a2129; --fg: #e8edf2; --muted: #9eabb9; --line: #2e3945;
+  --navy: #8fb4e6; --stake: #f08a52; --stake-soft: #3a2418; --ok: #6fcf8e; --ok-soft: #173023;
+  --warn-soft: #34300f; --warn-line: #8a7621; color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 17px; line-height: 1.85; }
+.wrap { max-width: 760px; margin: 0 auto; padding-block: 28px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+header.top { display: grid; gap: 6px; padding-bottom: 18px; border-bottom: 3px solid var(--navy); }
+.kicker { font-size: 13px; letter-spacing: .08em; color: var(--stake); font-weight: 700; }
+h1 { font-size: clamp(28px, 6vw, 38px); line-height: 1.3; margin: 0; text-wrap: balance; color: var(--navy); }
+.lead { margin: 0; color: var(--muted); }
+h2 { font-size: 24px; line-height: 1.4; margin: 48px 0 12px; text-wrap: balance; display: flex; gap: 10px; align-items: baseline; }
+h2 .no { font-family: var(--mono); font-size: 15px; color: var(--paper); background: var(--navy); border-radius: 6px; padding: 1px 8px; flex: none; }
+h3 { font-size: 19px; margin: 28px 0 6px; }
+p { margin: 8px 0; }
+.toc { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 6px 16px; margin: 20px 0 0; padding: 0; list-style: none; }
+.toc a { color: var(--fg); text-decoration: none; border-bottom: 1px dotted var(--muted); }
+.toc a:hover { color: var(--stake); }
+.can { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 16px 0; }
+.can div { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+.can b { display: block; font-size: 17px; color: var(--navy); }
+.can span { font-size: 15px; color: var(--muted); }
+ol.steps { list-style: none; counter-reset: s; margin: 12px 0; padding: 0; display: grid; gap: 10px; }
+ol.steps > li { counter-increment: s; position: relative; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px 12px 54px; }
+ol.steps > li::before { content: counter(s); position: absolute; left: 14px; top: 12px; width: 28px; height: 28px; border-radius: 50%; background: var(--stake); color: #fff; font-family: var(--mono); font-weight: 700; font-size: 15px; display: grid; place-items: center; line-height: 1; }
+.btn { display: inline-block; font-size: 15px; line-height: 1.4; padding: 1px 8px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 6px; background: var(--paper); white-space: nowrap; font-weight: 700; }
+code, kbd { font-family: var(--mono); font-size: .92em; background: var(--paper); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; }
+.note { border-radius: 10px; padding: 12px 16px; margin: 14px 0; border: 1px solid var(--warn-line); background: var(--warn-soft); }
+.tip { border-radius: 10px; padding: 12px 16px; margin: 14px 0; border: 1px solid var(--ok); background: var(--ok-soft); }
+.note b, .tip b { display: block; }
+dl.words { display: grid; grid-template-columns: max-content 1fr; gap: 10px 16px; margin: 12px 0; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+dl.words dt { font-weight: 700; color: var(--navy); }
+dl.words dd { margin: 0; min-width: 0; }
+@media (max-width: 520px) { dl.words { grid-template-columns: 1fr; gap: 2px; } dl.words dd { margin-bottom: 10px; } }
+figure { margin: 16px 0; background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 14px; overflow-x: auto; }
+figure svg { display: block; width: 100%; height: auto; max-width: 640px; margin: 0 auto; }
+figcaption { font-size: 14px; color: var(--muted); margin-top: 8px; text-align: center; }
+svg .ln { stroke: var(--fg); fill: none; stroke-width: 1.6; }
+svg .box { stroke: var(--line); fill: var(--bg); stroke-width: 1.4; }
+svg .bar { fill: var(--navy); }
+svg .tx { fill: var(--fg); font-family: var(--font); font-size: 13px; }
+svg .txs { fill: var(--muted); font-family: var(--font); font-size: 11.5px; }
+svg .tw { fill: #fff; font-family: var(--font); font-size: 12px; }
+svg .acc { stroke: var(--stake); fill: none; stroke-width: 2; }
+svg .accf { fill: var(--stake); }
+svg .tacc { fill: var(--stake); font-family: var(--font); font-size: 13px; font-weight: 700; }
+.qa { display: grid; gap: 10px; margin: 12px 0; }
+.qa details { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
+.qa summary { cursor: pointer; font-weight: 700; }
+.qa summary:focus-visible, a:focus-visible { outline: 2px solid var(--stake); outline-offset: 2px; }
+footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 14px; color: var(--muted); }
+</style>
+
+<div class="wrap">
+<header class="top">
+  <div class="kicker">はじめての人向け</div>
+  <h1>現場CAD はじめてガイド</h1>
+  <p class="lead">スマホとパソコンで使う、現場向けの図面アプリです。CAD をさわったことがない人でも、上から順に読めば使えるように書いています。</p>
+  <ul class="toc">
+    <li><a href="#what">このアプリでできること</a></li>
+    <li><a href="#words">まず覚える言葉</a></li>
+    <li><a href="#setup">スマホとパソコンに入れる</a></li>
+    <li><a href="#screen">スマホの画面の見かた</a></li>
+    <li><a href="#look">図面を開いて長さを測る</a></li>
+    <li><a href="#stake">位置出しと逃げ杭を作る</a></li>
+    <li><a href="#ts">TS（測量機）に送る</a></li>
+    <li><a href="#link">スマホとパソコンでやりとり</a></li>
+    <li><a href="#pc">パソコン版の基本</a></li>
+    <li><a href="#trouble">困ったとき</a></li>
+  </ul>
+</header>
+
+<h2 id="what">このアプリでできること</h2>
+<div class="can">
+  <div><b>図面を見て測る</b><span>現場で図面を開いて、長さ・面積・座標をその場で確かめる</span></div>
+  <div><b>杭の位置を出す</b><span>建物の角などの座標を出し、逃げ杭も作って測量機に送る</span></div>
+  <div><b>図面をかいて印刷</b><span>パソコンで図面・横断図・縦断図をかき、PDF や紙にする</span></div>
+</div>
+<p>データはインターネット上には送りません。スマホやパソコンの中に保存されます。</p>
+
+<h2 id="words">まず覚える言葉</h2>
+<p>わからない言葉が出てきたら、ここに戻ってきてください。</p>
+<dl class="words">
+  <dt>座標（ざひょう）</dt><dd>場所を数字で表したもの。このアプリでは <b>X が北向き、Y が東向き</b>（測量のきまり）。学校の数学とは X と Y が逆なので注意。</dd>
+  <dt>基準点</dt><dd>座標がはっきり分かっている点。測量会社からもらう「座標の一覧」に載っている点です。図面に▲（青）で表示します。</dd>
+  <dt>位置出し</dt><dd>図面にかいてある建物の角などを、実際の地面に印をつけること。その点を図面に ✛ で表示します。</dd>
+  <dt>逃げ杭（にげぐい）</dt><dd>工事で本当の杭が抜けても位置を戻せるように、少し離れた場所に打つ控えの杭。図面に ⊗（橙）で表示します。</dd>
+  <dt>TS（トータルステーション）</dt><dd>現場で使う測量機。このアプリで作った点を送ると、その場所を案内してくれます。</dd>
+  <dt>DXF（ディーエックスエフ）</dt><dd>図面のファイルの形式。ほかの CAD ソフトとやりとりするときに使います。</dd>
+  <dt>SIMA（シーマ）</dt><dd>点の座標のファイルの形式。TS や測量ソフトに点を送るときに使います。</dd>
+  <dt>.gcad（ジーキャド）</dt><dd>このアプリ専用のファイル。スマホとパソコンの間で、図面や点をまるごとやりとりします。</dd>
+  <dt>縮尺</dt><dd>図面を紙に印刷するときの縮め方。1:100 なら、紙の 1 cm が実際の 1 m。</dd>
+</dl>
+
+<h2 id="setup">スマホとパソコンに入れる</h2>
+<p>アプリはインターネットのページとして公開されます。担当の人から <b>アプリのアドレス</b> を教えてもらってください。パソコン版は、そのアドレスの最後に <code>pc/</code> を付けたものです。</p>
+<h3>iPhone</h3>
+<ol class="steps">
+  <li><b>Safari</b> でアプリのアドレスを開く。</li>
+  <li>下の <span class="btn">共有</span>（四角から矢印が出たマーク）を押す。</li>
+  <li><span class="btn">ホーム画面に追加</span> を押す。これでアプリのように開けます。電波がない場所でも使えます。</li>
+</ol>
+<h3>Android</h3>
+<ol class="steps">
+  <li><b>Chrome</b> でアプリのアドレスを開く。</li>
+  <li>右上の <span class="btn">⋮</span> から <span class="btn">ホーム画面に追加</span>（または「アプリをインストール」）を押す。</li>
+</ol>
+<h3>パソコン（Windows）</h3>
+<ol class="steps">
+  <li><b>Chrome</b> か <b>Edge</b> で、パソコン版のアドレス（最後が <code>pc/</code>）を開く。</li>
+  <li>アドレス欄の右の <span class="btn">インストール</span> マークを押す。スタートメニューから開けるようになります。</li>
+</ol>
+<div class="note"><b>はじめに一度だけ: 位置情報の許可</b>GPS を使うとき「位置情報の使用を許可しますか」と聞かれます。<b>許可</b> を選んでください。</div>
+
+<h2 id="screen">スマホの画面の見かた</h2>
+<figure>
+  <svg viewBox="0 0 640 400" role="img" aria-label="スマホ版の画面の配置図">
+    <rect class="box" x="40" y="10" width="220" height="380" rx="22"/>
+    <rect class="bar" x="52" y="30" width="196" height="38" rx="4"/>
+    <text class="tw" x="60" y="47">☰</text><text class="tw" x="78" y="46">図面の名前</text><text class="tw" x="78" y="60" style="font-size:9.5px;opacity:.75">図形 14 ・ 点 6</text>
+    <rect x="160" y="38" width="48" height="20" rx="10" style="fill:none;stroke:#fff;stroke-opacity:.5"/><text class="tw" x="166" y="52" style="font-size:10px">施工図</text>
+    <text class="tw" x="226" y="52">▤</text>
+    <rect class="box" x="52" y="72" width="196" height="196" rx="2" style="fill:var(--paper)"/>
+    <rect x="58" y="78" width="70" height="16" rx="5" class="box"/><text class="txs" x="62" y="90">X 0.000 Y 24.0</text>
+    <path class="ln" d="M80 220 L120 120 L200 140 L210 230 Z"/>
+    <circle class="accf" cx="120" cy="120" r="4"/><circle class="accf" cx="200" cy="140" r="4"/>
+    <rect x="214" y="232" width="26" height="26" rx="7" class="box"/>
+    <rect class="box" x="52" y="272" width="196" height="62" rx="10"/>
+    <rect x="60" y="280" width="180" height="18" rx="5" style="fill:var(--warn-soft);stroke:var(--warn-line)"/><text class="txs" x="66" y="293">タップで点を追加</text>
+    <rect x="60" y="304" width="138" height="22" rx="6" class="box" style="fill:var(--paper)"/><rect x="202" y="304" width="38" height="22" rx="6" style="fill:var(--navy)"/><text class="tw" x="208" y="319" style="font-size:10px">入力</text>
+    <rect class="bar" x="52" y="340" width="196" height="38" rx="4"/>
+    <circle cx="86" cy="355" r="9" style="fill:var(--stake);opacity:.45"/>
+    <text class="tw" x="58" y="372" style="font-size:9.5px">選択 点 線 寸法 文字 距離 …</text>
+    <path class="acc" d="M262 49 H330"/><text class="tacc" x="336" y="46">上の帯</text>
+    <text class="txs" x="336" y="64">☰ メニュー ／ 名前の下に図形と点の数</text>
+    <text class="txs" x="336" y="80">施工図: 印刷用の図面を作る ／ ▤: 点の一覧</text>
+    <path class="acc" d="M262 150 H330"/><text class="tacc" x="336" y="147">図面</text>
+    <text class="txs" x="336" y="165">指2本で広げる・縮める、1本でずらす</text>
+    <text class="txs" x="336" y="181">左上に今の座標。右下の四角いボタンで全体表示</text>
+    <path class="acc" d="M262 302 H330"/><text class="tacc" x="336" y="299">指示の欄</text>
+    <text class="txs" x="336" y="317">黄色い枠に「次に何をするか」が出る</text>
+    <text class="txs" x="336" y="333">座標や長さはここに打ち込める</text>
+    <path class="acc" d="M262 358 H330"/><text class="tacc" x="336" y="355">道具のボタン</text>
+    <text class="txs" x="336" y="373">今使っている道具は橙色に光る（右端は「戻す」）</text>
+  </svg>
+  <figcaption>スマホ版の画面。下の道具を選んでから、図面をタップします。</figcaption>
+</figure>
+<div class="tip"><b>最初の画面</b>まだ何も入っていないときは、図面の上に「図面を読み込む」「座標を読み込む」「パソコンから受け取る」「白紙でかく」の4つのボタンが出ます。ここから始めるのがいちばん簡単です。</div>
+<div class="tip"><b>まちがえたら</b>右下の <span class="btn">戻す</span> を押すと、ひとつ前に戻ります。何度でも戻せます。</div>
+
+<h2 id="look">図面を開いて長さを測る</h2>
+<ol class="steps">
+  <li>最初の画面の <span class="btn">図面を読み込む</span>（または左上の <span class="btn">☰</span> → <span class="btn">図面を読み込む（DXF）</span>）を押し、もらった DXF ファイルを選ぶ。</li>
+  <li>図面が出たら、指で広げて見たい所を大きくする。</li>
+  <li>下の <span class="btn">距離</span> を押し、測りたい2か所を順にタップ。長さが出ます。線の端や角に近い所をタップすると、ぴったりその点に吸い付きます。</li>
+  <li>面積を知りたいときは <span class="btn">面積</span> を押して、角を順にタップ。</li>
+</ol>
+<div class="note"><b>図面がとても大きく（または小さく）見えるとき</b>図面が mm で作られていると、1000 倍の大きさで入ってくることがあります。<span class="btn">☰</span> → <span class="btn">図面の縮尺を合わせる</span> を開き、<span class="btn">寸法線を選ぶ</span> で図面の寸法をタップして <span class="btn">合わせる</span>。寸法の数字が自動で入ります。</div>
+
+<h2 id="stake">位置出しと逃げ杭を作る</h2>
+<p>図面の建物の角などを現場に出すための点と、その控えの逃げ杭を作ります。</p>
+<ol class="steps">
+  <li><b>基準点を入れる</b>: 最初の画面の <span class="btn">座標を読み込む</span> か <span class="btn">☰</span> → <span class="btn">座標を読み込む（SIMA / CSV）</span> で、測量会社からもらった座標のファイルを選ぶ。▲ の点が出ます。</li>
+  <li><b>図面の位置を合わせる</b>: 図面の座標が現場と違うときは <span class="btn">☰</span> → <span class="btn">図面を現場の座標に合わせる</span>。図面の上の点と、それに当たる基準点を2組選んで <span class="btn">確認</span> → <span class="btn">合わせる</span>。ずれが mm で出るので、大きすぎないか見ます。</li>
+  <li><b>位置出し点を置く</b>: 下の <span class="btn">点</span> を押し、建物の角をタップ。P1、P2… と名前が付きます。</li>
+  <li><b>逃げ杭を作る</b>: 下の <span class="btn">逃げ</span> を押す。距離に <code>1</code>（1 m 離す）と入れて、角をタップ。線の延長の上に ⊗ の逃げ杭ができます。名前は「P1-1」のように元の点の名前に番号が付きます。</li>
+</ol>
+<div class="tip"><b>2本ずつ作りたいとき</b>距離に <code>1,2</code> と入れると、1 m と 2 m の2本ずつ作れます。</div>
+
+<h2 id="ts">TS（測量機）に送る</h2>
+<ol class="steps">
+  <li><span class="btn">☰</span> → <span class="btn">SIMA で書き出す・送る</span>。</li>
+  <li>送る点の種類（位置出し・逃げなど）にチェックを付ける。</li>
+  <li><span class="btn">保存</span> か <span class="btn">共有</span> で、メールや LINE で TS 担当の人やパソコンに送る。</li>
+</ol>
+<p>文字は国内の測量機で読める形（Shift_JIS）で書き出すので、点の名前が化けません。</p>
+
+<h2 id="link">スマホとパソコンでやりとり</h2>
+<figure>
+  <svg viewBox="0 0 640 220" role="img" aria-label="スマホとパソコンのやりとりの流れ">
+    <rect class="box" x="20" y="40" width="170" height="140" rx="12"/>
+    <text class="tacc" x="76" y="70">パソコン</text>
+    <text class="txs" x="40" y="96">図面をかく・直す</text>
+    <text class="txs" x="40" y="116">基準点・位置出し点</text>
+    <text class="txs" x="40" y="136">印刷・PDF</text>
+    <rect class="box" x="450" y="40" width="170" height="140" rx="12"/>
+    <text class="tacc" x="515" y="70">スマホ</text>
+    <text class="txs" x="470" y="96">現場で測る・GPS</text>
+    <text class="txs" x="470" y="116">位置出し・逃げ杭</text>
+    <text class="txs" x="470" y="136">TS へ SIMA</text>
+    <path class="acc" d="M196 86 H440"/><path class="acc" d="M432 80 L442 86 L432 92"/>
+    <text class="tx" x="226" y="76">［現場へ送る］ → .gcad</text>
+    <path class="acc" d="M444 146 H200"/><path class="acc" d="M208 140 L198 146 L208 152"/>
+    <text class="tx" x="214" y="170">.gcad ← ［パソコンへ送る］</text>
+    <text class="txs" x="240" y="118">LINE・メール・Google ドライブ</text>
+  </svg>
+  <figcaption>やりとりは .gcad ファイルを送るだけ。送る方法は LINE でもメールでもかまいません。</figcaption>
+</figure>
+<h3>パソコン → スマホ</h3>
+<ol class="steps">
+  <li>パソコン版の <span class="btn">現場連携</span> タブ → <span class="btn">現場へ送る</span> → <span class="btn">ファイルに保存</span>。</li>
+  <li>できた .gcad を LINE やメールでスマホに送る。</li>
+  <li>スマホ版の <span class="btn">☰</span> → <span class="btn">パソコンから受け取る</span> で、そのファイルを選ぶ。</li>
+</ol>
+<h3>スマホ → パソコン（現場で作った点を戻す）</h3>
+<ol class="steps">
+  <li>スマホ版の <span class="btn">☰</span> → <span class="btn">パソコンへ送る（.gcad）</span> で、LINE やメールでパソコンに送る。</li>
+  <li>パソコン版の <span class="btn">現場連携</span> タブ → <span class="btn">現場データ取込</span> でそのファイルを選び、<span class="btn">取り込む（差分）</span>。</li>
+</ol>
+<div class="tip"><b>「取り込む（差分）」なら消えません</b>両方で作った点や線はどちらも残ります。同じものを両方で直したときは、あとで直した方が残ります。「開く（置き換え）」を選ぶと今の図面がまるごと入れ替わるので注意。</div>
+
+<h2 id="pc">パソコン版の基本</h2>
+<figure>
+  <svg viewBox="0 0 640 320" role="img" aria-label="パソコン版の画面の配置図">
+    <rect class="bar" x="20" y="10" width="600" height="22" rx="3"/>
+    <text class="tw" x="28" y="25" style="font-size:11px">現場CAD　💾 ↶ ↷ 🖨　図面の名前［保存済み］</text>
+    <rect x="430" y="14" width="140" height="14" rx="4" style="fill:#ffffff;fill-opacity:.15"/><text class="tw" x="436" y="25" style="font-size:9.5px">🔍 コマンドを検索 Ctrl K</text>
+    <rect class="box" x="20" y="34" width="600" height="18"/>
+    <text class="txs" x="28" y="47">ファイル　ホーム　作図　図形編集　土木　測量計算　現場連携　表示（タブ）</text>
+    <rect class="box" x="20" y="54" width="600" height="38"/>
+    <text class="txs" x="28" y="77">リボン: よく使うものは大きいボタン、ほかは小さいボタン。ボタンに乗せると説明が出る</text>
+    <rect class="box" x="20" y="94" width="600" height="18"/>
+    <text class="txs" x="28" y="107">スタイルバー: レイヤ・色・線の種類・縮尺・用紙</text>
+    <rect class="box" x="20" y="114" width="130" height="172"/>
+    <text class="tacc" x="30" y="136">マルチボックス</text>
+    <text class="txs" x="30" y="156">今やっていること</text><text class="txs" x="30" y="172">と次の指示、数字</text><text class="txs" x="30" y="188">の入力欄</text>
+    <rect class="box" x="152" y="114" width="336" height="172" style="fill:var(--paper)"/>
+    <rect x="200" y="132" width="240" height="134" style="fill:none;stroke:var(--muted);stroke-dasharray:4 3"/>
+    <text class="tx" x="262" y="204">図面（白い紙が印刷範囲）</text>
+    <rect x="460" y="226" width="20" height="50" rx="4" class="box"/>
+    <rect class="box" x="490" y="114" width="130" height="172"/>
+    <text class="tacc" x="500" y="136">プロパティ</text>
+    <text class="txs" x="500" y="156">選んだ線の長さ</text><text class="txs" x="500" y="172">や座標を直せる</text>
+    <text class="tacc" x="500" y="210">レイヤ</text>
+    <text class="txs" x="500" y="230">目のボタンで</text><text class="txs" x="500" y="246">表示のオン・オフ</text>
+    <rect class="bar" x="20" y="288" width="600" height="20"/>
+    <text class="tw" x="28" y="302" style="font-size:10px">座標（X・Y）　｜　吸い付く場所の切り替え（端点・中点・交点…）　｜　表示倍率</text>
+  </svg>
+  <figcaption>パソコン版の画面。左の「マルチボックス」に、次に何をすればいいかが出ます。図面の右下には全体表示・拡大・縮小のボタン。</figcaption>
+</figure>
+<div class="tip"><b>最初の画面</b>図面が空のときは「白紙からかく」「ファイルを開く」「スマホのデータを取り込む」「練習用の図面を開く」のボタンが出ます。</div>
+<h3>線を1本引いてみる</h3>
+<ol class="steps">
+  <li>上の <span class="btn">作図</span> タブ → <span class="btn">単線</span> を押す。</li>
+  <li>図面の上で、始まりの場所をクリック、終わりの場所をクリック。線が引けます。</li>
+  <li>長さを決めたいときは、始まりをクリックしたあと、キーボードで <code>5</code> と打って <kbd>Enter</kbd>。マウスの向きに 5 m の線が引けます。</li>
+  <li>終わるときは <kbd>Esc</kbd>。</li>
+</ol>
+<h3>形を直す（つまみ）</h3>
+<ol class="steps">
+  <li>直したい線や図形をクリックして選ぶ。角に小さな四角い「つまみ」が出ます。</li>
+  <li>つまみをドラッグして、新しい場所で離す。その角だけが動きます。線のまん中のつまみは線ごと、円の右のつまみは大きさが変わります。</li>
+  <li>まちがえたら <kbd>Ctrl</kbd> + <kbd>Z</kbd>。</li>
+</ol>
+<h3>覚えておくと楽な操作</h3>
+<dl class="words">
+  <dt>右クリック</dt><dd>メニューが出る。「確定」「1つ戻る」「終了」はここから。</dd>
+  <dt>マウスのホイール</dt><dd>回すと拡大・縮小。押したまま動かすと図面がずれる。</dd>
+  <dt><kbd>Ctrl</kbd> + <kbd>Z</kbd></dt><dd>まちがえたら1つ戻す。</dd>
+  <dt><kbd>Ctrl</kbd> + <kbd>S</kbd></dt><dd>保存。こまめに押す。</dd>
+  <dt><kbd>Ctrl</kbd> + <kbd>P</kbd></dt><dd>印刷・PDF。図面枠と表題欄が付きます。</dd>
+  <dt><kbd>Ctrl</kbd> + <kbd>K</kbd></dt><dd>コマンドを名前で探す。「寸法」「逃げ」などと打って <kbd>Enter</kbd>。どのタブにあるか分からなくても使えます。</dd>
+  <dt>右上の月のボタン</dt><dd>暗い表示に切り替える。夜や暗い部屋で目が楽です。</dd>
+  <dt><kbd>F1</kbd></dt><dd>アプリの中の「使い方」。</dd>
+</dl>
+
+<h2 id="trouble">困ったとき</h2>
+<div class="qa">
+  <details><summary>図面が見えなくなった・どこにあるか分からない</summary><p>スマホは右下の四角いボタン（全体表示）、パソコンは <kbd>Home</kbd> キー（または マウスの中ボタンを2回）で、全体が見える大きさに戻ります。</p></details>
+  <details><summary>まちがえて消してしまった</summary><p>スマホは <span class="btn">戻す</span>、パソコンは <kbd>Ctrl</kbd> + <kbd>Z</kbd>。何回か押すと、もっと前に戻ります。</p></details>
+  <details><summary>図面の大きさがおかしい（1000 倍など）</summary><p><span class="btn">図面の縮尺を合わせる</span>（パソコンは <span class="btn">図形編集</span> タブの <span class="btn">縮尺合わせ</span>）で、寸法を1か所選ぶと直ります。</p></details>
+  <details><summary>文字が「%%c300」のように変になる</summary><p>今のアプリでは φ300 のように直して読み込みます。それでも変な文字があれば、その DXF を担当の人に見せてください。</p></details>
+  <details><summary>GPS の位置がずれる</summary><p>スマホの GPS は数 m ずれることがあります。杭打ちなど正確さが必要な作業は、必ず TS などの測量機で確かめてください。GPS は「だいたいの場所を知る」ために使います。</p></details>
+  <details><summary>別のスマホやパソコンでデータが見えない</summary><p>データはその機械の中にだけ保存されます。別の機械で使うときは .gcad ファイルで送ってください（<a href="#link">やりとりの方法</a>）。スマホの「Safari の履歴を消す」などをするとデータが消えることがあるので、大事な図面は .gcad で保存しておきましょう。</p></details>
+  <details><summary>スマホ版の「使い方」はどこ？</summary><p><span class="btn">☰</span> メニューのいちばん下の <span class="btn">使い方</span> です。最初の画面の「使い方を見る」からも開けます。</p></details>
+  <details><summary>パソコン版でボタンを押しても何も起きない</summary><p>何かの作業の途中かもしれません。<kbd>Esc</kbd> を押して終わらせてから、もう一度押してください。左のマルチボックスに今の作業の説明が出ています。</p></details>
+</div>
+
+<footer>このガイドは現場CAD の画面と操作に合わせて書いています。使い慣れた人向けの早見表は「現場CAD 操作リファレンス」を見てください。</footer>
+</div>

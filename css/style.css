@@ -1,0 +1,415 @@
+:root {
+  --bg: #f4f6f8;
+  --canvas: #ffffff;
+  --fg: #16202a;
+  --muted: #5d6b78;
+  --line: #d5dbe1;
+  --bar: #1b2a3a;
+  --bar-fg: #ffffff;
+  --accent: #0a6cff;
+  --accent-fg: #ffffff;
+  --panel: #ffffff;
+  --danger: #c62828;
+  --shadow: 0 4px 18px rgba(0, 0, 0, .18);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-t: env(safe-area-inset-top, 0px);
+}
+:root.dark {
+  --bg: #0f151b;
+  --canvas: #111820;
+  --fg: #e8eef4;
+  --muted: #95a3b0;
+  --line: #2a3742;
+  --bar: #0b1117;
+  --panel: #18222c;
+  --accent: #3d8bff;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body {
+  margin: 0; height: 100%; overflow: hidden;
+  background: var(--bg); color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", sans-serif;
+  font-size: 15px;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+body { display: flex; flex-direction: column; }
+button { font: inherit; color: inherit; }
+
+#top {
+  display: flex; align-items: center; gap: 8px;
+  padding: calc(6px + var(--safe-t)) 8px 6px;
+  background: var(--bar); color: var(--bar-fg);
+}
+#title { flex: 1; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.icon {
+  width: 40px; height: 40px; border: 0; border-radius: 10px;
+  background: transparent; color: var(--bar-fg); font-size: 22px;
+}
+.icon:active { background: rgba(255,255,255,.15); }
+.chip {
+  border: 1px solid rgba(255,255,255,.35); background: transparent; color: var(--bar-fg);
+  border-radius: 999px; padding: 6px 12px; font-size: 13px;
+}
+
+#stage { position: relative; flex: 1; min-height: 0; background: var(--canvas); }
+#cv { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
+
+#hud {
+  position: absolute; left: 8px; top: 8px; pointer-events: none;
+  font: 12px/1.4 ui-monospace, "SF Mono", Menlo, monospace;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px;
+}
+#hudSnap { color: var(--accent); }
+#hudSnap:empty { display: none; }
+#gpsHud {
+  position: absolute; right: 8px; top: 8px; max-width: 60%;
+  font: 12px/1.4 ui-monospace, "SF Mono", Menlo, monospace;
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px;
+}
+#viewBtns { position: absolute; right: 10px; bottom: 10px; display: flex; flex-direction: column; gap: 8px; }
+.fab {
+  width: 46px; height: 46px; border-radius: 50%; border: 1px solid var(--line);
+  background: var(--panel); color: var(--fg); font-size: 20px; box-shadow: var(--shadow);
+}
+#toast {
+  position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
+  max-width: 86%; background: rgba(20,28,36,.92); color: #fff; padding: 8px 14px;
+  border-radius: 10px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none;
+}
+#toast.show { opacity: 1; }
+
+#panel {
+  background: var(--panel); border-top: 1px solid var(--line);
+  max-height: 38vh; overflow-y: auto; padding: 8px 12px;
+}
+#panel h4 { margin: 2px 0 6px; font-size: 14px; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 14px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; font-family: ui-monospace, "SF Mono", Menlo, monospace; text-align: right; user-select: text; -webkit-user-select: text; }
+.kv dd.big { font-size: 18px; font-weight: 700; }
+#panel hr { border: 0; border-top: 1px solid var(--line); margin: 10px 0 6px; }
+.panel-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
+#cmdbar { background: var(--panel); border-top: 1px solid var(--line); padding: 6px 8px; }
+#cmdHint { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+.row { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+.row:first-of-type { margin-top: 0; }
+#cmd {
+  flex: 1; min-width: 0; height: 40px; font-size: 16px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+#cmdBtns .btn { flex: 1; }
+
+.btn {
+  min-height: 40px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--fg);
+}
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.btn.danger { color: var(--danger); }
+.btn:active { filter: brightness(.92); }
+
+#tools {
+  display: flex; overflow-x: auto; gap: 2px;
+  padding: 4px 4px calc(4px + var(--safe-b));
+  background: var(--bar); scrollbar-width: none;
+}
+#tools::-webkit-scrollbar { display: none; }
+.tool {
+  flex: 1 1 0; min-width: 34px; border: 0; border-radius: 10px; background: transparent;
+  color: #c9d4de; font-size: 11px; padding: 4px 2px; white-space: nowrap; display: flex; flex-direction: column; align-items: center;
+}
+.tool span { font-size: 20px; line-height: 26px; }
+.tool.active { background: var(--accent); color: #fff; }
+.tool.on { color: #4cd964; }
+
+dialog { border: 0; padding: 16px; color: var(--fg); background: var(--panel); }
+dialog::backdrop { background: rgba(0,0,0,.4); }
+dialog h2 { margin: 0 0 10px; font-size: 18px; }
+dialog h3 { margin: 14px 0 6px; font-size: 13px; color: var(--muted); font-weight: 600; }
+.modal { width: min(92vw, 420px); border-radius: 14px; }
+.modal.tall { max-height: 86vh; }
+.modal label { display: block; margin: 8px 0; font-size: 14px; color: var(--muted); }
+.modal input, .modal select {
+  display: block; width: 100%; height: 42px; font-size: 16px; margin-top: 4px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg);
+}
+.modal .row { justify-content: flex-end; margin-top: 14px; }
+.sheet { margin: 0; height: 100%; max-height: 100%; width: min(86vw, 360px); overflow-y: auto; padding-top: calc(16px + var(--safe-t)); }
+.sheet.left { margin-right: auto; }
+.sheet.right { margin-left: auto; }
+.menu-group { display: flex; flex-direction: column; border-top: 1px solid var(--line); padding: 4px 0; }
+.menu-group > button {
+  text-align: left; border: 0; background: transparent; padding: 11px 4px; font-size: 15px;
+}
+.menu-group > button:active { background: var(--bg); }
+.toggle { display: flex; align-items: center; gap: 10px; padding: 9px 4px; }
+.toggle input { width: 20px; height: 20px; }
+.close-sheet { width: 100%; margin-top: 10px; }
+.small { font-size: 12px; color: var(--muted); }
+.help p, .help li { font-size: 14px; line-height: 1.6; }
+.help code { background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+
+#ptList { font-size: 13px; }
+#ptList table { width: 100%; border-collapse: collapse; }
+#ptList th { text-align: left; color: var(--muted); font-weight: 500; position: sticky; top: 0; background: var(--panel); }
+#ptList td, #ptList th { padding: 7px 4px; border-bottom: 1px solid var(--line); }
+#ptList td.num { font-family: ui-monospace, "SF Mono", Menlo, monospace; text-align: right; }
+#ptList tr[data-id] { cursor: pointer; }
+#ptList tr[data-id]:active { background: var(--bg); }
+
+/* ---------- 図から選ぶ ---------- */
+#pickBar {
+  /* ヘッダーの上に重ねる（図面を隠さない） */
+  position: fixed; left: 0; right: 0; top: 0; z-index: 20;
+  padding: calc(6px + var(--safe-t)) 8px 6px 12px; min-height: calc(52px + var(--safe-t));
+  display: flex; align-items: center; gap: 6px;
+  background: #c026d3; color: #fff; box-shadow: var(--shadow);
+}
+#pickMsg { flex: 1; font-size: 14px; }
+#pickBar .btn { min-height: 34px; }
+
+/* ---------- 全画面シート ---------- */
+.sheet.full { width: 100%; max-width: 640px; margin: 0 auto; }
+.sheet-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.sheet-head h2 { flex: 1; margin: 0; font-size: 17px; }
+.calc-tip { margin: 0 0 8px; }
+#calcBody h3 { margin: 16px 0 6px; }
+.calc-item {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%;
+  text-align: left; border: 1px solid var(--line); border-radius: 10px; background: var(--bg);
+  padding: 10px 12px; margin-bottom: 6px;
+}
+.calc-item b { font-size: 15px; }
+.calc-item span { font-size: 12px; color: var(--muted); }
+.calc-item:active { filter: brightness(.95); }
+
+.field { display: block; margin: 10px 0; }
+.field > span { display: block; font-size: 13px; color: var(--muted); margin-bottom: 3px; }
+.field > span i { font-style: normal; font-size: 11px; margin-left: 6px; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px; }
+.field small { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+.in { display: flex; gap: 6px; }
+.in input, .in select, .field select {
+  flex: 1; min-width: 0; height: 42px; font-size: 16px; padding: 0 10px; width: 100%;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.pick { width: 46px; flex: 0 0 46px; height: 42px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: 18px; }
+.btn.wide { flex: 1; }
+.calc-result { margin-top: 12px; }
+.calc-result .kv { padding: 10px; background: var(--bg); border-radius: 10px; }
+.err { color: var(--danger); font-size: 14px; }
+.tbl { overflow-x: auto; margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; }
+.tbl table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.tbl th, .tbl td { padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.tbl th { background: var(--bg); text-align: left; font-weight: 600; }
+.tbl td.num { text-align: right; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+.small-btn { min-height: 30px; padding: 0 10px; font-size: 13px; }
+input.mini { width: 80px; height: 34px; font-size: 15px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); margin-left: auto; }
+#calPairs table { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 8px; }
+#calPairs td, #calPairs th { padding: 6px 4px; border-bottom: 1px solid var(--line); text-align: left; }
+#calPairs td.num { text-align: right; font-family: ui-monospace, Menlo, monospace; }
+#calDialog .in { margin-top: 4px; }
+#calDialog select { width: 100%; }
+
+/* ---------- 計算書 ---------- */
+.report-wrap { border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin-top: 10px; }
+.report h3 { margin: 0; font-size: 15px; color: var(--fg); }
+.report .small { margin: 2px 0 6px; }
+.rk { border-collapse: collapse; font-size: 13px; margin: 4px 0; }
+.rk th { text-align: left; font-weight: 500; color: var(--muted); padding: 2px 12px 2px 0; vertical-align: top; }
+.rk td { font-family: ui-monospace, Menlo, monospace; padding: 2px 0; }
+.rk.res td { font-weight: 600; }
+.report-wrap .small-btn { margin-top: 6px; }
+
+#printArea { display: none; }
+@media print {
+  html, body { height: auto; overflow: visible; background: #fff; color: #000; display: block; }
+  body > *:not(#printArea) { display: none !important; }
+  #printArea { display: block; font-size: 11pt; }
+  #printArea h1 { font-size: 16pt; margin: 0 0 4px; }
+  #printArea .report { page-break-inside: avoid; border-top: 1px solid #999; padding-top: 8px; margin-top: 12px; }
+  #printArea .rk th { color: #444; }
+  #printArea .tbl { overflow: visible; border: 0; }
+  #printArea .tbl table { font-size: 9pt; }
+  #printArea .tbl th, #printArea .tbl td { border: 1px solid #999; padding: 2px 6px; }
+}
+
+/* ---------- 位置出し・逃げ ---------- */
+.mini-label { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.mini-label select, #nigeMode {
+  height: 36px; font-size: 15px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); padding: 0 6px;
+}
+#nigeMode { flex: 1; min-width: 0; }
+#nigeRow input.mini, #ptRow input.mini { margin-left: 0; width: 64px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.chip-btn { border: 1px solid var(--line); background: var(--bg); color: var(--fg); border-radius: 999px; padding: 5px 12px; font-size: 13px; }
+.chip-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tag { display: inline-block; font-size: 10px; padding: 0 5px; border-radius: 4px; margin-left: 4px; vertical-align: 1px; color: #fff; }
+.tag.g-基準点 { background: #2563eb; } .tag.g-位置出し { background: #334155; } .tag.g-逃げ { background: #ea580c; } .tag.g-その他 { background: #94a3b8; }
+.fit-pair { border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; margin: 8px 0; }
+.fit-pair h4 { margin: 2px 0; font-size: 13px; }
+.fit-pair .field { margin: 6px 0; }
+#fitResult { margin: 8px 0; line-height: 1.6; }
+#simaGroups .toggle { padding: 6px 4px; }
+.help ol li { font-size: 14px; line-height: 1.6; margin-bottom: 4px; }
+
+/* 11 個のツールを1行に収める */
+#tools { gap: 0; padding-left: 2px; padding-right: 2px; overflow-x: hidden; }
+.tool { min-width: 0; padding: 4px 0; font-size: 10.5px; overflow: hidden; }
+.tool span { font-size: 19px; }
+/* ダイアログ内のチェックボックス */
+.modal { overflow-y: auto; max-height: 92vh; }
+.modal label.toggle { display: flex; align-items: center; gap: 10px; color: var(--fg); }
+.modal .toggle input { display: inline-block; width: 20px; height: 20px; margin: 0; flex: 0 0 auto; }
+
+/* ---------- 施工図 ---------- */
+#top .chip { white-space: nowrap; }
+.sheet-preview { background: #d1d5db; border-radius: 8px; padding: 8px; display: flex; justify-content: center; }
+#sheetCv { width: 100%; height: auto; background: #fff; box-shadow: 0 1px 6px rgba(0,0,0,.25); }
+.form label { display: block; margin: 8px 0; font-size: 13px; color: var(--muted); }
+.form input[type=text], .form select {
+  display: block; width: 100%; height: 40px; font-size: 16px; margin-top: 3px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg);
+}
+.form .toggle { display: flex; align-items: center; gap: 10px; color: var(--fg); font-size: 14px; }
+.form .toggle input { width: 20px; height: 20px; margin: 0; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 10px; }
+.row.wrap { flex-wrap: wrap; }
+.row.wrap .btn { flex: 1 1 auto; }
+.sheet-out { position: sticky; bottom: calc(-16px); background: var(--panel); padding: 10px 0 calc(10px + var(--safe-b)); border-top: 1px solid var(--line); margin-top: 12px; }
+#shGroups label { display: inline-flex; align-items: center; gap: 4px; margin: 0; font-size: 13px; color: var(--fg); }
+#kindSel, .mini-sel { height: 36px; font-size: 15px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); padding: 0 6px; }
+#kindSel { flex: 1; }
+.mini-sel { margin-left: auto; }
+#printArea img { display: block; }
+
+/* ============================================================
+   画面の作り込み（パソコン版と同じ色・アイコン）
+   上: 濃紺の帯、下: 道具の帯。作業中の道具は橙、操作は青。
+   ============================================================ */
+:root {
+  --bg: #eef2f6; --canvas: #ffffff; --fg: #17212c; --muted: #5b6878; --faint: #8592a3;
+  --line: #d3dbe4; --line2: #e4e9ef; --bar: #1b3150; --bar2: #233e63; --bar-fg: #eef3f9; --bar-mut: #a9bbd2;
+  --accent: #1f6feb; --accent-bg: #e3edfd; --panel: #ffffff; --stake: #d0530f; --stake-bg: #fff1e8;
+  --prompt-bg: #fffaf0; --prompt-line: #f1d9a6;
+  --shadow: 0 2px 6px rgba(16, 28, 45, .10), 0 8px 24px rgba(16, 28, 45, .14);
+  --r: 12px;
+}
+:root.dark {
+  --bg: #121922; --canvas: #0f151c; --fg: #e3e9f0; --muted: #9aa9bb; --faint: #6e7e92;
+  --line: #2c3a4a; --line2: #243140; --bar: #0f1722; --bar2: #162131; --bar-fg: #e3e9f1; --bar-mut: #8fa0b6;
+  --accent: #5b9bff; --accent-bg: #1b2f4d; --panel: #18222d; --stake: #ff8a4c; --stake-bg: #35221a;
+  --prompt-bg: #2a2416; --prompt-line: #5a4a24; color-scheme: dark;
+}
+i[data-ic], .mi { display: inline-grid; place-items: center; font-style: normal; }
+i[data-ic] svg, .mi svg { width: 100%; height: 100%; }
+
+/* 上の帯 */
+#top { gap: 6px; padding: calc(6px + var(--safe-t)) 6px 6px; background: var(--bar); }
+.icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 11px; }
+.icon i { width: 24px; height: 24px; }
+.titlebox { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.2; }
+#title { font-size: 16px; font-weight: 700; }
+#subTitle { font-size: 11px; color: var(--bar-mut); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip { display: inline-flex; align-items: center; gap: 5px; height: 34px; padding: 0 12px; border-color: rgba(255, 255, 255, .28); font-size: 13px; }
+.chip i { width: 16px; height: 16px; }
+.chip.strong { background: rgba(255, 255, 255, .12); border-color: transparent; font-weight: 600; }
+.chip:active { background: rgba(255, 255, 255, .2); }
+
+/* 図面の上の表示 */
+#hud { left: 10px; top: 10px; font: 12.5px/1.45 ui-monospace, "SF Mono", Menlo, monospace; background: color-mix(in srgb, var(--panel) 92%, transparent); border: 1px solid var(--line); border-radius: 10px; padding: 5px 10px; box-shadow: 0 1px 4px rgba(0, 0, 0, .08); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+#hudSnap { display: inline-block; margin-top: 2px; font-family: -apple-system, "Hiragino Sans", sans-serif; font-size: 11px; font-weight: 600; color: #fff; background: var(--stake); border-radius: 6px; padding: 0 6px; }
+#gpsHud { right: 10px; top: 10px; border-radius: 10px; padding: 5px 10px; box-shadow: 0 1px 4px rgba(0, 0, 0, .08); }
+#viewBtns { right: 12px; bottom: 14px; gap: 10px; }
+.fab { width: 48px; height: 48px; display: grid; place-items: center; border-radius: 14px; background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); color: var(--fg); }
+.fab i { width: 24px; height: 24px; }
+.fab:active { transform: scale(.96); }
+#toast { bottom: 18px; display: flex; align-items: center; gap: 8px; border-radius: 12px; padding: 9px 14px; background: rgba(18, 28, 42, .94); box-shadow: var(--shadow); line-height: 1.5; transform: translate(-50%, 6px); transition: opacity .18s, transform .18s; }
+#toast::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #6fd39a; flex: none; }
+#toast.show { transform: translate(-50%, 0); }
+
+/* 何もないときの案内 */
+#emptyState { position: absolute; inset: 0; display: grid; place-items: center; padding: 18px; background: color-mix(in srgb, var(--canvas) 70%, transparent); }
+.es-card { width: min(380px, 100%); background: var(--panel); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); padding: 18px 16px 12px; }
+.es-card > b { font-size: 18px; display: block; }
+.es-card > p { margin: 6px 0 14px; font-size: 13.5px; color: var(--muted); line-height: 1.6; }
+.es-acts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.es-acts button { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; text-align: left; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--bg); color: var(--fg); min-height: 92px; }
+.es-acts button:active { border-color: var(--accent); background: var(--accent-bg); }
+.es-acts i { width: 30px; height: 30px; color: var(--accent); }
+.es-acts span { font-size: 14px; font-weight: 700; line-height: 1.3; }
+.es-acts small { display: block; font-size: 11.5px; font-weight: 400; color: var(--muted); margin-top: 2px; }
+.es-help { width: 100%; margin-top: 10px; height: 40px; border: 0; background: transparent; color: var(--accent); font-weight: 600; }
+
+/* 下の情報欄・指示欄 */
+#panel { border-top: 0; border-radius: 18px 18px 0 0; box-shadow: 0 -4px 18px rgba(16, 28, 45, .10); padding: 14px 14px 10px; position: relative; z-index: 2; }
+#panel::before { content: ""; position: absolute; left: 50%; top: 6px; width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: var(--line); }
+#panel h4 { font-size: 15px; margin: 4px 0 8px; }
+.kv { gap: 4px 14px; }
+.kv dd.big { font-size: 19px; }
+.panel-actions .btn { border-radius: 10px; }
+#cmdbar { border-top: 0; box-shadow: 0 -4px 18px rgba(16, 28, 45, .10); border-radius: 18px 18px 0 0; padding: 10px 10px 8px; position: relative; z-index: 2; }
+#cmdHint { font-size: 13.5px; line-height: 1.5; color: var(--fg); background: var(--prompt-bg); border: 1px solid var(--prompt-line); border-radius: 10px; padding: 7px 10px; margin-bottom: 8px; }
+#cmdHint:empty { display: none; }
+#cmd { height: 44px; border-radius: 10px; background: var(--bg); }
+#cmd:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.btn { min-height: 44px; border-radius: 10px; font-weight: 600; }
+.btn.primary { box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
+.mini-label select, #nigeMode, #kindSel, .mini-sel { height: 40px; border-radius: 9px; }
+input.mini { height: 40px; border-radius: 9px; }
+
+/* 下の道具の帯 */
+#tools { gap: 0; padding: 4px 2px calc(4px + var(--safe-b)); background: var(--bar); overflow-x: hidden; }
+.tool { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 5px 0 4px; border-radius: 11px; color: var(--bar-mut); font-size: 10px; font-weight: 600; letter-spacing: -.02em; }
+.tool span { width: 24px; height: 24px; line-height: 0; display: grid; place-items: center; }
+.tool span i { width: 23px; height: 23px; }
+.tool.active { background: color-mix(in srgb, var(--stake) 22%, transparent); color: #fff; }
+.tool.active span { color: #ffb27a; }
+.tool.on { color: #6fd39a; }
+.tool.on span { color: #6fd39a; }
+.tool:active { background: rgba(255, 255, 255, .1); }
+
+/* メニュー */
+.sheet { padding: calc(14px + var(--safe-t)) 14px 14px; }
+#menu > h2 { display: flex; align-items: center; gap: 8px; font-size: 18px; margin: 0 0 8px; }
+#menu > h2::before { content: ""; width: 22px; height: 22px; background: var(--stake); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 20 12 4l8 16z' fill='none' stroke='black' stroke-width='2.2' stroke-linejoin='round'/%3E%3Ccircle cx='12' cy='14' r='2.4'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 20 12 4l8 16z' fill='none' stroke='black' stroke-width='2.2' stroke-linejoin='round'/%3E%3Ccircle cx='12' cy='14' r='2.4'/%3E%3C/svg%3E") center / contain no-repeat; }
+.menu-group { border-top: 0; padding: 6px 0; margin-top: 4px; }
+.menu-group h3 { margin: 6px 6px 4px; font-size: 11.5px; letter-spacing: .06em; color: var(--faint); }
+.menu-group > button { display: flex; align-items: center; gap: 12px; padding: 10px 8px; border-radius: 10px; font-size: 15px; }
+.menu-group > button .mi { width: 22px; height: 22px; color: var(--accent); flex: none; }
+.menu-group > button:active { background: var(--accent-bg); }
+.menu-group + .menu-group { border-top: 1px solid var(--line2); }
+.toggle { padding: 9px 8px; font-size: 14.5px; }
+.toggle input[type="checkbox"] { appearance: none; -webkit-appearance: none; width: 42px !important; height: 26px !important; border-radius: 13px; background: var(--line); position: relative; flex: none; transition: background .15s; margin: 0; }
+.toggle input[type="checkbox"]::after { content: ""; position: absolute; left: 3px; top: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .3); transition: left .15s; }
+.toggle input[type="checkbox"]:checked { background: var(--accent); }
+.toggle input[type="checkbox"]:checked::after { left: 19px; }
+
+/* ダイアログ */
+dialog { border-radius: 18px; box-shadow: var(--shadow); }
+dialog::backdrop { background: rgba(10, 18, 30, .45); }
+.modal { padding: 18px 16px 14px; }
+dialog h2 { font-size: 18px; }
+.modal input, .modal select, .form input[type=text], .form select, .in input, .in select, .field select { border-radius: 10px; height: 44px; }
+.pick { border-radius: 10px; height: 44px; }
+.calc-item { border-radius: 12px; }
+.chip-btn { padding: 7px 14px; font-weight: 600; }
+.fit-pair { border-radius: 12px; }
+
+/* 図から選ぶ */
+#pickBar { background: var(--stake); gap: 8px; }
+#pickBar .pk-ic { width: 22px; height: 22px; color: #fff; }
+#pickMsg { font-weight: 600; }
+#pickBar .btn { min-height: 36px; border-color: rgba(255, 255, 255, .4); background: rgba(255, 255, 255, .16); color: #fff; }
+#pickBar .btn.primary { background: #fff; color: var(--stake); border-color: #fff; }
+
+/* 使い方 */
+.help h3 { color: var(--accent); font-size: 14px; margin-top: 18px; }
+@media (prefers-reduced-motion: reduce) { #toast, .toggle input[type="checkbox"], .toggle input[type="checkbox"]::after { transition: none; } }
