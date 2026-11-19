@@ -2254,7 +2254,7 @@ async function boot() {
       try { const f = await h.getFile(); if (await confirmDiscard()) await loadFile(f, /\.(gcad|json)$/i.test(f.name) ? h : null); } catch (err) { toast('開けませんでした: ' + err.message); }
     });
   }
-  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('../sw.js', { scope: '../' }).catch(() => {});
+  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('../sw.js', { scope: '../', updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
 }
 boot();
 

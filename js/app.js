@@ -2423,8 +2423,10 @@ $('#emptyState').addEventListener('click', (ev) => {
 });
 updateEmpty();
 
+const APP_VERSION = 'v12（SIMA 選択の修正済み）';
+$('#appVer').textContent = APP_VERSION;
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
 }
 
 // テスト・デバッグ用
