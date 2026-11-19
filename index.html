@@ -165,7 +165,7 @@
     <div class="menu-group">
       <button data-act="help">使い方</button>
     </div>
-    <p class="small">データはこの端末内に自動保存されます。</p>
+    <p class="small">データはこの端末内に自動保存されます。<br>アプリの版: <span id="appVer"></span></p>
     <button class="btn close-sheet" data-close>閉じる</button>
   </dialog>
 
@@ -275,17 +275,24 @@
     <div class="chips" id="scMode">
       <button class="chip-btn" data-scmode="pts">2点で指定</button>
       <button class="chip-btn" data-scmode="dim">寸法線を選ぶ</button>
+      <button class="chip-btn" data-scmode="coord">座標（SIMA）で</button>
+    </div>
+    <div id="scCoord" hidden>
+      <p class="small">図面上の点と、読み込んだ SIMA の点を<b>2組以上</b>対応させます。2組の距離の比で縮尺を求め、向きと位置もそろえます。3組以上あると、ずれで確かめられます。</p>
+      <div id="scPairs"></div>
+      <button class="btn wide" id="scAddPair">＋ 組を追加</button>
+      <label class="toggle"><input type="checkbox" id="scRot" checked> 向きと位置も合わせる（オフ: 縮尺だけ）</label>
     </div>
     <div id="scPts"></div>
     <div id="scDim" hidden>
       <button class="btn wide" id="scPickDim">📍 図面の寸法線・線・数字の文字をタップ</button>
       <p class="small" id="scDimInfo"></p>
     </div>
-    <label class="field"><span>正しい長さ</span>
+    <label class="field" id="scRealRow"><span>正しい長さ</span>
       <div class="in"><input id="scReal" type="text" inputmode="decimal" autocomplete="off" placeholder="例 5.000 / 5000"><select id="scUnit" class="mini-sel"><option value="m">m</option><option value="mm">mm</option></select></div>
     </label>
     <div id="scResult" class="small"></div>
-    <p class="small">座標で合わせるときは <a href="#" id="scToFit">「図面を現場の座標に合わせる」</a>で「縮尺も合わせる」をオンにします（2組以上）。</p>
+    <p class="small">縮尺を変えずに移動・回転だけするときは <a href="#" id="scToFit">「図面を現場の座標に合わせる」</a>へ。</p>
     <div class="row">
       <button class="btn" data-close>閉じる</button>
       <button class="btn" id="scCheck">確認</button>

@@ -413,3 +413,7 @@ dialog h2 { font-size: 18px; }
 /* 使い方 */
 .help h3 { color: var(--accent); font-size: 14px; margin-top: 18px; }
 @media (prefers-reduced-motion: reduce) { #toast, .toggle input[type="checkbox"], .toggle input[type="checkbox"]::after { transition: none; } }
+
+/* 縮尺合わせ（座標・SIMA） */
+.sc-sel { flex: 1; min-width: 0; height: 40px; font-size: 15px; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); color: var(--fg); padding: 0 6px; }
+.link-btn { border: 0; background: none; color: var(--accent, #1f6feb); font-size: 13px; padding: 0 4px; float: right; }

@@ -1,5 +1,5 @@
 // オフライン用キャッシュ。ファイルを更新したら VERSION を上げる
-const VERSION = 'genbacad-v11';
+const VERSION = 'genbacad-v13';
 const FILES = [
   './', './index.html', './css/style.css', './js/app.js', './js/geo.js', './js/io.js', './js/cogo.js', './js/calc.js', './js/sheet.js',
   './js/draft.js', './js/sync.js',
@@ -22,7 +22,8 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   e.respondWith(
-    fetch(e.request)
+    // ブラウザの保存（最大 10 分）を使わず、毎回サーバーに新しい版がないか確かめる
+    fetch(e.request, { cache: 'no-cache' })
       .then((res) => {
         if (res.ok && new URL(e.request.url).origin === location.origin) {
           const copy = res.clone();
