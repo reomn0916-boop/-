@@ -41,7 +41,7 @@ export async function decide(rec, { status, comment = '', itemComments = {}, by 
   return new Blob([JSON.stringify(res)], { type: 'application/json' });
 }
 
-// 申請者: 結果ファイルを取り込む（差し戻しのときは、その精算を未精算に戻す）
+// 申請者: 結果ファイルを取り込む（結果と経費ごとのコメントを残す。直すときは「未精算に戻す」で戻して出し直す）
 export async function applyDecision(j) {
   const rep = S.reports.find((r) => r.id === j.reportId);
   if (!rep) throw new Error('この端末にない精算の結果です');

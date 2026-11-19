@@ -1,10 +1,13 @@
 // 経費の詳細（右のパネル・確認画面で使う）と、領収書の画像ビューア
 import {
   S, METHODS, cats, byId, validate, commit, computeAmount, findDup, recentSites, isReading,
-  removeExpenses, restoreSnapshot, templateFrom, addTemplate, rotateImage, reread, imageRecord, newExpense, todayISO, addDays, num, dec, fillFromOcr, on,
+  removeExpenses, restoreSnapshot, templateFrom, addTemplate, rotateImage, reread, imageRecord, newExpense, todayISO, addDays, num, dec, fillFromOcr, on, historyOf,
 } from '../js/store.js';
+import { modal } from './ui.js';
 import { checkInvoiceNo, guessCategory } from '../js/parse.js';
 import { $, $$, esc, ic, yen, kbd, MOD, toast, confirmDialog, mdw } from './ui.js';
+
+export const FIELD_LABEL = { date: '日付', amount: '金額', payee: '支払先', category: '勘定科目', method: '支払方法', invoiceNo: '登録番号', tax10: '10%対象', tax8: '8%対象', memo: '内容', site: '現場', status: '状態', debit: '借方', credit: '貸方', partner: '取引先', gross: '支払金額', wh: '源泉' };
 
 // ---- 画像ビューア（ホイールで拡大・ドラッグで移動・ダブルクリックで全体） ----------------------------
 export class Viewer {
@@ -170,6 +173,7 @@ export class Editor {
     this.form.innerHTML = `
       <div class="ocr-line" data-ocr></div>
       ${c.ocr && c.ocr.notReceipt ? `<div class="note warn">${ic('warn')}レシート・領収書ではないかもしれません</div>` : ''}
+      ${c.reviewComment ? `<div class="note warn">${ic('warn')}<span><b>承認者からのコメント</b>${esc(c.reviewComment)}</span></div>` : ''}
       ${c.status === 'done' ? `<div class="note">${ic('checkCircle')}精算済みです。直すと提出した精算書と合わなくなります</div>` : ''}
       <div class="seg kinds" role="radiogroup" aria-label="種類">
         ${KINDS.map(([k, l, icn]) => `<button role="radio" aria-checked="${c.kind === k}" class="${c.kind === k ? 'on' : ''}" data-kind="${k}">${ic(icn)}${l}</button>`).join('')}
@@ -208,6 +212,15 @@ export class Editor {
           <label class="fld"><span class="lb">相手先</span><input data-f="guests" value="${esc(c.guests)}" placeholder="例: ○○工務店 山田様"></label>
         </div>
         ${perHead ? `<p class="hint">1人あたり ${yen(perHead)}${c.category === '接待交際費' && perHead <= 10000 ? '　— 1人 1万円以下の飲食は、相手先・人数を書けば交際費から外せます' : ''}</p>` : ''}` : ''}
+      ${(S.settings.vehicles || []).length && (c.kind === 'car' || c.vehicle || ['車両費', '旅費交通費', '修繕費', '保険料', '租税公課'].includes(c.category)) ? `
+      <fieldset class="group">
+        <legend>車両</legend>
+        <div class="row3">
+          <label class="fld"><span class="lb">車</span><span class="select">${ic('car')}<select data-f="vehicle"><option value="">（なし）</option>${S.settings.vehicles.map((v) => `<option value="${esc(v.id)}" ${c.vehicle === v.id ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select>${ic('chevD', 'caret')}</span></label>
+          <label class="fld"><span class="lb">走行メーター</span><span class="amt-in sm"><input data-f="odometer" inputmode="numeric" placeholder="例: 52310" value="${c.odometer ?? ''}"><em>km</em></span></label>
+          <label class="fld"><span class="lb">給油量</span><span class="amt-in sm"><input data-f="liters" inputmode="decimal" placeholder="0" value="${c.liters ?? ''}"><em>L</em></span></label>
+        </div>
+      </fieldset>` : ''}
       <fieldset class="group">
         <legend>インボイス</legend>
         <div class="row3">
@@ -219,9 +232,19 @@ export class Editor {
         ${invOk === false ? '<p class="hint warn">番号の読みまちがいがないか確認してください（検査用数字が合いません）</p>' : ''}
         ${c.invoiceNo && /^T\d{13}$/.test(c.invoiceNo) ? `<a class="hint link" href="https://www.invoice-kohyo.nta.go.jp/regno-search/detail?selRegNo=${c.invoiceNo.slice(1)}" target="_blank" rel="noopener">${ic('external')}国税庁の公表サイトで確認</a>` : ''}
       </fieldset>
-      ${c.created ? `<p class="meta">登録 ${new Date(c.created).toLocaleString('ja-JP')}${c.fileName ? ` ・ ${esc(c.fileName)}` : ''}</p>` : ''}`;
+      ${c.created ? `<p class="meta">登録 ${new Date(c.created).toLocaleString('ja-JP')}${c.fileName ? ` ・ ${esc(c.fileName)}` : ''}${c.updated && c.updated - c.created > 60000 ? ` ・ 更新 ${new Date(c.updated).toLocaleString('ja-JP')}` : ''} <button class="link sm" data-a="history" tabindex="-1">${ic('clock')}変更の履歴</button></p>` : ''}`;
     this.form.scrollTop = scroll;
     this.renderOcr();
+  }
+
+  async showHistory() {
+    const list = await historyOf(this.cur.id);
+    const LABEL = { create: '登録', update: '変更', delete: '削除' };
+    const v = (x) => (x == null || x === '' ? '（なし）' : typeof x === 'object' ? JSON.stringify(x) : String(x));
+    modal({ title: '変更の履歴（電子帳簿保存法）', width: 620,
+      body: list.length ? `<ol class="hist-list">${list.map((h) => `<li><span class="hl-when">${new Date(h.at).toLocaleString('ja-JP')}</span><b>${LABEL[h.action] || esc(h.action)}</b>${h.action === 'update' ? `<ul>${Object.entries(h.ch || {}).map(([f, [a, b]]) => `<li><span>${esc(FIELD_LABEL[f] || f)}</span><s>${esc(v(a))}</s>${ic('arrowR')}<em>${esc(v(b))}</em></li>`).join('')}</ul>` : ''}</li>`).join('')}</ol>`
+        : '<p class="muted">まだ履歴はありません（確定したあとの変更・削除を記録します）。</p>',
+      actions: [{ label: '閉じる', value: 'ok', kind: 'primary' }] });
   }
 
   dupHTML(dup) {
@@ -267,8 +290,8 @@ export class Editor {
     this.dirty = true;
     this.touched.add(k.startsWith('route') ? 'route' : k);
     c.auto = (c.auto || []).filter((x) => x !== k);
-    if (k.startsWith('route.')) { c.route = c.route || { from: '', to: '', round: false }; c.route[k.slice(6)] = el.type === 'checkbox' ? el.checked : el.value.trim(); } else if (['amount', 'fare', 'tax10', 'tax8', 'people'].includes(k)) c[k] = num(el.value);
-    else if (['km', 'rate'].includes(k)) c[k] = dec(el.value);
+    if (k.startsWith('route.')) { c.route = c.route || { from: '', to: '', round: false }; c.route[k.slice(6)] = el.type === 'checkbox' ? el.checked : el.value.trim(); } else if (['amount', 'fare', 'tax10', 'tax8', 'people', 'odometer'].includes(k)) c[k] = num(el.value);
+    else if (['km', 'rate', 'liters'].includes(k)) c[k] = dec(el.value);
     else if (k === 'invoiceNo') { const d = el.value.normalize('NFKC').replace(/\D/g, ''); c.invoiceNo = d ? `T${d}` : ''; } else c[k] = el.value;
     if (k === 'payee' && !this.touched.has('category')) {
       const g = guessCategory(c.payee, c.memo, S.learned, cats());
@@ -304,6 +327,7 @@ export class Editor {
       else if (act === 'template') this.addTemplate();
       else if (act === 'copy') this.copy();
       else if (act === 'delete') this.remove();
+      else if (act === 'history') this.showHistory();
       return;
     }
     const kind = t.closest('[data-kind]');

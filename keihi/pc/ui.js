@@ -78,6 +78,11 @@ const I = {
   box: '<path d="M3.5 7.5 12 3l8.5 4.5v9L12 21l-8.5-4.5z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v9"/>',
   filter: '<path d="M4 5h16l-6 7.5V19l-4 1.5v-8z"/>',
   menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+  chart: '<path d="M4 20h16"/><path d="M7 16.5v-5M12 16.5V6.5M17 16.5v-8"/>',
+  stamp: '<path d="M9.5 4.5a2.5 2.5 0 0 1 5 0c0 2-1.5 3-1.5 5.5h-2C11 7.5 9.5 6.5 9.5 4.5z"/><path d="M5 13.5h14v3.5H5zM7 20h10"/>',
+  send: '<path d="M20.5 3.5 10 14M20.5 3.5 14 20.5l-4-6.5-6.5-4z"/>',
+  sync: '<path d="M19.5 9A8 8 0 0 0 5.2 7.2M4.5 15a8 8 0 0 0 14.3 1.8"/><path d="M19.8 4v5h-5M4.2 20v-5h5"/>',
+  bank: '<path d="M3.5 9.5 12 4l8.5 5.5z"/><path d="M5.5 10v7M9.5 10v7M14.5 10v7M18.5 10v7M3.5 20h17"/>',
   shield: '<path d="M12 3 4.5 6v5.5c0 4.5 3.2 8.2 7.5 9.5 4.3-1.3 7.5-5 7.5-9.5V6z"/>',
 };
 export const ic = (name, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${I[name] || ''}</svg>`;

@@ -10,6 +10,7 @@ import {
 } from './ui.js';
 import { columnChart, barList } from './charts.js';
 import { Editor } from './editor.js';
+import * as FX from './features.js';
 
 const { S } = st;
 const today = () => st.todayISO();
@@ -37,6 +38,8 @@ const VIEWS = {
   report: { title: '精算書', sub: () => '期間を選ぶと、そのまま提出できる精算書ができます' },
   books: { title: '帳簿', sub: () => '売上・収入、振替伝票、仕訳帳、期首残高' },
   statements: { title: '決算書', sub: () => '損益計算書・貸借対照表をボタンひとつで' },
+  analysis: { title: '分析', sub: () => '現場別の損益・予算・車両・外注先・年次まとめ' },
+  approvals: { title: '承認', sub: () => '精算をファイルで提出して、承認・差し戻しを受け取ります' },
   templates: { title: 'よく使う', sub: () => '毎回同じ経費を、ワンクリックで入れられます' },
   settings: { title: '設定', sub: () => '申請者・読み取り方・データの管理' },
 };
@@ -74,6 +77,9 @@ function listItems() {
     if (L.cat && e.category !== L.cat) return false;
     if (L.site && (e.site || '') !== (L.site === '（なし）' ? '' : L.site)) return false;
     if (L.method && e.method !== L.method) return false;
+    if (L.amin && (e.amount ?? -1) < L.amin) return false;
+    if (L.amax && (e.amount ?? Infinity) > L.amax) return false;
+    if (L.vehicle && e.vehicle !== L.vehicle) return false;
     if (!q) return true;
     const hay = [e.payee, e.memo, e.site, e.category, e.method, e.guests, e.invoiceNo, e.route && e.route.from, e.route && e.route.to, e.fileName].join(' ').normalize('NFKC').toLowerCase();
     return hay.includes(q) || (qn != null && e.amount === qn);
@@ -149,6 +155,7 @@ function viewHome() {
   }
 
   return `
+    ${FX.homeAlerts()}
     ${old.length ? `<button class="banner" data-act="settleOld">${ic('doc')}<span><b>先月までの未精算が ${old.length}件（${yen(sumOf(old))}）あります</b><small>精算書を作って提出しましょう</small></span><span class="banner-go">精算書を作る ${ic('arrowR')}</span></button>` : ''}
     <div class="kpis">
       <section class="card kpi hero">
@@ -241,7 +248,8 @@ function viewList() {
   const sitesAll = [...new Set(S.expenses.map((e) => e.site).filter(Boolean))].sort();
   const th = (key, label, cls = '') => `<th class="${cls} sortable ${L.sort === key ? 'sorted' : ''}" data-sort="${key}" aria-sort="${L.sort === key ? (L.dir > 0 ? 'ascending' : 'descending') : 'none'}"><button>${label}${L.sort === key ? ic(L.dir > 0 ? 'chevU' : 'chevD', 'sort-ic') : ''}</button></th>`;
   const st2 = [['all', 'すべて'], ['draft', '確認待ち'], ['ok', '未精算'], ['done', '精算済み']];
-  const filterOn = L.cat || L.site || L.method || L.q;
+  const filterOn = L.cat || L.site || L.method || L.q || L.amin || L.amax || L.vehicle;
+  const veh = L.vehicle && (S.settings.vehicles || []).find((v) => v.id === L.vehicle);
   return `
     <div class="list-page">
       <div class="toolbar">
@@ -260,6 +268,8 @@ function viewList() {
         <label class="select sm">${ic('tag')}<select id="fCat"><option value="">すべての科目</option>${st.cats().map((c) => `<option ${L.cat === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>${ic('chevD', 'caret')}</label>
         <label class="select sm">${ic('pin')}<select id="fSite"><option value="">すべての現場</option>${sitesAll.map((c) => `<option ${L.site === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}<option ${L.site === '（なし）' ? 'selected' : ''}>（なし）</option></select>${ic('chevD', 'caret')}</label>
         <label class="select sm">${ic('card')}<select id="fMethod"><option value="">すべての支払</option>${st.METHODS.map((c) => `<option ${L.method === c ? 'selected' : ''}>${c}</option>`).join('')}</select>${ic('chevD', 'caret')}</label>
+        <span class="amt-range" title="金額の範囲（電子帳簿保存法の検索にも）">${ic('cash')}<input id="fAmin" inputmode="numeric" placeholder="金額 下限" value="${L.amin ? L.amin.toLocaleString('ja-JP') : ''}"><span>〜</span><input id="fAmax" inputmode="numeric" placeholder="上限" value="${L.amax ? L.amax.toLocaleString('ja-JP') : ''}"></span>
+        ${veh ? `<span class="chip on sm">${ic('car')}${esc(veh.name)}</span>` : ''}
         ${filterOn ? `<button class="link sm" data-act="clearFilters">${ic('x')}条件をはずす</button>` : ''}
        </div>
       </div>
@@ -479,7 +489,8 @@ function viewReport() {
         <h2>これまでの精算</h2>
         <ul>${reps.slice(0, 12).map((r) => `<li>
           <span><b>${md(r.from)}〜${md(r.to)}</b><small>${new Date(r.created).toLocaleDateString('ja-JP')} ・ ${r.ids.length}件</small></span>
-          <b class="a">${yen(r.reimb - (r.advance || 0))}</b>
+          <b class="a">${yen(r.reimb - (r.advance || 0))}</b>${FX.apvBadge(r)}
+          <button class="icon-btn sm" data-act="apvSubmit" data-id="${r.id}" title="承認に出す（提出ファイルを作る）">${ic('send')}</button>
           <button class="icon-btn sm" data-reppdf="${r.id}" title="この精算書の PDF">${ic('download')}</button>
           <button class="icon-btn sm" data-repundo="${r.id}" title="未精算に戻す">${ic('undo')}</button>
         </li>`).join('')}</ul>
@@ -554,7 +565,7 @@ async function printPages(pages, title = repFileName()) {
 // ===========================================================================
 // 帳簿（売上・収入／振替伝票／仕訳帳／帳簿の設定）
 // ===========================================================================
-const SRC_LABEL = { expense: ['経費', 'ok'], income: ['売上・収入', 'done'], journal: ['振替', 'draft'], settle: ['精算', 'ok'] };
+const SRC_LABEL = { expense: ['経費', 'ok'], income: ['売上・収入', 'done'], journal: ['振替', 'draft'], settle: ['精算', 'ok'], payout: ['外注', 'ok'], bank: ['明細', 'draft'], asset: ['固定資産', 'done'], dep: ['償却', 'ok'], alloc: ['家事按分', 'draft'] };
 const bk = () => booksOf(S.settings);
 const fyOf = (iso) => fiscalRange(iso, bk().closeMonth);
 const fyLabel = (r) => `${ymd(r.from)} 〜 ${ymd(r.to)}`;
@@ -569,7 +580,7 @@ function accountOptions(selected, { only = null } = {}) {
 
 function viewBooks() {
   const tab = P.books.tab; const r = booksRange(); const b = bk();
-  const tabs = [['income', '売上・収入', 'arrowR'], ['journal', '振替伝票', 'layers'], ['book', '仕訳帳', 'list'], ['setup', '帳簿の設定', 'sliders']];
+  const tabs = FX.BOOK_TABS;
   const inR = (l) => l.date >= r.from && l.date <= r.to;
   let body = '';
   if (tab === 'income') {
@@ -590,8 +601,10 @@ function viewBooks() {
           <td class="c-act"><button class="icon-btn sm" data-led-del="${l.id}" title="削除">${ic('trash')}</button></td>
         </tr>`; }).join('')}</tbody></table>`
         : emptyState('arrowR', 'この期の売上・収入はまだありません', '請求した売上や、入金された収入を入れると、損益計算書・貸借対照表に反映されます。', `<button class="btn primary" data-act="newIncome">${ic('plus')}売上・収入を入れる</button>`)}</div>`;
+  } else if (['invoice', 'bank', 'assets', 'payout'].includes(tab)) {
+    body = FX.bookTab(tab, r);
   } else if (tab === 'journal') {
-    const list = S.ledger.filter((l) => l.type === 'journal' && inR(l)).sort((a, c) => c.date.localeCompare(a.date));
+    const list = S.ledger.filter((l) => l.type === 'journal' && l.src !== 'bank' && inR(l)).sort((a, c) => c.date.localeCompare(a.date));
     body = `
       <div class="sumbar"><span>${list.length}件</span><span class="muted">売掛金の入金・借入・返済・事業主貸／借・減価償却など、経費と売上以外のお金の動きを入れます</span></div>
       <div class="table-wrap">${list.length ? `<table class="grid ledger">
@@ -610,7 +623,7 @@ function viewBooks() {
       <div class="sumbar"><span>${list.length}行</span><span class="muted">経費・売上・振替・精算から自動で作った仕訳です（行をクリックすると元の記録を開きます）</span><span class="grow"></span><button class="btn sm" data-act="csvJournalBook">${ic('download')}仕訳帳 CSV</button></div>
       <div class="table-wrap">${list.length ? `<table class="grid ledger">
         <thead><tr><th class="c-date">日付</th><th>借方</th><th>貸方</th><th>摘要</th><th class="c-amt num">金額</th><th class="c-status">元の記録</th></tr></thead>
-        <tbody>${list.slice(-1500).reverse().map((j) => { const [l, c] = SRC_LABEL[j.src] || ['', '']; return `<tr ${j.src === 'expense' ? `data-open="${j.ref}"` : j.src === 'settle' ? '' : `data-led="${j.ref}"`}>
+        <tbody>${list.slice(-1500).reverse().map((j) => { const [l, c] = SRC_LABEL[j.src] || ['', '']; return `<tr ${j.src === 'expense' ? `data-open="${j.ref}"` : j.src === 'settle' || j.src === 'alloc' ? '' : j.src === 'asset' || j.src === 'dep' ? `data-act="assetEdit" data-id="${j.ref}"` : j.src === 'payout' ? `data-act="payoutEdit" data-id="${j.ref}"` : `data-led="${j.ref}"`}>
           <td class="c-date"><b>${md(j.date)}</b><small>${wd(j.date)}</small></td>
           <td><span class="tag">${esc(j.debit)}</span></td><td><span class="tag">${esc(j.credit)}</span></td>
           <td class="c-payee"><b>${esc(j.memo || '')}</b></td>
@@ -645,6 +658,7 @@ function viewBooks() {
       <section class="card"><h2>経費の支払方法と科目</h2><p class="muted">経費は「借方 = 勘定科目 ／ 貸方 = 下の科目」で仕訳します。${corp ? '従業員が立て替えた経費は「未払金」にして、精算したときに口座から払った仕訳を自動で作ります。' : '個人のお財布・カードで払った経費は「事業主借」にします。事業用の現金や口座を分けている人は変えてください。'}</p>
         <div class="row3 paymap">${st.METHODS.map((m) => `<label class="fld"><span class="lb">${m}で払った経費</span><span class="select">${ic('card')}<select data-pay="${m}">${[...new Set([b.payMap[m], ...credits])].map((a) => `<option ${b.payMap[m] === a ? 'selected' : ''}>${a}</option>`).join('')}</select>${ic('chevD', 'caret')}</span></label>`).join('')}</div>
       </section>
+      ${FX.setupExtra()}
     </div>`;
   }
   return `<div class="books-page">
@@ -652,8 +666,7 @@ function viewBooks() {
       <div class="seg">${tabs.map(([k, v, i]) => `<button class="${tab === k ? 'on' : ''}" data-btab="${k}">${ic(i)}${v}</button>`).join('')}</div>
       ${tab !== 'setup' ? `<div class="period"><button class="icon-btn" data-act="fyPrev" title="前の期">${ic('chevL')}</button><span class="period-btn static">${ic('calendar')}<b>${fyLabel(r)}</b></span><button class="icon-btn" data-act="fyNext" title="次の期">${ic('chevR')}</button></div>` : ''}
       <span class="grow"></span>
-      ${tab === 'income' ? `<button class="btn primary" data-act="newIncome">${ic('plus')}売上・収入を入れる</button>` : ''}
-      ${tab === 'journal' ? `<button class="btn primary" data-act="newJournal">${ic('plus')}振替を入れる</button>` : ''}
+      ${FX.tabButton(tab)}
       <button class="btn" data-view-go="statements">${ic('doc')}決算書へ</button>
     </div></div>
     ${body}
@@ -678,9 +691,14 @@ function ledgerForm(l) {
       <label class="fld"><span class="lb">取引先</span><input id="lPartner" list="dlPartner" value="${esc(l.partner || '')}" placeholder="例: ○○工務店"></label>
       <label class="fld"><span class="lb">内容</span><input id="lMemo" value="${esc(l.memo || '')}" placeholder="例: 11月分 A邸 内装工事"></label>
       <div class="row2">
+        <label class="fld"><span class="lb">現場・案件</span><input id="lSite" list="dlSite" value="${esc(l.site || '')}" placeholder="現場別の損益に入ります"></label>
+        <label class="fld"><span class="lb">消費税</span><span class="select">${ic('tag')}<select id="lRate">${[[10, '10%（ふつう）'], [8, '8%（軽減税率）'], [0, '対象外・非課税']].map(([v, t]) => `<option value="${v}" ${(l.taxRate ?? 10) === v ? 'selected' : ''}>${t}</option>`).join('')}</select>${ic('chevD', 'caret')}</span></label>
+      </div>
+      <div class="row2">
         <label class="fld"><span class="lb">科目</span><span class="select">${ic('tag')}<select id="lCredit">${REVENUE_ACCOUNTS.map((a) => `<option ${l.credit === a ? 'selected' : ''}>${a}</option>`).join('')}</select>${ic('chevD', 'caret')}</span></label>
         <label class="fld"><span class="lb">入金先</span><span class="select">${ic('card')}<select id="lDebit">${[['売掛金', '売掛金（請求済み・まだ入金されていない）'], ['普通預金', '普通預金（振り込まれた）'], ['現金', '現金で受け取った']].concat(bk().mode === 'sole' ? [['事業主貸', '個人の口座に入った（事業主貸）']] : []).map(([a, t]) => `<option value="${a}" ${l.debit === a ? 'selected' : ''}>${t}</option>`).join('')}</select>${ic('chevD', 'caret')}</span></label>
-      </div>` : `
+      </div>
+      ${l.id ? '' : `<label class="chk"><input type="checkbox" id="lRepeat"><span><b>毎月この日にくり返す</b><small>顧問料・家賃収入など、毎月同じ売上を自動で入れます</small></span></label>`}` : `
       <div class="row2">
         <label class="fld"><span class="lb">借方（増えた資産・費用／減った負債）</span><span class="select">${ic('tag')}<select id="lDebit">${accountOptions(l.debit)}</select>${ic('chevD', 'caret')}</span></label>
         <label class="fld"><span class="lb">貸方（減った資産／増えた負債・収益）</span><span class="select">${ic('tag')}<select id="lCredit">${accountOptions(l.credit)}</select>${ic('chevD', 'caret')}</span></label>
@@ -701,6 +719,7 @@ async function editLedger(l) {
         cur.date = $('#lDate', el).value; cur.amount = st.num($('#lAmt', el).value);
         cur.debit = $('#lDebit', el).value; cur.credit = $('#lCredit', el).value;
         cur.memo = $('#lMemo', el).value.trim(); if ($('#lPartner', el)) cur.partner = $('#lPartner', el).value.trim();
+        if ($('#lSite', el)) cur.site = $('#lSite', el).value.trim(); if ($('#lRate', el)) cur.taxRate = +$('#lRate', el).value; if ($('#lRepeat', el)) cur.__repeat = $('#lRepeat', el).checked;
       };
       el.addEventListener('click', (ev) => {
         const p = ev.target.closest('[data-preset]');
@@ -718,7 +737,9 @@ async function editLedger(l) {
     },
   });
   if (r === 'ok') {
+    const repeat = cur.__repeat; delete cur.__repeat;
     await st.saveLedger(cur);
+    if (repeat) { FX.addIncomeRecurring(cur); toast(`毎月 ${+cur.date.slice(8)}日に、この売上を自動で入れます`, { kind: 'ok' }); }
     toast(cur.type === 'income' ? `売上・収入を保存しました ${yen(cur.amount)}` : `振替を保存しました ${cur.debit} ／ ${cur.credit} ${yen(cur.amount)}`, { kind: 'ok' });
   } else if (r === 'del') deleteLedger(l.id);
 }
@@ -781,6 +802,7 @@ function viewStatements() {
         </div>
         <p class="balance ${s.bs.balanced ? 'ok' : 'ng'}">${ic(s.bs.balanced ? 'checkCircle' : 'warn')}${s.bs.balanced ? '貸借が一致しています' : '貸借が一致しません'}</p>
       </section>
+
       <div class="rep-acts">
         <button class="btn primary lg one" data-act="finPdf">${ic('doc')}<span>損益計算書・貸借対照表を作る<small>PDF ・ 月別推移つき</small></span></button>
         <div class="row2">
@@ -788,6 +810,7 @@ function viewStatements() {
           <button class="btn" data-act="finCsvMenu">${ic('table')}CSV${ic('chevD', 'caret')}</button>
         </div>
       </div>
+      ${FX.taxCard(from, to)}
       ${notes.length ? `<section class="card checks"><h2>チェック</h2><ul>${notes.map((n) => `<li class="${n.level}">${ic(icon[n.level])}<span>${esc(n.msg)}</span>${n.go ? `<button class="link sm" data-view-go="${n.go}">開く</button>` : ''}</li>`).join('')}</ul></section>` : ''}
       <p class="muted small">記録から作る参考資料です（税込経理）。減価償却・棚卸・法人税等は振替伝票で入れてください。申告の前には税理士・会計ソフトで確かめてください。</p>
     </aside>
@@ -798,18 +821,20 @@ function viewStatements() {
     </section>
   </div>`;
 }
-function finSig() { const { from, to } = finRange(); return JSON.stringify([from, to, S.settings.books, S.settings.company, S.settings.name, S.settings.categories, allJournals().length, S.expenses.reduce((m, e) => Math.max(m, e.updated || 0), 0), S.ledger.reduce((m, l) => Math.max(m, l.updated || 0), 0), S.reports.length]); }
+function finSig() { const { from, to } = finRange(); return JSON.stringify([from, to, S.settings.books, S.settings.issuer, S.settings.company, S.settings.name, S.settings.categories, allJournals().length, S.expenses.reduce((m, e) => Math.max(m, e.updated || 0), 0), S.ledger.reduce((m, l) => Math.max(m, l.updated || 0), 0), S.reports.length]); }
 function finPages() {
   const sig = finSig();
   if (P.fin.pages && P.fin.sig === sig) return P.fin.pages;
-  P.fin.pages = renderStatements(finCompute(), S.settings, bk()); P.fin.sig = sig;
+  const s = finCompute(); const { from, to } = finRange();
+  const extra = FX.extraFinPages(s, from, to);
+  P.fin.pages = [...renderStatements(s, S.settings, bk()), ...extra.map(([, c]) => c)]; P.fin.names = ['損益計算書', '貸借対照表', '月別推移', ...extra.map(([n]) => n)]; P.fin.sig = sig;
   return P.fin.pages;
 }
 function placeFin() {
   const area = $('#finArea'); if (!area) return;
   const pages = finPages();
   area.innerHTML = '';
-  const names = ['損益計算書', '貸借対照表', '月別推移'];
+  const names = P.fin.names || [];
   pages.forEach((c, i) => {
     const w = document.createElement('div'); w.className = 'paper';
     c.style.width = `${Math.round(794 * P.fin.zoom)}px`; c.style.height = 'auto';
@@ -817,7 +842,7 @@ function placeFin() {
     const n = document.createElement('span'); n.className = 'paper-no'; n.textContent = `${names[i]}（${i + 1} / ${pages.length}）`; w.appendChild(n);
     area.appendChild(w);
   });
-  const s = $('#finStatus'); if (s) s.textContent = `A4 ・ ${pages.length}ページ（損益計算書・貸借対照表・月別推移）`;
+  const s = $('#finStatus'); if (s) s.textContent = `A4 ・ ${pages.length}ページ（${names.join("・")}）`;
 }
 async function finPdf() {
   const pages = finPages();
@@ -831,7 +856,7 @@ async function finPdf() {
 // ===========================================================================
 function viewTemplates() {
   if (!S.templates.length) {
-    return emptyState('star', 'よく使う経費はまだありません', '毎日の通勤・駐車場・決まった現場への往復などは、経費の詳細で「よく使うに登録」しておくと、ここやホームからワンクリックで入れられます。',
+    return FX.recurringSection() + emptyState('star', 'よく使う経費はまだありません', '毎日の通勤・駐車場・決まった現場への往復などは、経費の詳細で「よく使うに登録」しておくと、ここやホームからワンクリックで入れられます。',
       `<button class="btn primary" data-act="newTransit">${ic('train')}電車・バスを入れて登録する</button><button class="btn" data-act="newCar">${ic('car')}車で登録する</button>`);
   }
   return `<div class="tpl-grid">${S.templates.map((t) => `
@@ -844,7 +869,8 @@ function viewTemplates() {
         <button class="btn sm" data-tpldate="${t.id}">${ic('calendar')}日付を選んで</button>
         <button class="icon-btn sm" data-tpldel="${t.id}" title="消す">${ic('trash')}</button>
       </div>
-    </article>`).join('')}</div>`;
+      ${FX.tplRecurringHTML(t)}
+    </article>`).join('')}</div>${FX.recurringSection()}`;
 }
 
 // ===========================================================================
@@ -854,7 +880,7 @@ function viewSettings() {
   const s = S.settings;
   const lastBk = pget('lastBackup', 0);
   const theme = pget('theme', 'auto');
-  const secs = [['who', '申請者'], ['ocr', '読み取り方'], ['input', '入力の初期値'], ['cats', '勘定科目'], ['data', 'データ・スマホ連携'], ['keys', 'キーボード'], ['about', 'このアプリについて']];
+  const secs = [['who', '申請者'], ['ocr', '読み取り方'], ['input', '入力の初期値'], ['cats', '勘定科目'], ['data', 'データ・スマホ連携'], ...FX.SET_SECS, ['keys', 'キーボード'], ['about', 'このアプリについて']];
   return `<div class="settings">
     <nav class="set-nav">${secs.map(([k, v]) => `<a href="#settings" data-jump="${k}">${v}</a>`).join('')}</nav>
     <div class="set-body">
@@ -914,6 +940,7 @@ function viewSettings() {
         <button class="btn ghost danger" data-act="wipe">${ic('trash')}すべてのデータを消す</button>
       </section>
 
+      ${FX.settingsExtra()}
       <section class="card" id="set-keys"><h2>キーボード</h2>${shortcutsHTML()}</section>
 
       <section class="card" id="set-about"><h2>このアプリについて</h2>
@@ -925,7 +952,7 @@ function viewSettings() {
 }
 function shortcutsHTML() {
   const rows = [
-    ['全体', [[[MOD, 'K'], '検索・操作'], [[MOD, 'O'], '画像・PDF を取り込む'], [['N'], '手で入力'], [['1〜8'], '画面を切り替える'], [['?'], 'この一覧']]],
+    ['全体', [[[MOD, 'K'], '検索・操作'], [[MOD, 'O'], '画像・PDF を取り込む'], [['N'], '手で入力'], [['1〜9', '0'], '画面を切り替える'], [['?'], 'この一覧']]],
     ['経費一覧', [[['↑', '↓'], '行を移動'], [['Enter'], '詳細を開く'], [['Space'], '選ぶ / はずす'], [['Shift', 'クリック'], '範囲を選ぶ'], [[MOD, 'A'], 'すべて選ぶ'], [['Delete'], '選んだ経費を削除'], [['/'], '検索']]],
     ['詳細・確認', [[[MOD, 'Enter'], '保存（確認待ちでは確定して次へ）'], [['Alt', '↑ ↓'], '前 / 次の経費'], [['Enter'], '次の欄へ'], [['Esc'], '閉じる']]],
   ];
@@ -935,7 +962,14 @@ function shortcutsHTML() {
 // ===========================================================================
 // 描画と画面の切り替え
 // ===========================================================================
+let rendering = false;
 function render() {
+  // 描き直しの途中（入力欄が消えて change が起きたときなど）に、もう一度呼ばれたら次のフレームに回す
+  if (rendering) { queueRender(); return; }
+  rendering = true;
+  try { renderNow(); } finally { rendering = false; }
+}
+function renderNow() {
   const v = $('#view');
   const meta = VIEWS[P.view];
   $('#pageTitle').textContent = meta.title;
@@ -946,7 +980,7 @@ function render() {
   const a = document.activeElement; let keep = null;
   if (a && v.contains(a) && /INPUT|SELECT|TEXTAREA/.test(a.tagName)) {
     const ds = a.dataset;
-    const sel = a.id ? `#${a.id}` : ds.s ? `[data-s="${ds.s}"]` : ds.b ? `[data-b="${ds.b}"]` : ds.pay ? `[data-pay="${ds.pay}"]` : ds.open ? `[data-open="${ds.open}"]` : null;
+    const sel = a.id ? `#${CSS.escape(a.id)}` : ds.s ? `[data-s="${ds.s}"]` : ds.b ? `[data-b="${ds.b}"]` : ds.pay ? `[data-pay="${ds.pay}"]` : ds.open ? `[data-open="${ds.open}"]` : null;
     if (sel) { let caret = null; try { caret = a.selectionStart; } catch (_) { /* 日付など */ } keep = { sel, caret }; }
   }
   if (P.view === 'review') {
@@ -958,7 +992,7 @@ function render() {
     destroyReview();
     const y = v.scrollTop;
     v.className = `view v-${P.view}`;
-    v.innerHTML = P.view === 'home' ? viewHome() : P.view === 'list' ? viewList() : P.view === 'report' ? viewReport() : P.view === 'books' ? viewBooks() : P.view === 'statements' ? viewStatements() : P.view === 'templates' ? viewTemplates() : viewSettings();
+    v.innerHTML = P.view === 'home' ? viewHome() : P.view === 'list' ? viewList() : P.view === 'report' ? viewReport() : P.view === 'books' ? viewBooks() : P.view === 'statements' ? viewStatements() : P.view === 'analysis' ? FX.viewAnalysis() : P.view === 'approvals' ? FX.viewApprovals() : P.view === 'templates' ? viewTemplates() : viewSettings();
     v.scrollTop = y;
     if (P.view === 'home') afterHome();
     if (P.view === 'list') afterList();
@@ -979,16 +1013,17 @@ function renderChrome() {
   $('#navReview').className = dr ? 'count' : '';
   const un = sumOf(unsettled());
   $('#navReport').textContent = un ? yen(un) : '';
+  const pa = FX.pendingApprovals(); $('#navApv').textContent = pa ? String(pa) : ''; $('#navApv').className = pa ? 'count' : '';
   $('#reading').innerHTML = n ? `<span class="spin"></span>読み取り中 ${n}件` : '';
   const lastBk = pget('lastBackup', 0);
   const oldest = Math.min(...S.expenses.map((e) => e.created || Date.now()));
   const stale = S.expenses.length >= 10 && (lastBk ? Date.now() - lastBk > 14 * 86400000 : Date.now() - oldest > 3 * 86400000);
   $('#sideFoot').innerHTML = `
-    <div class="foot-card ${stale ? 'warn' : ''}">
+    ${FX.syncFoot() || `<div class="foot-card ${stale ? 'warn' : ''}">
       ${ic(stale ? 'warn' : 'shield')}
       <span><b>${stale ? 'バックアップをおすすめします' : 'このパソコンに保存'}</b><small>バックアップ: ${ago(lastBk)}</small></span>
       <button class="icon-btn sm" data-act="backup" title="バックアップを保存">${ic('download')}</button>
-    </div>
+    </div>`}
     <div class="who">${S.settings.name ? `${ic('pen')}<span>${esc(S.settings.name)}<small>${esc([S.settings.company, S.settings.dept].filter(Boolean).join(' '))}</small></span>` : `<a href="#settings" class="link sm">${ic('pen')}申請者を設定する</a>`}</div>`;
   paint($('#sideFoot'));
   fillDatalists();
@@ -1071,8 +1106,10 @@ function openExpense(id) {
 async function doImport(files, { goReview = true } = {}) {
   const arr = [...files];
   const backups = arr.filter((f) => /\.json$/i.test(f.name || '') || f.type === 'application/json');
-  const others = arr.filter((f) => !backups.includes(f));
-  for (const b of backups) await importBackupFile(b);
+  const csvs = arr.filter((f) => /\.(csv|tsv)$/i.test(f.name || '') || f.type === 'text/csv');
+  const others = arr.filter((f) => !backups.includes(f) && !csvs.includes(f));
+  for (const b of backups) { if (!(await FX.importJson(b))) await importBackupFile(b); }
+  for (const c of csvs) await FX.bankImportFile(c);
   if (!others.length) return;
   const importable = others.filter(st.isImportable);
   if (!importable.length) { toast('画像（JPEG・PNG など）か PDF を選んでください', { kind: 'error' }); return; }
@@ -1134,6 +1171,9 @@ const COMMANDS = [
   ['手で入力', 'pen', 'newManual', 'N'], ['電車・バスを入力', 'train', 'newTransit', ''], ['車（距離）を入力', 'car', 'newCar', ''],
   ['損益計算書・貸借対照表を作る（PDF）', 'doc', 'finNow', ''], ['売上・収入を入れる', 'arrowR', 'newIncome', ''], ['振替伝票を入れる', 'layers', 'newJournal', ''],
   ['ホーム', 'home', 'v:home', '1'], ['確認待ち', 'inbox', 'v:review', '2'], ['経費一覧', 'list', 'v:list', '3'], ['精算書を作る', 'doc', 'v:report', '4'], ['帳簿', 'layers', 'v:books', '5'], ['決算書', 'doc', 'v:statements', '6'], ['よく使う', 'star', 'v:templates', '7'], ['設定', 'sliders', 'v:settings', '8'],
+  ['分析', 'chart', 'v:analysis', '7'], ['承認', 'stamp', 'v:approvals', '8'],
+  ['請求書を作る', 'doc', 'invNew', ''], ['銀行・カードの明細を取り込む', 'bank', 'bankPick', ''], ['外注費を払った（源泉徴収）', 'pen', 'payoutNew', ''], ['固定資産を登録', 'box', 'assetNew', ''], ['文章で振替を入れる', 'spark', 'textJournal', ''],
+  ['今すぐ同期', 'sync', 'syncNow', ''], ['変更の履歴（電子帳簿保存法）', 'clock', 'histAll', ''],
   ['今月の経費を見る', 'calendar', 'listThis', ''], ['先月の経費を見る', 'calendar', 'listLast', ''], ['未精算の経費を見る', 'doc', 'listUnsettled', ''],
   ['バックアップを保存', 'download', 'backup', ''], ['表示の明るさを切り替える', 'sun', 'theme', ''], ['キーボードの操作', 'keyboard', 'shortcuts', '?'],
 ];
@@ -1244,8 +1284,9 @@ const ACTIONS = {
   finNow: async () => { await finPdf(); },
   finPrint: () => printPages(finPages(), finName()),
   finCsvMenu: async (b) => {
-    const v = await menu(b, [{ label: '試算表 CSV', icon: 'table', value: 'trial' }, { label: '仕訳帳 CSV', icon: 'list', value: 'book' }], { width: 220 });
+    const v = await menu(b, [{ label: '試算表 CSV', icon: 'table', value: 'trial' }, { label: '仕訳帳 CSV', icon: 'list', value: 'book' }, ...FX.FIN_CSV_ITEMS], { width: 300 });
     const s = finCompute(); const { from, to } = finRange();
+    if (v) FX.finCsv(v, from, to);
     if (v === 'trial') download(new Blob([toTrialCSV(s)], { type: 'text/csv' }), `試算表_${from}_${to}.csv`);
     if (v === 'book') download(new Blob([toJournalBookCSV(s)], { type: 'text/csv' }), `仕訳帳_${from}_${to}.csv`);
   },
@@ -1311,7 +1352,7 @@ const ACTIONS = {
     }
     L.sel.clear(); saveListPrefs(); render();
   },
-  clearFilters: () => { Object.assign(P.list, { cat: '', site: '', method: '', q: '' }); render(); },
+  clearFilters: () => { Object.assign(P.list, { cat: '', site: '', method: '', q: '', amin: null, amax: null, vehicle: '' }); render(); },
   moreRows: () => { P.list.limit += 500; render(); },
   exportMenu: async (b) => {
     const v = await menu(b, [
@@ -1402,6 +1443,8 @@ const ACTIONS = {
   },
 };
 
+Object.assign(ACTIONS, FX.actions);
+
 // ---- クリック ---------------------------------------------------------------
 document.addEventListener('click', async (ev) => {
   const t = ev.target;
@@ -1441,7 +1484,7 @@ document.addEventListener('click', async (ev) => {
   const ld = t.closest('[data-led-del]');
   if (ld) { deleteLedger(ld.dataset.ledDel); return; }
   const le = t.closest('[data-led]');
-  if (le) { const l = S.ledger.find((x) => x.id === le.dataset.led); if (l) editLedger(l); return; }
+  if (le) { const l = S.ledger.find((x) => x.id === le.dataset.led); if (l && l.invoice) ACTIONS.invEdit({ dataset: { id: l.id } }); else if (l && l.type === 'payout') ACTIONS.payoutEdit({ dataset: { id: l.id } }); else if (l) editLedger(l); return; }
   const rm = t.closest('[data-rmode]');
   if (rm) { P.rep.mode = rm.dataset.rmode; render(); return; }
   const rp = t.closest('[data-reppdf]');
@@ -1504,6 +1547,7 @@ document.addEventListener('input', (ev) => {
     if (['name', 'company', 'dept'].includes(k)) renderChrome();
     return;
   }
+  if (FX.onInput(el)) return;
   if (el.dataset.b || el.dataset.open || el.dataset.pay) { setBooks(el); return; }
   if (el.id === 'q') { P.list.q = el.value; searchRender(); return; }
   if (el.id === 'rAdv') { P.rep.advance = el.value; debounceRep(); }
@@ -1513,6 +1557,8 @@ document.addEventListener('change', async (ev) => {
   const el = ev.target;
   if (el.closest('#drawer, #rvEd, .modal, .palette')) return;
   if (el.dataset.s) { S.settings[el.dataset.s] = el.dataset.s === 'carRate' ? (st.dec(el.value) ?? st.DEF_SETTINGS.carRate) : el.value; st.saveSettings(); if (el.tagName === 'SELECT') render(); return; }
+  if (FX.onChange(el)) return;
+  if (el.id === 'fAmin' || el.id === 'fAmax') { const n = st.num(el.value); P.list[el.id === 'fAmin' ? 'amin' : 'amax'] = n || null; P.list.sel.clear(); render(); return; }
   if (el.name === 'ocr') { S.settings.ocrMode = el.value; st.saveSettings(); render(); return; }
   if (el.name === 'bmode') { S.settings.books = { ...(S.settings.books || {}), mode: el.value, payMap: {} }; st.saveSettings(); render(); return; }
   if (el.dataset.b || el.dataset.open || el.dataset.pay) { setBooks(el); if (el.tagName === 'SELECT' || el.type === 'date') render(); else if (el.inputMode === 'numeric') { const n = st.num(el.value); el.value = n ? n.toLocaleString('ja-JP') : ''; updateOpenSums(); } return; }
@@ -1548,7 +1594,7 @@ document.addEventListener('keydown', (ev) => {
   if (typing) return;
   if (document.activeElement && document.activeElement.closest && document.activeElement.closest('#drawer, #rvEd')) return;
   if (ev.key === '?' || (ev.shiftKey && ev.key === '/')) { ev.preventDefault(); showShortcuts(); return; }
-  if (!mod && !ev.altKey && /^[1-8]$/.test(ev.key)) { ev.preventDefault(); go(['home', 'review', 'list', 'report', 'books', 'statements', 'templates', 'settings'][+ev.key - 1]); return; }
+  if (!mod && !ev.altKey && /^[0-9]$/.test(ev.key)) { ev.preventDefault(); go(['settings', 'home', 'review', 'list', 'report', 'books', 'statements', 'analysis', 'approvals', 'templates'][+ev.key]); return; }
   if (!mod && ev.key.toLowerCase() === 'n') { ev.preventDefault(); newOf('receipt'); return; }
   if (P.view === 'list') {
     const ids = listItems().slice(0, P.list.limit).map((e) => e.id);
@@ -1573,10 +1619,12 @@ async function start() {
   paint(document);
   $('#paletteKey').innerHTML = `<kbd>${MOD}</kbd><kbd>K</kbd>`;
   await st.loadAll();
+  FX.init({ P, render, renderChrome, go, allJournals, fyOf, shiftFY, fyLabel, booksRange, accountOptions, emptyState, editLedger, printPages });
   st.resumePending();
   P.view = VIEWS[location.hash.slice(1)] ? location.hash.slice(1) : 'home';
   render();
   document.body.classList.add('ready');
+  FX.startExtras();
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('../sw.js', { scope: '../' }).catch(() => {});
   }
