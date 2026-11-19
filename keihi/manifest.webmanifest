@@ -1,0 +1,28 @@
+{
+  "name": "ラク経費",
+  "short_name": "ラク経費",
+  "description": "レシートを撮るだけの経費精算。金額・日付・お店を読み取り、精算書 PDF と領収書の台紙をすぐ作れます。",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f3f5f4",
+  "theme_color": "#0d7a55",
+  "lang": "ja",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ],
+  "share_target": {
+    "action": "./share-target",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": { "files": [{ "name": "receipts", "accept": ["image/*"] }] }
+  },
+  "shortcuts": [
+    { "name": "経費の一覧", "url": "./#list", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "精算書を作る", "url": "./#report", "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}
