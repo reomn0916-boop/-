@@ -1,0 +1,67 @@
+rules_version = '2';
+// 案件ボード：データのアクセス権
+//   owner（オーナー）/ admin（編集者）: すべて読み書き。メンバーの役割を変えられる
+//   staff（社員）: 設定と朝の報告の書き換え以外は読み書き
+//   partner（協力会社）: 現場・手配・材料・日報・記録を読める。日報・記録・自分のレシートを書ける
+//   pending（承認待ち）: 自分の登録情報だけ
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function userPath() { return /databases/$(database)/documents/users/$(request.auth.uid); }
+    function role() { return signedIn() && exists(userPath()) ? get(userPath()).data.role : 'none'; }
+    function isAdmin() { return role() in ['owner', 'admin']; }
+    function isStaff() { return role() in ['owner', 'admin', 'staff']; }
+    function isPartner() { return role() == 'partner'; }
+    function isMember() { return isStaff() || isPartner(); }
+    function ownerPath() { return /databases/$(database)/documents/meta/owner; }
+
+    // 最初にログインした人だけがオーナーになれる
+    match /meta/owner {
+      allow read: if signedIn();
+      allow create: if signedIn() && !exists(ownerPath()) && request.resource.data.uid == request.auth.uid;
+    }
+
+    match /users/{uid} {
+      allow read: if isMember() || (signedIn() && request.auth.uid == uid);
+      allow create: if signedIn() && request.auth.uid == uid && (
+        request.resource.data.role == 'pending' ||
+        (request.resource.data.role == 'owner' && !exists(ownerPath()) && getAfter(ownerPath()).data.uid == request.auth.uid));
+      // 本人は名前・写真だけ変えられる。役割を変えられるのはオーナー・編集者（オーナーの役割は変えられない）
+      allow update: if (isAdmin() && resource.data.role != 'owner' && request.resource.data.role != 'owner'
+                         && (role() == 'owner' || !(request.resource.data.role in ['admin']) || resource.data.role == 'admin'))
+                    || (signedIn() && request.auth.uid == uid && request.resource.data.role == resource.data.role);
+      allow delete: if isAdmin() && resource.data.role != 'owner' && request.auth.uid != uid;
+    }
+
+    match /config/{d}  { allow read: if isStaff(); allow write: if isAdmin(); }
+    match /reports/{d} { allow read: if isStaff(); allow write: if isAdmin(); }
+
+    match /tasks/{id} {
+      allow read: if isMember();
+      allow create, delete: if isStaff();
+      // 協力会社は記録の表紙写真と更新日時だけ変えられる
+      allow update: if isStaff() || (isPartner() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cover', 'lastNoteAt', 'updatedAt', 'updatedBy']));
+      match /notes/{nid} {
+        allow read: if isMember();
+        allow create: if isMember() && request.resource.data.author == request.auth.uid;
+        allow update, delete: if isStaff() || (isPartner() && resource.data.author == request.auth.uid);
+      }
+    }
+
+    match /dailies/{id}   { allow read, write: if isMember(); }
+    match /assign/{id}    { allow read: if isMember(); allow write: if isStaff(); }
+    match /crews/{id}     { allow read: if isMember(); allow write: if isStaff(); }
+    match /materials/{id} { allow read: if isMember(); allow write: if isStaff(); }
+
+    match /receipts/{id} {
+      allow read: if isStaff() || (isPartner() && resource.data.createdBy == request.auth.uid);
+      allow create: if isMember() && request.resource.data.createdBy == request.auth.uid;
+      allow update, delete: if isStaff();
+    }
+
+    match /requests/{id} { allow read, write: if isStaff(); }
+    match /depts/{id}    { allow read, write: if isStaff(); }
+    match /docsort/{id}  { allow read, write: if isStaff(); }
+  }
+}

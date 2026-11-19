@@ -1,0 +1,14 @@
+{
+  "name": "anken-board-web",
+  "private": true,
+  "description": "案件ボードを Claude の外（Firebase）で動かすための版",
+  "scripts": {
+    "build": "node build.mjs",
+    "emulators": "firebase emulators:start --project demo-anken",
+    "deploy": "node build.mjs && firebase deploy"
+  },
+  "devDependencies": {
+    "firebase": "10.12.2",
+    "firebase-tools": "13.11.2"
+  }
+}

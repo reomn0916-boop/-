@@ -1,0 +1,2637 @@
+<title>案件ボード</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=Noto+Sans+JP:wght@400;500;700&family=Zen+Kaku+Gothic+New:wght@700&display=swap">
+<style>
+/* Layout: sticky toolbar over a four-lane board (lanes swipe sideways on phones) or a month grid; a record drawer slides in from the right. */
+:root{
+  --bg:#ECEFEA; --surface:#FFFFFF; --sunken:#E2E6E0; --ink:#1B211E; --muted:#5C6660; --line:#D1D7D0;
+  --accent:#C24E1C; --accent-ink:#FFFFFF; --accent-soft:#F6E2D8;
+  --s-todo:#76807A; --s-doing:#2E6BAE; --s-review:#A9790F; --s-done:#2C8553; --danger:#B3261E;
+  --shadow:0 1px 2px rgba(27,33,30,.08),0 2px 8px rgba(27,33,30,.06);
+  --f-head:"Zen Kaku Gothic New","Hiragino Kaku Gothic ProN","Noto Sans JP",system-ui,sans-serif;
+  --f-body:"Noto Sans JP","Hiragino Sans","Yu Gothic UI",system-ui,sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#131715; --surface:#1C2220; --sunken:#171C1A; --ink:#E5EAE6; --muted:#98A39C; --line:#2D3531;
+  --accent:#E8743F; --accent-ink:#1B120D; --accent-soft:#3A2419;
+  --s-todo:#9CA6A0; --s-doing:#6EA5E0; --s-review:#D8AA46; --s-done:#5DBA85; --danger:#F08A80;
+  --shadow:0 1px 2px rgba(0,0,0,.35); color-scheme:dark;
+}}
+:root[data-theme="dark"]{
+  --bg:#131715; --surface:#1C2220; --sunken:#171C1A; --ink:#E5EAE6; --muted:#98A39C; --line:#2D3531;
+  --accent:#E8743F; --accent-ink:#1B120D; --accent-soft:#3A2419;
+  --s-todo:#9CA6A0; --s-doing:#6EA5E0; --s-review:#D8AA46; --s-done:#5DBA85; --danger:#F08A80;
+  --shadow:0 1px 2px rgba(0,0,0,.35); color-scheme:dark;
+}
+[hidden]{display:none!important}
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:30;background:var(--surface)}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.gutter{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+
+/* ---------- toolbar ---------- */
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--surface);border-bottom:1px solid var(--line)}
+.top-in{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;padding-block:10px}
+.brand{display:flex;align-items:baseline;gap:8px;margin-right:auto}
+.brand h1{font-family:var(--f-head);font-size:19px;margin:0;letter-spacing:.04em}
+.brand small{color:var(--muted);font-size:12px}
+.tabs{display:flex;background:var(--sunken);border-radius:8px;padding:3px;overflow-x:auto;max-width:100%;scrollbar-width:none}
+.tabs a{white-space:nowrap;flex:none}
+.tabs a{padding:5px 14px;border-radius:6px;color:var(--muted);text-decoration:none;font-weight:500;font-size:13px}
+.tabs a[aria-current="page"]{background:var(--surface);color:var(--ink);box-shadow:var(--shadow)}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:6px 12px;font-size:13px;font-weight:500;white-space:nowrap}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.primary:hover{filter:brightness(1.06)}
+.btn.ghost{border-color:transparent;background:transparent}
+.btn.danger{color:var(--danger);border-color:var(--danger);background:transparent}
+.btn:disabled{opacity:.5;cursor:default}
+.filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding-block:0 10px}
+.filters select,.filters input[type=search]{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:5px 10px;font-size:13px;min-width:0}
+.filters input[type=search]{width:180px;max-width:100%}
+.chip-toggle{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 12px;font-size:13px}
+.chip-toggle[aria-pressed="true"]{background:var(--ink);color:var(--surface);border-color:var(--ink)}
+.count{color:var(--muted);font-size:12px;margin-left:auto;font-variant-numeric:tabular-nums}
+
+.banner{margin:12px 0 0;padding:10px 14px;border-radius:8px;background:var(--accent-soft);font-size:13px}
+.banner[hidden]{display:none}
+
+/* ---------- board ---------- */
+main{padding-block:16px 40px}
+.board{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;align-items:start}
+.col{background:var(--sunken);border-radius:10px;display:flex;flex-direction:column;min-width:0}
+.col-head{display:flex;align-items:center;gap:8px;padding:10px 12px 6px}
+.col-head h2{font-family:var(--f-head);font-size:14px;margin:0;letter-spacing:.06em}
+.dot{width:9px;height:9px;border-radius:50%;flex:none;background:var(--c)}
+.col-head .n{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.col-body{display:flex;flex-direction:column;gap:8px;padding:4px 8px 8px;min-height:60px}
+.col-foot{padding:0 8px 10px}
+.add-inline{width:100%;text-align:left;border:1px dashed var(--line);background:transparent;border-radius:8px;padding:7px 10px;color:var(--muted);font-size:13px}
+.add-inline:hover{border-color:var(--muted);color:var(--ink)}
+.add-form input{width:100%;border:1px solid var(--accent);border-radius:8px;padding:7px 10px;background:var(--surface)}
+
+.card{background:var(--surface);border-radius:8px;box-shadow:var(--shadow);padding:10px 11px 9px;border-left:3px solid var(--c);cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;display:flex;flex-direction:column;gap:6px;text-align:left}
+.card:hover{box-shadow:0 0 0 1px var(--line),var(--shadow)}
+.card.dragging{opacity:.35}
+.card .proj{font-size:11px;color:var(--muted);letter-spacing:.04em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card .ttl{font-weight:500;font-size:14px;line-height:1.45;overflow-wrap:anywhere}
+.card .ttl.untitled{color:var(--muted)}
+.card .cover{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:5px;background:var(--sunken);max-width:100%}
+.meta{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.due{font-family:var(--f-mono);font-size:11.5px;padding:1px 6px;border-radius:4px;background:var(--sunken);font-variant-numeric:tabular-nums}
+.due.soon{background:var(--accent-soft);color:var(--accent)}
+.due.over{background:var(--danger);color:var(--surface)}
+.avatar{width:20px;height:20px;border-radius:50%;object-fit:cover;flex:none;background:var(--sunken)}
+.meta .who{margin-left:auto;display:flex;align-items:center;gap:5px;max-width:60%;overflow:hidden}
+.meta .who span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.drop-mark{height:3px;border-radius:2px;background:var(--accent);margin:-2px 0}
+.drag-ghost{position:fixed;z-index:60;pointer-events:none;transform:rotate(2deg);box-shadow:0 10px 30px rgba(0,0,0,.25);opacity:.95}
+
+.empty{grid-column:1/-1;background:var(--surface);border:1px dashed var(--line);border-radius:10px;padding:28px 20px;text-align:center;color:var(--muted)}
+.empty strong{display:block;color:var(--ink);font-family:var(--f-head);font-size:16px;margin-bottom:6px}
+
+@media (max-width:820px){
+  .board-scroll{overflow-x:auto;scroll-snap-type:x mandatory;margin-left:calc(-1*max(16px,env(safe-area-inset-left,0px)));margin-right:calc(-1*max(16px,env(safe-area-inset-right,0px)));padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));scroll-padding-left:max(16px,env(safe-area-inset-left,0px));-webkit-overflow-scrolling:touch}
+  .board{grid-template-columns:repeat(4,82vw);width:max-content}
+  .col{scroll-snap-align:start}
+  .filters input[type=search]{width:100%;order:9}
+  .count{margin-left:0}
+}
+
+/* ---------- calendar ---------- */
+.cal-head{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.cal-head h2{font-family:var(--f-head);font-size:20px;margin:0 6px 0 0;font-variant-numeric:tabular-nums}
+.cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--line);gap:1px}
+.dow{background:var(--sunken);text-align:center;font-size:12px;padding:6px 0;color:var(--muted);font-weight:500}
+.dow.sun,.day.sun .dn{color:var(--danger)}
+.dow.sat,.day.sat .dn{color:var(--s-doing)}
+.day{background:var(--surface);min-height:104px;padding:5px 5px 6px;display:flex;flex-direction:column;gap:3px;border:0;text-align:left;min-width:0;cursor:pointer}
+.day.out{background:var(--sunken)}
+.day.out .dn{opacity:.45}
+.day[aria-pressed="true"]{box-shadow:inset 0 0 0 2px var(--accent)}
+.dn{font-family:var(--f-mono);font-size:12px;line-height:1;padding:3px 2px;font-variant-numeric:tabular-nums}
+.day.today .dn{background:var(--accent);color:var(--accent-ink)!important;border-radius:4px;align-self:flex-start;padding:3px 5px}
+.ev{font-size:11.5px;line-height:1.35;padding:1px 5px;border-radius:3px;background:color-mix(in srgb,var(--c) 18%,var(--surface));border-left:3px solid var(--c);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ev.done{opacity:.55;text-decoration:line-through}
+.more{font-size:11px;color:var(--muted);padding-left:4px}
+.dots{display:none;gap:3px;flex-wrap:wrap}
+.dots i{width:6px;height:6px;border-radius:50%;background:var(--c)}
+.daylist{margin-top:14px;background:var(--surface);border-radius:10px;border:1px solid var(--line);padding:12px 14px}
+.daylist h3{margin:0 0 8px;font-family:var(--f-head);font-size:15px}
+.daylist ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.daylist li button{width:100%;display:flex;align-items:center;gap:10px;text-align:left;background:transparent;border:0;padding:6px 4px;border-radius:6px}
+.daylist li button:hover{background:var(--sunken)}
+.daylist .st{font-size:11px;padding:1px 7px;border-radius:999px;color:var(--surface);background:var(--c);flex:none}
+.daylist .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (max-width:640px){
+  .day{min-height:58px;padding:4px 3px}
+  .day .ev,.day .more{display:none}
+  .dots{display:flex}
+}
+
+/* ---------- 部署間連絡 ---------- */
+.tabs a .b{display:inline-block;margin-left:5px;font-size:10.5px;min-width:16px;padding:0 4px;border-radius:8px;background:var(--accent);color:var(--accent-ink);text-align:center;font-variant-numeric:tabular-nums}
+.rk{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:20px;align-items:start}
+@media (max-width:900px){.rk{grid-template-columns:minmax(0,1fr)}}
+.rk-main{min-width:0}
+.subnav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.subnav button{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:5px 12px;font-size:13px;display:inline-flex;gap:6px;align-items:center}
+.subnav button[aria-pressed="true"]{background:var(--ink);color:var(--surface);border-color:var(--ink)}
+.subnav .b{font-size:11px;min-width:18px;padding:0 5px;border-radius:9px;background:var(--sunken);color:var(--ink);text-align:center;font-variant-numeric:tabular-nums}
+.subnav .b.hot{background:var(--accent);color:var(--accent-ink)}
+.req-list{display:flex;flex-direction:column;gap:10px}
+.req{background:var(--surface);border-radius:10px;box-shadow:var(--shadow);padding:12px 14px;display:flex;flex-direction:column;gap:8px;border-left:3px solid var(--c);min-width:0}
+.req .top-row{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;font-size:12px;color:var(--muted)}
+.route{font-weight:700;color:var(--ink);font-size:13px}
+.req .body{white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px}
+.tag{font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--line)}
+.tag.money{border-color:var(--s-review);color:var(--s-review)}
+.tag.ok{border-color:var(--s-done);color:var(--s-done)}
+select.st{border:1px solid var(--line);border-radius:999px;padding:2px 8px;font-size:12px;background:var(--surface);color:var(--ink)}
+.reply{background:var(--bg);border-radius:8px;padding:8px 10px;font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}
+.reply b{font-size:11px;color:var(--muted);display:block;font-weight:500}
+.reply-edit{display:flex;flex-direction:column;gap:6px}
+.reply-edit textarea{border:1px solid var(--line);border-radius:7px;padding:6px 9px;background:var(--surface);width:100%;resize:vertical}
+.req .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.link{border:0;background:transparent;color:var(--accent);padding:0;font-size:12.5px;text-decoration:underline;text-align:left}
+.req-form{background:var(--surface);border:1px solid var(--accent);border-radius:10px;padding:12px 14px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:12px}
+.req-form label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted);min-width:0}
+.req-form .full{grid-column:1/-1}
+.req-form select,.req-form input,.req-form textarea{border:1px solid var(--line);border-radius:7px;padding:6px 9px;background:var(--surface);color:var(--ink);font-size:14px;min-width:0;width:100%}
+.req-form label.chk{flex-direction:row;align-items:center;gap:8px;color:var(--ink);font-size:13px}
+.req-form .chk input{width:auto}
+@media (max-width:520px){.req-form{grid-template-columns:minmax(0,1fr)}}
+.depts{display:flex;flex-direction:column;gap:10px;min-width:0}
+.depts h2{font-family:var(--f-head);font-size:16px;margin:0}
+.depts p{margin:0;font-size:12.5px;color:var(--muted)}
+.dept{background:var(--surface);border-radius:10px;border:1px solid var(--line);padding:10px 12px;display:flex;flex-direction:column;gap:6px}
+.dept .dh{display:flex;align-items:baseline;gap:8px;font-size:12px;color:var(--muted)}
+.dept .dh b{color:var(--ink);font-size:14px}
+.dept textarea{border:1px solid transparent;border-radius:6px;background:var(--bg);padding:6px 8px;min-height:76px;resize:vertical;width:100%;font-size:13px}
+.dept textarea:focus{border-color:var(--line)}
+.audit{border-radius:8px;padding:8px 10px;font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid var(--c);background:color-mix(in srgb,var(--c) 10%,var(--surface))}
+.audit b{display:block;font-size:12px;color:var(--c)}
+.ai-note{font-size:12px;color:var(--muted)}
+.busy{font-size:12.5px;color:var(--accent)}
+.btn.ai{border-color:var(--accent);color:var(--accent)}
+.prompts{display:flex;flex-direction:column;gap:6px}
+.prompts details{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.prompts summary{cursor:pointer;font-weight:500;font-size:13px}
+.prompts textarea{margin-top:6px;width:100%;min-height:150px;border:1px solid var(--line);border-radius:6px;background:var(--bg);padding:6px 8px;font-size:12.5px;line-height:1.6;resize:vertical}
+.prompts input{margin-top:6px;border:1px solid var(--line);border-radius:6px;background:var(--bg);padding:5px 8px;width:140px;font-family:var(--f-mono)}
+.rel{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.rel li{display:flex;gap:8px;align-items:flex-start;font-size:13px}
+.rel .st{font-size:11px;padding:1px 7px;border-radius:999px;color:var(--surface);background:var(--c);flex:none}
+.rel .t{min-width:0;overflow-wrap:anywhere}
+
+/* ---------- 経費 ---------- */
+.kh-tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.kh-tools select{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:5px 10px;font-size:13px;max-width:100%}
+.kh-tools .sp{margin-left:auto}
+.tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:14px}
+@media (max-width:640px){.tiles{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.tile{background:var(--surface);border-radius:10px;padding:10px 12px;border:1px solid var(--line);min-width:0}
+.tile .k{font-size:12px;color:var(--muted)}
+.tile .v{font-family:var(--f-mono);font-size:20px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile.warn .v{color:var(--accent)}
+.kh-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;margin-bottom:14px}
+@media (max-width:820px){.kh-grid{grid-template-columns:minmax(0,1fr)}}
+.panel{background:var(--surface);border-radius:10px;border:1px solid var(--line);padding:12px 14px;min-width:0}
+.panel h3{font-family:var(--f-head);font-size:15px;margin:0 0 10px}
+.bars{display:flex;flex-direction:column;gap:7px}
+.bar-row{display:grid;grid-template-columns:96px minmax(0,1fr) 92px;gap:8px;align-items:center;font-size:13px}
+.bar-row .lb{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar-track{height:12px;border-radius:0 4px 4px 0;background:transparent;position:relative}
+.bar-fill{height:100%;background:var(--accent);border-radius:0 4px 4px 0;min-width:2px}
+.bar-row .amt{text-align:right;font-family:var(--f-mono);font-size:12.5px;font-variant-numeric:tabular-nums}
+.tbl-wrap{overflow-x:auto}
+table.tbl{width:100%;border-collapse:collapse;font-size:13px}
+#khList table.tbl{min-width:640px}
+.tbl td{word-break:keep-all;overflow-wrap:anywhere}
+.tbl th{font-weight:500;color:var(--muted);font-size:12px;text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+.tbl td{padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+.tbl td.num,.tbl th.num{text-align:right;font-family:var(--f-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.tbl tr.clickable{cursor:pointer}
+.tbl tr.clickable:hover td{background:var(--bg)}
+.tbl .thumb{width:40px;height:40px;object-fit:cover;border-radius:5px;display:block;background:var(--sunken)}
+.flag{font-size:11px;padding:1px 6px;border-radius:999px;white-space:nowrap;display:inline-block;margin:1px 2px 1px 0}
+.flag.uncheck{background:var(--accent-soft);color:var(--accent)}
+.flag.ok{border:1px solid var(--s-done);color:var(--s-done)}
+.flag.bad{border:1px solid var(--danger);color:var(--danger)}
+.rc-form{background:var(--surface);border:1px solid var(--accent);border-radius:10px;padding:12px 14px;margin-bottom:14px;display:grid;grid-template-columns:minmax(0,180px) minmax(0,1fr);gap:14px}
+@media (max-width:640px){.rc-form{grid-template-columns:minmax(0,1fr)}}
+.rc-form .ph{width:100%;max-height:320px;object-fit:contain;border-radius:6px;background:var(--sunken);cursor:zoom-in}
+.rc-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 10px;min-width:0}
+.rc-fields label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted);min-width:0}
+.rc-fields .full{grid-column:1/-1}
+.rc-fields input,.rc-fields select,.rc-fields textarea{border:1px solid var(--line);border-radius:7px;padding:6px 9px;background:var(--surface);color:var(--ink);font-size:14px;width:100%;min-width:0}
+.rc-fields input[type=number]{font-family:var(--f-mono)}
+.progress{font-size:13px;color:var(--accent)}
+
+/* ---------- 材料・手配・資料・共通 ---------- */
+.grid-in{width:100%;min-width:56px;border:1px solid transparent;background:transparent;padding:4px 6px;border-radius:5px;font-size:13px;color:var(--ink)}
+.grid-in:hover{border-color:var(--line)}
+.grid-in:focus{border-color:var(--accent);background:var(--surface);outline:none}
+select.grid-in{border-color:var(--line);background:var(--surface);min-width:88px}
+#mtList table.tbl{min-width:1560px}
+#mtList td{padding:3px 4px;vertical-align:middle}
+#thGrid table.tbl{min-width:820px}
+#dsList table.tbl{min-width:760px}
+.th-cell select{width:100%;font-size:12px;border:1px solid var(--line);border-radius:6px;padding:4px;background:var(--surface);color:var(--ink)}
+.th-cell.on select{background:color-mix(in srgb,var(--accent) 14%,var(--surface));border-color:var(--accent);font-weight:500}
+.th-cell.sun{background:color-mix(in srgb,var(--danger) 5%,transparent)}
+.crew-name{border:0;background:transparent;padding:0;text-align:left;color:var(--ink);font-weight:500;text-decoration:underline;text-decoration-color:var(--line)}
+.meter{height:8px;border-radius:4px;background:var(--sunken);overflow:hidden;margin:2px 0 6px}
+.meter i{display:block;height:100%;background:var(--s-done);border-radius:0 4px 4px 0}
+.meter.warn i{background:var(--accent)}
+.meter.over i{background:var(--danger)}
+.intro{margin:0 0 12px;font-size:13px;color:var(--muted);max-width:70ch}
+.sect .tools{display:flex;gap:8px;flex-wrap:wrap}
+.modal-wrap{position:fixed;inset:0;z-index:65;background:rgba(10,14,12,.45);display:flex;align-items:center;justify-content:center;padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(16px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.modal-box{background:var(--surface);border-radius:12px;width:min(780px,100%);height:min(82vh,760px);display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,.3)}
+.modal-box textarea{flex:1;width:100%;border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-family:var(--f-mono);font-size:12.5px;line-height:1.7;background:var(--bg);color:var(--ink);resize:none;min-height:200px}
+.mydept{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)}
+.mydept select{border:1px solid var(--line);border-radius:8px;padding:4px 8px;background:var(--surface);color:var(--ink);font-size:13px}
+
+.report{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:10px;padding:10px 14px;margin-bottom:12px}
+.report .rh{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.report .rh b{font-family:var(--f-head);font-size:14px}
+.report .rh select{margin-left:auto;border:1px solid var(--line);border-radius:7px;padding:3px 6px;background:var(--surface);color:var(--ink);font-size:12.5px}
+.report .sum{margin:6px 0 0;font-size:13.5px}
+.report pre{margin:8px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--f-body);font-size:13px;line-height:1.7;background:var(--bg);border-radius:8px;padding:10px 12px}
+
+/* ---------- 今日・現場 ---------- */
+.td-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.td-head h2{font-family:var(--f-head);font-size:20px;margin:0}
+.td-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start}
+@media (max-width:820px){.td-grid{grid-template-columns:minmax(0,1fr)}}
+.td-grid .panel h3{display:flex;align-items:center;gap:8px}
+.td-grid .panel h3 .n{font-family:var(--f-body);font-size:12px;color:var(--muted);font-weight:400}
+.td-list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.td-list button{width:100%;display:flex;align-items:center;gap:8px;text-align:left;background:transparent;border:0;padding:7px 6px;border-radius:6px;font-size:13.5px;color:var(--ink)}
+.td-list button:hover{background:var(--bg)}
+.td-list .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.td-list .sub{color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:42%;flex:0 1 auto}
+.td-list .flag,.td-list .due{flex:none}
+.td-more{margin-top:6px}
+.td-hint{font-size:12.5px;color:var(--muted);margin:0}
+.chips{display:flex;gap:4px;flex-wrap:wrap}
+.chip{font-size:11px;padding:1px 6px;border-radius:4px;background:var(--sunken);color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.chip.warn{background:var(--accent-soft);color:var(--accent)}
+.chip.bad{background:var(--danger);color:var(--surface)}
+.gb{max-width:520px;margin:0 auto;display:flex;flex-direction:column;gap:12px}
+.gb-task{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+.gb-task select{font-size:16px;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);width:100%}
+.gb-btn{display:flex;align-items:center;gap:16px;width:100%;min-height:84px;padding:16px 20px;border-radius:14px;border:0;background:var(--accent);color:var(--accent-ink);font-size:22px;font-weight:700;font-family:var(--f-head);text-align:left;box-shadow:var(--shadow)}
+.gb-btn.sec{background:var(--surface);color:var(--ink);border:2px solid var(--line)}
+.gb-btn .ic{font-size:30px;line-height:1}
+.gb-btn small{display:block;font-size:12.5px;font-weight:400;font-family:var(--f-body);opacity:.85}
+.gb-btn:active{transform:scale(.98)}
+.gb-panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:10px}
+.gb-panel textarea{width:100%;min-height:80px;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:16px;background:var(--bg);color:var(--ink)}
+.gb-panel .big{min-height:56px;font-size:18px;justify-content:center}
+.gb-status{font-size:14px;color:var(--accent);text-align:center;min-height:1.4em}
+
+/* ---------- 日報 ---------- */
+.np{display:flex;flex-direction:column;gap:14px}
+.np-sec{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px;min-width:0}
+.np-sec h3{font-family:var(--f-head);font-size:15px;margin:0 0 8px;display:flex;align-items:baseline;gap:8px}
+.np-sec h3 .n{font-family:var(--f-body);font-size:12px;color:var(--muted);font-weight:400}
+.np-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px 10px}
+@media (max-width:640px){.np-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.np-grid label,.np-sec label.blk{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted);min-width:0}
+.np-grid input,.np-grid select,.np-sec textarea{border:1px solid var(--line);border-radius:7px;padding:7px 9px;background:var(--surface);color:var(--ink);font-size:14px;width:100%;min-width:0}
+.np-sec textarea{min-height:76px;resize:vertical}
+table.np-rows{min-width:460px}
+.np-rows td{padding:3px 4px}
+.np-bar{position:sticky;bottom:0;bottom:env(safe-area-inset-bottom,0px);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;box-shadow:0 -4px 16px rgba(0,0,0,.08);z-index:5}
+.np-bar .total{font-family:var(--f-mono);font-size:15px;font-variant-numeric:tabular-nums}
+.np-bar .state{font-size:12.5px;color:var(--muted)}
+.np-bar .state.dirty{color:var(--accent)}
+
+/* ---------- drawer ---------- */
+.scrim{position:fixed;inset:0;background:rgba(10,14,12,.38);z-index:40}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:min(540px,100%);z-index:41;background:var(--surface);box-shadow:-8px 0 30px rgba(0,0,0,.18);display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);padding-right:env(safe-area-inset-right,0px)}
+@media (prefers-reduced-motion:no-preference){.drawer{animation:slide .18s ease-out}@keyframes slide{from{transform:translateX(24px);opacity:.4}}}
+.d-head{display:flex;align-items:center;gap:8px;padding:10px 12px 10px 18px;border-bottom:1px solid var(--line)}
+.d-head .crumb{color:var(--muted);font-size:12px;margin-right:auto}
+.d-body{overflow-y:auto;padding:16px 18px 28px;display:flex;flex-direction:column;gap:18px}
+.title-in{field-sizing:content;min-height:1.6em;width:100%;border:0;background:transparent;font-family:var(--f-head);font-size:21px;line-height:1.35;padding:2px 0;border-bottom:1px solid transparent;resize:none;overflow:hidden}
+.title-in:hover,.title-in:focus{border-bottom-color:var(--line);outline:none}
+.fields > *{min-width:0}
+.fields{display:grid;grid-template-columns:88px minmax(0,1fr);gap:10px 12px;align-items:center}
+.fields label,.fields .lb{font-size:12px;color:var(--muted)}
+.fields input,.fields select,.fields textarea{border:1px solid var(--line);background:var(--surface);border-radius:7px;padding:6px 9px;width:100%;min-width:0}
+.fields textarea{min-height:70px;resize:vertical}
+.daterow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.daterow input{width:auto;flex:1;min-width:130px;font-family:var(--f-mono);font-size:13px}
+.seg{display:flex;flex-wrap:wrap;gap:6px}
+.seg button{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:4px 11px;font-size:12.5px;display:inline-flex;align-items:center;gap:6px}
+.seg button[aria-pressed="true"]{border-color:var(--c);background:color-mix(in srgb,var(--c) 16%,var(--surface));font-weight:700}
+.picker{position:relative}
+.picker .cur{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.menu{position:absolute;left:0;right:0;top:calc(100% + 4px);background:var(--surface);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.14);z-index:5;padding:6px;display:flex;flex-direction:column;gap:2px}
+.menu input{margin-bottom:4px}
+.menu button{display:flex;align-items:center;gap:8px;border:0;background:transparent;padding:6px 8px;border-radius:6px;text-align:left}
+.menu button:hover{background:var(--sunken)}
+.menu .hint{font-size:12px;color:var(--muted);padding:4px 8px}
+.sect h3{font-family:var(--f-head);font-size:15px;margin:0 0 10px;display:flex;align-items:center;gap:8px}
+.sect h3 .n{color:var(--muted);font-family:var(--f-body);font-size:12px;font-weight:400}
+.composer{border:1px solid var(--line);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:8px;background:var(--bg)}
+.composer textarea{border:0;background:transparent;resize:vertical;min-height:58px;width:100%}
+.composer textarea:focus{outline:none}
+.composer .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.composer .row .sp{margin-left:auto}
+.thumbs{display:flex;gap:6px;flex-wrap:wrap}
+.thumbs .th{position:relative;width:64px;height:64px}
+.thumbs img{width:64px;height:64px;object-fit:cover;border-radius:6px;display:block}
+.thumbs .x{position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;border:0;background:var(--ink);color:var(--surface);font-size:12px;line-height:20px;padding:0}
+.timeline{list-style:none;margin:14px 0 0;padding:0;display:flex;flex-direction:column;gap:14px}
+.note{display:grid;grid-template-columns:28px minmax(0,1fr);gap:10px}
+.note .avatar{width:28px;height:28px}
+.note .nh{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.note .nh b{color:var(--ink);font-weight:500;font-size:13px}
+.note .nh .del{margin-left:auto;border:0;background:transparent;color:var(--muted);font-size:12px;padding:0 2px}
+.note .nh .del:hover{color:var(--danger)}
+.note p{margin:3px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:6px;margin-top:6px}
+.gallery button{padding:0;border:0;background:var(--sunken);border-radius:6px;overflow:hidden;aspect-ratio:1;max-width:100%}
+.gallery img{width:100%;height:100%;object-fit:cover;display:block}
+.danger-zone{border-top:1px solid var(--line);padding-top:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px}
+.muted{color:var(--muted)}
+.ro-note{font-size:12px;color:var(--muted)}
+
+.lightbox{position:fixed;inset:0;z-index:70;background:rgba(0,0,0,.88);display:flex;align-items:center;justify-content:center;padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(16px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px));cursor:zoom-out}
+.lightbox img{max-width:100%;max-height:100%;object-fit:contain;border-radius:4px}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:80;background:var(--ink);color:var(--surface);padding:9px 16px;border-radius:8px;font-size:13px;box-shadow:0 6px 20px rgba(0,0,0,.25);max-width:calc(100% - 32px)}
+</style>
+
+<header class="top">
+  <div class="top-in gutter">
+    <div class="brand"><h1>案件ボード</h1><small id="who"></small></div>
+    <nav class="tabs" aria-label="表示切替">
+      <a href="#today" id="tab-today">今日</a>
+      <a href="#genba" id="tab-genba">現場</a>
+      <a href="#nippo" id="tab-nippo">日報</a>
+      <a href="#board" id="tab-board">ボード</a>
+      <a href="#calendar" id="tab-calendar">カレンダー</a>
+      <a href="#zairyo" id="tab-zairyo">材料</a>
+      <a href="#tehai" id="tab-tehai">手配</a>
+      <a href="#keihi" id="tab-keihi">経費</a>
+      <a href="#renraku" id="tab-renraku">連絡<span class="b" id="rkBadge" hidden></span></a>
+      <a href="#shiryo" id="tab-shiryo">資料</a>
+    </nav>
+    <button class="btn primary" id="newBtn" type="button">＋ 新規カード</button>
+  </div>
+  <div class="filters gutter">
+    <select id="fProject" aria-label="案件で絞り込み"><option value="">すべての案件</option></select>
+    <button class="chip-toggle" id="fMine" type="button" aria-pressed="false">自分の担当</button>
+    <input type="search" id="fQ" placeholder="キーワード検索" aria-label="キーワード検索">
+    <span class="count" id="count"></span>
+  </div>
+</header>
+
+<main class="gutter">
+  <p class="banner" id="banner" hidden></p>
+  <section id="view-today" hidden>
+    <div class="td-head" id="tdHead"></div>
+    <div class="td-grid" id="tdGrid"></div>
+  </section>
+  <section id="view-genba" hidden>
+    <div class="gb">
+      <label class="gb-task">どの現場の記録ですか？<select id="gbTask"></select></label>
+      <div id="gbNew"></div>
+      <button class="gb-btn" id="gbPhoto" type="button"><span class="ic" aria-hidden="true">📷</span><span>写真で記録<small>撮ってひとこと添えるだけ</small></span></button>
+      <button class="gb-btn" id="gbReceipt" type="button"><span class="ic" aria-hidden="true">🧾</span><span>レシートを撮る<small>撮るだけ。確認は経理がまとめて行います</small></span></button>
+      <button class="gb-btn" id="gbNippo" type="button"><span class="ic" aria-hidden="true">📝</span><span>日報を書く<small>手配表から人工・協力業者を下書きします</small></span></button>
+      <button class="gb-btn sec" id="gbToday" type="button"><span class="ic" aria-hidden="true">👷</span><span>今日の手配と予定</span></button>
+      <input type="file" id="gbPhotoIn" accept="image/*" capture="environment" multiple hidden>
+      <input type="file" id="gbRcIn" accept="image/*" capture="environment" multiple hidden>
+      <p class="gb-status" id="gbStatus" role="status"></p>
+      <div id="gbPanel"></div>
+    </div>
+  </section>
+  <section id="view-nippo" hidden>
+    <div class="cal-head">
+      <h2 id="npTitle"></h2>
+      <button class="btn" id="npPrev" type="button" aria-label="前の日">‹ 前日</button>
+      <button class="btn" id="npToday" type="button">今日</button>
+      <button class="btn" id="npNext" type="button" aria-label="次の日">翌日 ›</button>
+    </div>
+    <div class="kh-tools">
+      <select id="npTask" aria-label="現場"></select>
+      <input type="date" id="npDate" aria-label="日付" style="border:1px solid var(--line);border-radius:8px;padding:5px 8px;background:var(--surface);color:var(--ink)">
+      <button class="btn sp" id="npCsv" type="button">この現場の日報をCSVで書き出す</button>
+    </div>
+    <div id="npForm"></div>
+    <div class="panel" style="margin-top:14px"><h3 id="npListTitle">この現場の日報</h3><div class="tbl-wrap" id="npList"></div></div>
+  </section>
+  <section id="view-board" hidden>
+    <div class="board-scroll" id="boardScroll"><div class="board" id="board"></div></div>
+  </section>
+  <section id="view-calendar" hidden>
+    <div class="cal-head">
+      <h2 id="calTitle"></h2>
+      <button class="btn" id="calPrev" type="button" aria-label="前の月">‹ 前月</button>
+      <button class="btn" id="calToday" type="button">今月</button>
+      <button class="btn" id="calNext" type="button" aria-label="次の月">翌月 ›</button>
+    </div>
+    <div class="cal" id="cal"></div>
+    <div class="daylist" id="daylist" hidden></div>
+  </section>
+  <section id="view-zairyo" hidden>
+    <div class="cal-head"><h2>材料の拾い出し・発注管理</h2></div>
+    <p class="intro">工事ごとに必要な材料を1行ずつ拾い、発注・納品の状況を管理します。使用日が近いのに未発注のもの、納品遅れ、金額が基準以上で経営の判断が必要なものに印が付きます。</p>
+    <div class="kh-tools">
+      <select id="mtTask" aria-label="案件"></select>
+      <button class="btn primary" id="mtAdd" type="button">＋ 行を追加</button>
+      <button class="btn ai" id="mtScan" type="button">📷 数量表・図面から拾い出す</button>
+      <input type="file" id="mtFiles" accept="image/*" multiple hidden>
+      <span class="progress" id="mtProgress" hidden></span>
+      <button class="btn sp" id="mtCsv" type="button">CSVを書き出す</button>
+    </div>
+    <div class="tiles" id="mtTiles"></div>
+    <div class="panel"><div class="tbl-wrap" id="mtList"></div></div>
+  </section>
+  <section id="view-tehai" hidden>
+    <div class="cal-head">
+      <h2 id="thTitle"></h2>
+      <button class="btn" id="thPrev" type="button" aria-label="前の週">‹ 前週</button>
+      <button class="btn" id="thThis" type="button">今週</button>
+      <button class="btn" id="thNext" type="button" aria-label="次の週">翌週 ›</button>
+      <button class="btn primary" id="crewAdd" type="button">＋ 職人・協力会社を登録</button>
+    </div>
+    <div id="crewForm"></div>
+    <div class="panel"><div class="tbl-wrap" id="thGrid"></div></div>
+    <div class="panel" style="margin-top:14px"><h3>案件別の人工（この週）</h3><div class="tbl-wrap" id="thByTask"></div></div>
+  </section>
+  <section id="view-shiryo" hidden>
+    <div class="cal-head"><h2>資料の仕分け</h2></div>
+    <p class="intro">取り込んだ資料をAIが「有用」「不要」「要確認」に分け、有用なものは入れる先（共通・経理・経営・施工管理・監査役）を決めます。不要と判断しても削除はしません。最終判断は社長が行い、「確定」を押します。</p>
+    <div class="kh-tools">
+      <button class="btn primary" id="dsAdd" type="button">資料を選んで仕分ける</button>
+      <input type="file" id="dsFiles" multiple hidden>
+      <span class="progress" id="dsProgress" hidden></span>
+      <button class="btn sp" id="dsCsv" type="button">CSVを書き出す</button>
+    </div>
+    <div class="tiles" id="dsTiles"></div>
+    <div class="panel"><div class="tbl-wrap" id="dsList"></div></div>
+  </section>
+  <section id="view-keihi" hidden>
+    <div class="cal-head">
+      <h2 id="khTitle"></h2>
+      <button class="btn" id="khPrev" type="button" aria-label="前の月">‹ 前月</button>
+      <button class="btn" id="khThis" type="button">今月</button>
+      <button class="btn" id="khNext" type="button" aria-label="次の月">翌月 ›</button>
+    </div>
+    <div class="kh-tools">
+      <select id="khProj" aria-label="読み取った伝票をひも付ける案件"></select>
+      <button class="btn primary" id="khScan" type="button">📷 レシート・伝票を読み取る</button>
+      <button class="btn" id="khManual" type="button">＋ 手入力</button>
+      <input type="file" id="khFiles" accept="image/*" multiple hidden>
+      <span class="progress" id="khProgress" hidden></span>
+      <button class="btn sp" id="khCsv" type="button">CSVを書き出す</button>
+    </div>
+    <div id="khForm"></div>
+    <div class="tiles" id="khTiles"></div>
+    <div class="kh-grid">
+      <div class="panel"><h3>勘定科目別</h3><div class="bars" id="khCat"></div></div>
+      <div class="panel"><h3>案件別</h3><div class="tbl-wrap" id="khProjTbl"></div></div>
+    </div>
+    <div class="panel"><h3 id="khListTitle">明細</h3><div class="tbl-wrap" id="khList"></div></div>
+    <div class="panel" style="margin-top:14px"><h3>立替精算（未精算・全期間）</h3><div class="tbl-wrap" id="khReimb"></div></div>
+  </section>
+  <section id="view-renraku" hidden>
+    <div class="rk">
+      <div class="rk-main">
+        <div class="cal-head"><h2>部署間連絡</h2><button class="btn primary" id="reqNew" type="button">＋ 依頼を出す</button>
+          <label class="mydept" style="margin-left:auto">自分の部署 <select id="myDeptSel"><option value="">未設定</option><option value="keiri">経理</option><option value="keiei">経営</option><option value="sekou">施工管理</option><option value="shacho">社長</option></select></label></div>
+        <div id="rkReport"></div>
+        <div class="subnav" id="subnav" role="group" aria-label="依頼の絞り込み"></div>
+        <div id="reqForm"></div>
+        <div class="req-list" id="reqList"></div>
+      </div>
+      <aside class="depts" aria-label="部署別の共有情報">
+        <h2>部署別の共有情報</h2>
+        <p>各部署は自分の欄だけを最新の内容に上書きします。他部署はここを読んで判断材料にします。</p>
+        <div class="depts" id="depts"></div>
+        <h2 style="margin-top:10px">AIの指示文</h2>
+        <p id="promptNote">「AIで回答案」「AIで振り分け」「監査役チェック」が使う指示です。</p>
+        <div class="prompts" id="prompts"></div>
+      </aside>
+    </div>
+  </section>
+</main>
+
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" hidden aria-label="カード詳細"></aside>
+<div class="modal-wrap" id="modal" hidden></div>
+<div class="lightbox" id="lightbox" hidden><img id="lbImg" alt=""></div>
+<div class="toast" id="toast" hidden role="status"></div>
+
+<script>
+(() => {
+"use strict";
+const STATUSES = [
+  {id:"todo",   label:"未着手",   c:"var(--s-todo)"},
+  {id:"doing",  label:"進行中",   c:"var(--s-doing)"},
+  {id:"review", label:"確認待ち", c:"var(--s-review)"},
+  {id:"done",   label:"完了",     c:"var(--s-done)"},
+];
+const SMAP = Object.fromEntries(STATUSES.map(s => [s.id, s]));
+const WD = ["日","月","火","水","木","金","土"];
+const VIEWS = ["today","genba","nippo","board","calendar","zairyo","tehai","keihi","renraku","shiryo"];
+const $ = id => document.getElementById(id);
+const blobUrl = id => /^https?:/.test(String(id)) ? id : "/_blob/" + id;
+const LIMITED_VIEWS = ["today","genba","nippo"];
+const DEPTS = [
+  {id:"keiri", label:"経理",     scope:"請求書・支払・入金管理・月次の数字・資金繰り・設備投資の資金試算", hint:"月次の売上・入金・支払予定、資金残高の概況、請求の締め日"},
+  {id:"keiei", label:"経営",     scope:"方針・目標・投資判断・見積もり・積算・過去工事の実績", hint:"今期の方針、受注目標、投資・採用の判断結果、優先する現場"},
+  {id:"sekou", label:"施工管理", scope:"工程・品質・原価・安全・書類申請・職人手配・材料の拾い出しと発注", hint:"現場ごとの進捗率・出来高、工程の遅れ、追加工事の発生、安全上の問題"},
+];
+const FROMS = [...DEPTS, {id:"shacho", label:"社長"}];
+const deptLabel = id => (FROMS.find(d => d.id === id) || {label: id ? id : "未振り分け"}).label;
+const RSTAT = [
+  {id:"open",    label:"未対応",   c:"var(--s-todo)"},
+  {id:"doing",   label:"対応中",   c:"var(--s-doing)"},
+  {id:"pending", label:"確認待ち", c:"var(--s-review)"},
+  {id:"done",    label:"完了",     c:"var(--s-done)"},
+];
+const RSMAP = Object.fromEntries(RSTAT.map(s => [s.id, s]));
+
+function h(tag, attrs, ...kids){
+  const el = document.createElement(tag);
+  if (attrs) for (const [k,v] of Object.entries(attrs)){
+    if (v == null || v === false) continue;
+    if (k === "class") el.className = v;
+    else if (k === "style") el.setAttribute("style", v);
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (k === "text") el.textContent = v;
+    else if (v === true) el.setAttribute(k, "");
+    else el.setAttribute(k, v);
+  }
+  for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : String(kid));
+  return el;
+}
+
+/* ---------- state ---------- */
+const S = {
+  tasks: new Map(), loaded:false, view:"board",
+  month: firstOfMonth(new Date()), selDay:null,
+  openId:null, notes:[], notesUnsub:null, notesFor:null,
+  fProject:"", fMine:false, q:"",
+  myId:null, canWrite:true, canEdit:false, profiles:{},
+  dragging:false, deferred:false, pendingFiles:[], confirmDelete:false, picker:false,
+  reqs:new Map(), reqLoaded:false, depts:{}, rkTab:"all", myDept:"", reqFormOpen:false, reqFormTask:null, editReply:null, confirmReq:null,
+  prompts:{}, sample:null, drafts:{}, aiBusy:{},
+  receipts:new Map(), rcLoaded:false, khMonth:null, khProj:"", rcEdit:null, rcNew:false, rcConfirmDel:false, downloads:null,
+  materials:new Map(), mtTask:"", mtConfirm:null, mtFocus:null,
+  crews:new Map(), assign:new Map(), thWeek:null, crewEdit:null,
+  docsort:new Map(), dsConfirm:null,
+  reports:new Map(), reportSel:"", reportOpen:false,
+  gbTask:"", gbFiles:[], gbMode:null, gbBusy:false, limited:false,
+  dailies:new Map(), npDate:"", npTask:"", dr:null, drKey:"", drDirty:false, drFrom:"", npDel:false,
+};
+try { S.gbTask = localStorage.getItem("anken-gbtask") || ""; } catch(e) {}
+let db = null, user = null, assets = null, loadTimer = null;
+
+try { const p = JSON.parse(localStorage.getItem("anken-filters") || "{}"); S.fProject = p.fProject || ""; S.fMine = !!p.fMine; S.rkTab = p.rkTab || "all"; S.myDept = p.myDept || ""; } catch(e) {}
+function saveFilters(){ try { localStorage.setItem("anken-filters", JSON.stringify({fProject:S.fProject, fMine:S.fMine, rkTab:S.rkTab, myDept:S.myDept})); } catch(e) {} }
+
+/* ---------- dates ---------- */
+function firstOfMonth(d){ return new Date(d.getFullYear(), d.getMonth(), 1); }
+function ymd(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+function parseYmd(s){ if(!s) return null; const [y,m,d] = s.split("-").map(Number); return new Date(y, m-1, d); }
+function todayYmd(){ return ymd(new Date()); }
+function fmtDay(s){ const d = parseYmd(s); return (d.getMonth()+1)+"/"+d.getDate()+"("+WD[d.getDay()]+")"; }
+function daysBetween(a,b){ return Math.round((parseYmd(b) - parseYmd(a)) / 864e5); }
+function fmtStamp(iso){ const d = new Date(iso); if (isNaN(d)) return ""; return (d.getMonth()+1)+"/"+d.getDate()+" "+String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0"); }
+function dueInfo(t){
+  if (!t.due) return null;
+  const left = daysBetween(todayYmd(), t.due);
+  let cls = "", txt = fmtDay(t.due);
+  if (t.status !== "done"){
+    if (left < 0){ cls = "over"; txt += " · "+(-left)+"日超過"; }
+    else if (left === 0){ cls = "soon"; txt += " · 今日"; }
+    else if (left <= 3){ cls = "soon"; txt += " · 残り"+left+"日"; }
+  }
+  return {cls, txt};
+}
+
+/* ---------- people ---------- */
+function prof(id){ return (id && S.profiles[id]) || null; }
+function nameOf(id){ const p = prof(id); return (p && p.name) || (id && id === S.myId ? "自分" : "メンバー"); }
+function avatarOf(id){ const p = prof(id); return p && p.avatarUrl; }
+function avatarEl(id, cls){ const src = avatarOf(id); return src ? h("img",{class:cls||"avatar",src,alt:""}) : h("span",{class:cls||"avatar"}); }
+async function refreshProfiles(){
+  if (!user) return;
+  const ids = new Set();
+  for (const t of S.tasks.values()) if (t.assignee) ids.add(t.assignee);
+  for (const n of S.notes) if (n.author) ids.add(n.author);
+  if (S.myId) ids.add(S.myId);
+  const missing = [...ids].filter(id => !(id in S.profiles));
+  if (!missing.length) return;
+  for (const id of missing) S.profiles[id] = null;
+  const ps = await user.profiles(missing);
+  Object.assign(S.profiles, ps);
+  render();
+}
+
+/* ---------- ui helpers ---------- */
+let toastTimer;
+function toast(msg){ const t = $("toast"); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.hidden = true, 3200); }
+function banner(msg){ const b = $("banner"); b.textContent = msg || ""; b.hidden = !msg; }
+function writeError(e){
+  const code = e && e.code;
+  if (code === "invalid_argument"){ S.canWrite = false; toast("このボードを編集する権限がありません。閲覧のみ可能です。"); render(); }
+  else if (code === "quota_exceeded") toast("保存容量の上限に達しました。不要なカードや写真を削除してください。");
+  else if (code === "resource_exhausted") toast("操作が集中しています。少し待ってからもう一度お試しください。");
+  else toast("保存できませんでした。通信状態を確認してもう一度お試しください。");
+  console.warn(e);
+}
+async function withRetry(fn){
+  try { return await fn(); }
+  catch(e){
+    if (e && (e.code === "unavailable" || e.code === "store_unavailable")){ await new Promise(r => setTimeout(r, 400 + Math.random()*600)); return fn(); }
+    throw e;
+  }
+}
+const tasksCol = () => db.collection("tasks");
+async function patchTask(id, data){
+  if (!db) return;
+  try { await withRetry(() => tasksCol().doc(id).update({...data, updatedAt:new Date().toISOString(), updatedBy:S.myId})); }
+  catch(e){ writeError(e); }
+}
+
+/* ---------- filtering ---------- */
+function visibleTasks(){
+  const q = S.q.trim().toLowerCase();
+  return [...S.tasks.values()].filter(t => {
+    if (S.fProject && (t.project||"") !== S.fProject) return false;
+    if (S.fMine && t.assignee !== S.myId) return false;
+    if (q && !((t.title||"")+" "+(t.project||"")+" "+(t.desc||"")).toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+function projectNames(){ return [...new Set([...S.tasks.values()].map(t => (t.project||"").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"ja")); }
+
+/* ---------- render ---------- */
+function render(){
+  if (S.dragging){ S.deferred = true; return; }
+  for (const v of VIEWS){ $("tab-"+v).setAttribute("aria-current", S.view === v ? "page" : "false"); $("view-"+v).hidden = S.view !== v; $("tab-"+v).hidden = S.limited && !LIMITED_VIEWS.includes(v); }
+  const rk = S.view !== "board" && S.view !== "calendar";
+  $("newBtn").hidden = !S.canWrite || !db || rk;
+  $("fMine").setAttribute("aria-pressed", String(S.fMine));
+  $("fMine").hidden = !S.myId || rk;
+  $("fProject").hidden = rk;
+  const mine = [...S.reqs.values()].filter(r => r.status !== "done" && ((S.myDept && r.to === S.myDept && r.status !== "pending") || (S.canEdit && r.status === "pending"))).length;
+  $("rkBadge").textContent = String(mine); $("rkBadge").hidden = !mine;
+  $("tab-renraku").title = mine ? "自分の部署宛ての未完了" + (S.canEdit ? "と承認待ち" : "") + "：" + mine + "件" : "";
+
+  const sel = $("fProject"); const names = projectNames();
+  if (S.fProject && !names.includes(S.fProject) && S.loaded) { S.fProject = ""; }
+  sel.replaceChildren(h("option",{value:""},"すべての案件"), ...names.map(n => h("option",{value:n},n)));
+  sel.value = S.fProject;
+
+  const vis = visibleTasks();
+  $("count").textContent = S.tasks.size ? vis.length+" / "+S.tasks.size+" 件" : "";
+  if (rk) $("count").textContent = "";
+  ({today:renderToday, genba:renderGenba, nippo:renderNippo, board:() => renderBoard(vis), calendar:() => renderCalendar(vis), zairyo:renderZairyo, tehai:renderTehai, keihi:renderKeihi, renraku:renderRenraku, shiryo:renderShiryo})[S.view]();
+  renderDrawer();
+}
+
+function cardEl(t){
+  const st = SMAP[t.status] || SMAP.todo;
+  const di = dueInfo(t);
+  const el = h("article",{class:"card",style:"--c:"+st.c,"data-id":t.id,tabindex:"0",role:"button","aria-label":(t.title||"無題")+"を開く"},
+    t.project ? h("div",{class:"proj",text:t.project}) : null,
+    t.cover ? h("img",{class:"cover",src:blobUrl(t.cover),alt:"",loading:"lazy",draggable:"false",onerror(){ this.remove(); }}) : null,
+    h("div",{class:"ttl"+(t.title?"":" untitled"),text:t.title||"（無題）"}),
+    cardChips(t),
+    (di || t.assignee) ? h("div",{class:"meta"},
+      di ? h("span",{class:"due "+di.cls,text:di.txt}) : null,
+      t.assignee ? h("span",{class:"who"}, avatarEl(t.assignee), h("span",{text:nameOf(t.assignee)})) : null
+    ) : null
+  );
+  el.addEventListener("click", () => { if (suppressClick) return; openTask(t.id); });
+  el.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " "){ e.preventDefault(); openTask(t.id); } });
+  if (S.canWrite && db) el.addEventListener("pointerdown", e => startPress(e, el, t));
+  return el;
+}
+
+function renderBoard(vis){
+  const board = $("board");
+  const kids = [];
+  if (!S.tasks.size){
+    kids.push(h("div",{class:"empty"},
+      h("strong",{text: !db ? "共有データに接続できません" : S.loaded ? "まだカードがありません" : "読み込み中…"}),
+      !db ? "claude.ai にサインインした状態でこのページを開くと、チームのカードが表示されます。"
+          : S.loaded ? (S.canWrite ? "「＋ 新規カード」か各列の「＋ 追加」から、最初の案件・作業を登録してください。案件名・担当・工期・写真付きの記録をチームで共有できます。" : "編集権限のあるメンバーがカードを追加すると、ここに表示されます。")
+          : "チームのカードを取得しています。"
+    ));
+  }
+  for (const s of STATUSES){
+    const list = vis.filter(t => (t.status||"todo") === s.id).sort((a,b) => (a.order||0) - (b.order||0));
+    const body = h("div",{class:"col-body","data-status":s.id}, list.map(cardEl));
+    const foot = h("div",{class:"col-foot"});
+    if (S.canWrite && db) foot.append(addInline(s.id, foot));
+    kids.push(h("section",{class:"col",style:"--c:"+s.c,"aria-label":s.label},
+      h("div",{class:"col-head"}, h("span",{class:"dot"}), h("h2",{text:s.label}), h("span",{class:"n",text:String(list.length)})),
+      body, foot));
+  }
+  board.replaceChildren(...kids);
+}
+
+function addInline(status, foot){
+  return h("button",{class:"add-inline",type:"button",onclick(){
+    const inp = h("input",{type:"text",placeholder:"カード名を入力して Enter",enterkeyhint:"done","aria-label":"新しいカード名"});
+    const form = h("form",{class:"add-form",onsubmit(e){ e.preventDefault(); const v = inp.value.trim(); if (v){ createTask({title:v,status}); inp.value=""; } }}, inp);
+    inp.addEventListener("blur", () => { if (!inp.value.trim()) foot.replaceChildren(addInline(status, foot)); });
+    inp.addEventListener("keydown", e => { if (e.key === "Escape") inp.blur(); });
+    foot.replaceChildren(form); inp.focus();
+  }}, "＋ 追加");
+}
+
+async function createTask({title="", status="todo", open=false}){
+  if (!db) return;
+  const now = new Date().toISOString();
+  const same = [...S.tasks.values()].filter(t => t.status === status);
+  const order = same.length ? Math.max(...same.map(t => t.order||0)) + 1000 : Date.now();
+  const ref = tasksCol().doc();
+  const body = {title, status, order, project: S.fProject || "", assignee: S.fMine ? S.myId : null,
+    start:null, due:null, desc:"", cover:null, createdAt:now, createdBy:S.myId, updatedAt:now, updatedBy:S.myId};
+  try { await withRetry(() => ref.set(body)); if (open) openTask(ref.id, true); }
+  catch(e){ writeError(e); }
+}
+
+/* ---------- drag & drop (mouse + touch long-press) ---------- */
+let press = null, suppressClick = false;
+function startPress(e, el, t){
+  if (e.button !== 0 && e.pointerType === "mouse") return;
+  press = {el, t, x:e.clientX, y:e.clientY, id:e.pointerId, type:e.pointerType, active:false, timer:null};
+  if (e.pointerType !== "mouse"){
+    press.timer = setTimeout(() => { if (press) beginDrag(press.x, press.y); }, 380);
+  }
+  window.addEventListener("pointermove", onMove, {passive:false});
+  window.addEventListener("pointerup", onUp);
+  window.addEventListener("pointercancel", onCancel);
+}
+function onTouchMove(e){ if (S.dragging) e.preventDefault(); }
+window.addEventListener("touchmove", onTouchMove, {passive:false});
+function beginDrag(x, y){
+  const p = press; if (!p || p.active) return;
+  p.active = true; S.dragging = true;
+  const r = p.el.getBoundingClientRect();
+  p.dx = x - r.left; p.dy = y - r.top;
+  p.ghost = p.el.cloneNode(true); p.ghost.classList.add("drag-ghost");
+  p.ghost.style.width = r.width+"px"; p.ghost.style.left = r.left+"px"; p.ghost.style.top = r.top+"px";
+  document.body.append(p.ghost);
+  p.el.classList.add("dragging");
+  p.mark = h("div",{class:"drop-mark"});
+  if (navigator.vibrate) try { navigator.vibrate(12); } catch(e) {}
+}
+function onMove(e){
+  const p = press; if (!p || e.pointerId !== p.id) return;
+  const dist = Math.hypot(e.clientX - p.x, e.clientY - p.y);
+  if (!p.active){
+    if (p.type === "mouse"){ if (dist > 6) beginDrag(e.clientX, e.clientY); else return; }
+    else { if (dist > 8){ cleanupPress(); } else { p.x = e.clientX; p.y = e.clientY; } return; }
+  }
+  e.preventDefault();
+  p.ghost.style.left = (e.clientX - p.dx)+"px"; p.ghost.style.top = (e.clientY - p.dy)+"px";
+  const sc = $("boardScroll");
+  if (sc.scrollWidth > sc.clientWidth){
+    if (e.clientX < 40) sc.scrollLeft -= 14; else if (e.clientX > innerWidth - 40) sc.scrollLeft += 14;
+  }
+  if (e.clientY < 70) scrollBy(0,-12); else if (e.clientY > innerHeight - 50) scrollBy(0,12);
+  const under = document.elementFromPoint(e.clientX, e.clientY);
+  const col = under && under.closest(".col");
+  const body = col && col.querySelector(".col-body");
+  if (!body){ p.mark.remove(); p.target = null; return; }
+  const cards = [...body.querySelectorAll(".card")].filter(c => c !== p.el);
+  let idx = cards.findIndex(c => { const r = c.getBoundingClientRect(); return e.clientY < r.top + r.height/2; });
+  if (idx < 0) idx = cards.length;
+  if (idx < cards.length) body.insertBefore(p.mark, cards[idx]); else body.append(p.mark);
+  p.target = {status: body.dataset.status, before: cards[idx] ? cards[idx].dataset.id : null, after: cards[idx-1] ? cards[idx-1].dataset.id : null};
+}
+function onUp(e){
+  const p = press; if (!p || e.pointerId !== p.id) return;
+  if (p.active){
+    suppressClick = true; setTimeout(() => suppressClick = false, 50);
+    const tg = p.target;
+    if (tg){
+      const prev = tg.after ? S.tasks.get(tg.after) : null, next = tg.before ? S.tasks.get(tg.before) : null;
+      let order;
+      if (prev && next) order = ((prev.order||0) + (next.order||0)) / 2;
+      else if (prev) order = (prev.order||0) + 1000;
+      else if (next) order = (next.order||0) - 1000;
+      else order = Date.now();
+      const t = p.t;
+      if (t.status !== tg.status || t.order !== order){
+        const patch = {status: tg.status, order};
+        if (tg.status === "done" && t.status !== "done") patch.doneAt = new Date().toISOString();
+        S.tasks.set(t.id, {...t, ...patch});
+        patchTask(t.id, patch);
+        if (t.status !== tg.status) toast("「"+(t.title||"無題")+"」を "+SMAP[tg.status].label+" に移動しました");
+      }
+    }
+  }
+  cleanupPress();
+}
+function onCancel(){ cleanupPress(); }
+function cleanupPress(){
+  const p = press; press = null;
+  window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); window.removeEventListener("pointercancel", onCancel);
+  if (!p) return;
+  clearTimeout(p.timer);
+  if (p.ghost) p.ghost.remove();
+  if (p.mark) p.mark.remove();
+  p.el.classList.remove("dragging");
+  const was = S.dragging; S.dragging = false;
+  if (was || S.deferred){ S.deferred = false; render(); }
+}
+
+/* ---------- calendar ---------- */
+function tasksOnDay(vis, day){
+  return vis.filter(t => {
+    if (t.due){ const s = t.start && t.start <= t.due ? t.start : t.due; return day >= s && day <= t.due; }
+    return t.start === day;
+  }).sort((a,b) => (a.status === "done") - (b.status === "done") || (a.due||"").localeCompare(b.due||""));
+}
+function renderCalendar(vis){
+  const m = S.month;
+  $("calTitle").textContent = m.getFullYear()+"年 "+(m.getMonth()+1)+"月";
+  const cal = $("cal");
+  const kids = WD.map((w,i) => h("div",{class:"dow"+(i===0?" sun":i===6?" sat":""),text:w}));
+  const start = new Date(m); start.setDate(1 - m.getDay());
+  const today = todayYmd();
+  const weeks = Math.ceil((m.getDay() + new Date(m.getFullYear(), m.getMonth()+1, 0).getDate()) / 7);
+  for (let i = 0; i < weeks*7; i++){
+    const d = new Date(start); d.setDate(start.getDate() + i);
+    const key = ymd(d);
+    const list = tasksOnDay(vis, key);
+    const shown = list.slice(0,3);
+    const cls = ["day", d.getMonth() !== m.getMonth() ? "out" : "", key === today ? "today" : "", d.getDay()===0?"sun":d.getDay()===6?"sat":""].join(" ");
+    kids.push(h("button",{class:cls,type:"button","aria-pressed":String(S.selDay===key),"aria-label":fmtDay(key)+" "+list.length+"件",onclick(){ S.selDay = S.selDay === key ? null : key; render(); }},
+      h("span",{class:"dn",text:String(d.getDate())}),
+      shown.map(t => h("span",{class:"ev"+(t.status==="done"?" done":""),style:"--c:"+(SMAP[t.status]||SMAP.todo).c,text:t.title||"（無題）"})),
+      list.length > 3 ? h("span",{class:"more",text:"他 "+(list.length-3)+" 件"}) : null,
+      list.length ? h("span",{class:"dots"}, list.slice(0,6).map(t => h("i",{style:"--c:"+(SMAP[t.status]||SMAP.todo).c}))) : null
+    ));
+  }
+  cal.replaceChildren(...kids);
+
+  const dl = $("daylist");
+  if (!S.selDay){
+    const undated = vis.filter(t => !t.due && !t.start && t.status !== "done");
+    dl.hidden = false;
+    dl.replaceChildren(...[h("h3",{text:"日付をタップすると、その日の予定が表示されます"}),
+      undated.length ? h("p",{class:"muted",style:"margin:0 0 8px;font-size:13px",text:"期限が未設定の未完了カード（"+undated.length+"件）"}) : h("p",{class:"muted",style:"margin:0;font-size:13px",text:"期限が未設定の未完了カードはありません。"}),
+      undated.length ? dayUl(undated.slice(0,12)) : null].filter(Boolean));
+    return;
+  }
+  const list = tasksOnDay(vis, S.selDay);
+  dl.hidden = false;
+  dl.replaceChildren(h("h3",{text:fmtDay(S.selDay)+" の予定 · "+list.length+"件"}),
+    list.length ? dayUl(list) : h("p",{class:"muted",style:"margin:0",text:"この日に期間がかかるカードはありません。"}));
+  const asg = [...S.assign.values()].filter(a => a.date === S.selDay && S.crews.has(a.crewId));
+  if (asg.length) dl.append(h("h3",{style:"margin-top:12px",text:"手配 · "+asg.length+"人"}),
+    h("ul",null, asg.map(a => { const c = S.crews.get(a.crewId), t = S.tasks.get(a.taskId);
+      return h("li",{style:"font-size:13px;padding:3px 4px",text:(c.name||"")+"（"+(c.trade||c.kind||"")+"） → "+(t ? (t.project ? t.project+" ／ " : "")+(t.title||"") : "（削除された案件）")}); })));
+}
+function dayUl(list){
+  return h("ul",null, list.map(t => { const st = SMAP[t.status]||SMAP.todo; const di = dueInfo(t);
+    return h("li",null, h("button",{type:"button",onclick(){ openTask(t.id); }},
+      h("span",{class:"st",style:"--c:"+st.c,text:st.label}),
+      h("span",{class:"t",text:(t.project? t.project+" ／ " : "")+(t.title||"（無題）")}),
+      di ? h("span",{class:"due "+di.cls,text:di.txt}) : null)); }));
+}
+
+/* ---------- drawer ---------- */
+function openTask(id, focusTitle){
+  if (S.limited){ goTo("#nippo", () => { S.npTask = id; S.npDate = todayYmd(); }); return; }
+  if (S.openId !== id){
+    S.openId = id; S.pendingFiles = []; S.confirmDelete = false; S.picker = false; S.editNote = null; S.delNote = null;
+    subscribeNotes(id);
+  }
+  render();
+  if (focusTitle) setTimeout(() => { const t = document.querySelector(".title-in"); if (t) t.focus(); }, 30);
+}
+function closeTask(){
+  S.openId = null; S.picker = false;
+  if (S.notesUnsub){ S.notesUnsub(); S.notesUnsub = null; }
+  S.notes = []; S.notesFor = null; S.pendingFiles.forEach(f => URL.revokeObjectURL(f.url)); S.pendingFiles = [];
+  render();
+}
+function subscribeNotes(id){
+  if (S.notesUnsub){ S.notesUnsub(); S.notesUnsub = null; }
+  S.notes = []; S.notesFor = id;
+  if (!db) return;
+  S.notesUnsub = db.doc("tasks/"+id).collection("notes").orderBy("createdAt","desc").onSnapshot(
+    snap => { if (S.notesFor !== id) return; S.notes = snap.docs.map(d => ({id:d.id, ...d.data()})); refreshProfiles(); renderDrawer(); },
+    err => console.warn(err));
+}
+
+function renderDrawer(){
+  const dr = $("drawer"), scrim = $("scrim");
+  const t = S.openId && S.tasks.get(S.openId);
+  if (!t){ if (S.openId && S.loaded) { closeTask(); return; } dr.hidden = true; scrim.hidden = true; return; }
+  const firstOpen = dr.hidden || dr.dataset.id !== t.id;
+  dr.hidden = false; scrim.hidden = false; dr.dataset.id = t.id;
+  const ro = !S.canWrite || !db;
+  const active = document.activeElement;
+  const keep = active && dr.contains(active) && active.id ? {id:active.id, s:active.selectionStart, e:active.selectionEnd} : null;
+  const scrollTop = firstOpen ? 0 : (dr.querySelector(".d-body")||{}).scrollTop || 0;
+  const composerText = (dr.querySelector("#noteText")||{}).value || "";
+  const keepVals = {};
+  if (!firstOpen) for (const el of dr.querySelectorAll("[data-keep]")) if (el === active) keepVals[el.id] = el.value;
+
+  const st = SMAP[t.status] || SMAP.todo;
+  const title = h("textarea",{class:"title-in",id:"fTitle",rows:"1",placeholder:"カード名",readonly:ro,"data-keep":"1"});
+  title.value = keepVals.fTitle ?? (t.title || "");
+  title.addEventListener("input", () => fit(title));
+  title.addEventListener("keydown", e => { if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229){ e.preventDefault(); title.blur(); } });
+  title.addEventListener("change", () => { const v = title.value.trim(); if (v !== (t.title||"")) patchTask(t.id,{title:v}); });
+
+  const proj = h("input",{id:"fProj",list:"projList",placeholder:"例：〇〇公園 伐採工事",readonly:ro,"data-keep":"1"});
+  proj.value = keepVals.fProj ?? (t.project || "");
+  proj.addEventListener("change", () => { const v = proj.value.trim(); if (v !== (t.project||"")) patchTask(t.id,{project:v}); });
+  const dlist = h("datalist",{id:"projList"}, projectNames().map(n => h("option",{value:n})));
+
+  const seg = h("div",{class:"seg",role:"group","aria-label":"ステータス"}, STATUSES.map(s =>
+    h("button",{type:"button",style:"--c:"+s.c,"aria-pressed":String(t.status===s.id),disabled:ro,onclick(){
+      if (t.status === s.id) return;
+      const same = [...S.tasks.values()].filter(x => x.status === s.id);
+      const patch = {status:s.id, order: same.length ? Math.max(...same.map(x=>x.order||0)) + 1000 : Date.now()};
+      if (s.id === "done") patch.doneAt = new Date().toISOString();
+      patchTask(t.id, patch);
+    }}, h("span",{class:"dot"}), s.label)));
+
+  const start = h("input",{type:"date",id:"fStart","aria-label":"開始日",readonly:ro}); start.value = t.start || "";
+  const due = h("input",{type:"date",id:"fDue","aria-label":"期限",readonly:ro}); due.value = t.due || "";
+  start.addEventListener("change", () => { if ((start.value||null) !== (t.start||null)) patchTask(t.id,{start:start.value||null}); });
+  due.addEventListener("change", () => { if ((due.value||null) !== (t.due||null)) patchTask(t.id,{due:due.value||null}); });
+  const span = t.start && t.due ? daysBetween(t.start, t.due) + 1 : null;
+  const di = dueInfo(t);
+
+  const budgetIn = h("input",{type:"number",id:"fBudget",min:"0",step:"1000",inputmode:"numeric",placeholder:"実行予算",readonly:ro,"data-keep":"1"});
+  budgetIn.value = keepVals.fBudget ?? (t.budget ?? "");
+  budgetIn.addEventListener("change", () => { const v = budgetIn.value === "" ? null : Number(budgetIn.value); if (v !== (t.budget ?? null)) patchTask(t.id,{budget:v}); });
+  const needIn = h("input",{type:"number",id:"fNeed",min:"0",step:"1",inputmode:"numeric",placeholder:"1日あたりの必要人数",readonly:ro,"data-keep":"1"});
+  needIn.value = keepVals.fNeed ?? (t.needCrew ?? "");
+  needIn.addEventListener("change", () => { const v = needIn.value === "" ? null : Number(needIn.value); if (v !== (t.needCrew ?? null)) patchTask(t.id,{needCrew:v}); });
+  const desc = h("textarea",{id:"fDesc",placeholder:"作業内容・注意事項など",readonly:ro,"data-keep":"1"});
+  desc.value = keepVals.fDesc ?? (t.desc || "");
+  desc.addEventListener("change", () => { if (desc.value !== (t.desc||"")) patchTask(t.id,{desc:desc.value}); });
+
+  const body = h("div",{class:"d-body"},
+    title,
+    h("div",{class:"fields"},
+      h("span",{class:"lb"},"ステータス"), seg,
+      h("label",{for:"fProj"},"案件"), h("div",null, proj, dlist),
+      h("span",{class:"lb"},"担当"), assigneePicker(t, ro),
+      h("span",{class:"lb"},"工期"), h("div",{class:"daterow"}, start, h("span",{class:"muted"},"〜"), due),
+      (span || di) ? h("span") : null,
+      (span || di) ? h("div",{class:"meta"}, span && span > 0 ? h("span",{text:span+"日間"}) : null, di && di.cls ? h("span",{class:"due "+di.cls,text:di.txt}) : null) : null,
+      h("label",{for:"fBudget"},"予算（円）"), budgetIn,
+      h("label",{for:"fNeed"},"必要人工（人/日）"), needIn,
+      h("label",{for:"fDesc"},"メモ"), desc
+    ),
+    costSection(t),
+    extraSection(t, ro),
+    relatedReqs(t, ro),
+    notesSection(t, ro, composerText),
+    ro ? h("p",{class:"ro-note",text:"閲覧のみの権限です。編集するにはオーナーに共有設定の変更を依頼してください。"}) : dangerZone(t)
+  );
+
+  dr.replaceChildren(
+    h("div",{class:"d-head"},
+      h("span",{class:"dot",style:"--c:"+st.c}),
+      h("span",{class:"crumb",text:(t.project||"案件未設定")+" ／ "+st.label}),
+      h("button",{class:"btn ghost",type:"button",onclick:closeTask,"aria-label":"閉じる"},"閉じる ✕")),
+    body);
+  requestAnimationFrame(() => fit(title));
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => fit(title));
+  body.scrollTop = scrollTop;
+  if (keep){ const el = $(keep.id); if (el){ el.focus(); try { if (keep.s != null) el.setSelectionRange(keep.s, keep.e); } catch(e) {} } }
+}
+function fit(ta){ ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; }
+
+function assigneePicker(t, ro){
+  const wrap = h("div",{class:"picker"});
+  const cur = h("div",{class:"cur"},
+    t.assignee ? avatarEl(t.assignee) : null,
+    h("span",{text: t.assignee ? nameOf(t.assignee) : "未割り当て", class: t.assignee ? "" : "muted"}),
+    ro ? null : h("button",{class:"btn",type:"button",onclick(){ S.picker = !S.picker; renderDrawer(); }}, "変更"),
+    !ro && S.myId && t.assignee !== S.myId ? h("button",{class:"btn ghost",type:"button",onclick(){ patchTask(t.id,{assignee:S.myId}); }},"自分にする") : null
+  );
+  wrap.append(cur);
+  if (S.picker && !ro){
+    const results = h("div");
+    const inp = h("input",{type:"search",id:"pickQ",placeholder:"名前で検索","aria-label":"担当者を検索"});
+    const fill = list => results.replaceChildren(...(list.length ? list.map(p => h("button",{type:"button",onclick(){ S.picker = false; patchTask(t.id,{assignee:p.id}); }},
+      p.avatarUrl ? h("img",{class:"avatar",src:p.avatarUrl,alt:""}) : h("span",{class:"avatar"}), h("span",{text:(p.name||"メンバー")+(p.isMe?"（自分）":"")}))) : [h("div",{class:"hint",text:"候補が見つかりません。組織のメンバー名で検索してください。"})]));
+    const run = async q => { if (!user) return fill([]); const r = await user.search(q); if (inp.value === q) fill(r); };
+    inp.addEventListener("input", () => run(inp.value));
+    wrap.append(h("div",{class:"menu"}, inp, results,
+      t.assignee ? h("button",{type:"button",onclick(){ S.picker = false; patchTask(t.id,{assignee:null}); }}, h("span",{class:"muted",text:"担当を外す"})) : null,
+      h("button",{type:"button",onclick(){ S.picker = false; renderDrawer(); }}, h("span",{class:"muted",text:"キャンセル"}))));
+    run("");
+    setTimeout(() => inp.focus(), 0);
+  }
+  return wrap;
+}
+
+function notesSection(t, ro, composerText){
+  const photosAll = S.notes.reduce((n,x) => n + (x.photos||[]).length, 0);
+  const sect = h("section",{class:"sect"},
+    h("h3",null,"記録", h("span",{class:"n",text:S.notes.length+"件 · 写真"+photosAll+"枚"})));
+  if (!ro){
+    const ta = h("textarea",{id:"noteText",placeholder:"進捗・気づき・連絡事項を記録（写真も添付できます）"});
+    ta.value = composerText;
+    const fileIn = h("input",{type:"file",accept:"image/*",multiple:true,hidden:true,id:"noteFiles"});
+    fileIn.addEventListener("change", () => {
+      for (const f of fileIn.files) S.pendingFiles.push({file:f, url:URL.createObjectURL(f)});
+      fileIn.value = ""; renderDrawer();
+    });
+    const post = h("button",{class:"btn primary sp",type:"button",id:"postBtn",onclick: () => postNote(t, ta, post)},"記録する");
+    sect.append(h("div",{class:"composer"}, ta,
+      S.pendingFiles.length ? h("div",{class:"thumbs"}, S.pendingFiles.map((p,i) => h("div",{class:"th"},
+        h("img",{src:p.url,alt:"添付予定の写真"}),
+        h("button",{class:"x",type:"button","aria-label":"この写真を外す",onclick(){ URL.revokeObjectURL(p.url); S.pendingFiles.splice(i,1); renderDrawer(); }},"✕")))) : null,
+      h("div",{class:"row"},
+        assets ? h("button",{class:"btn",type:"button",onclick(){ fileIn.click(); }},"📷 写真を追加") : h("span",{class:"ro-note",text:"写真の添付はこの表示では利用できません"}),
+        fileIn, post)));
+  }
+  if (S.notes.length){
+    sect.append(h("ul",{class:"timeline"}, S.notes.map(n => { const mine = !ro && (n.author === S.myId || S.canEdit); return S.editNote === n.id && mine ? h("li",{class:"note"}, avatarEl(n.author), noteEditor(t, n)) : h("li",{class:"note"},
+      avatarEl(n.author),
+      h("div",null,
+        h("div",{class:"nh"}, h("b",{text:nameOf(n.author)}), h("span",{text:fmtStamp(n.createdAt)+(n.editedAt ? "（修正 "+fmtStamp(n.editedAt)+"）" : "")}),
+          mine ? (S.delNote === n.id
+            ? h("span",{style:"margin-left:auto;display:flex;gap:8px;align-items:center;font-size:12px"},"この記録と写真を削除しますか？",
+                h("button",{class:"del",type:"button",style:"margin:0;color:var(--danger);font-weight:700",onclick(){ S.delNote = null; deleteNote(t, n); }},"削除する"),
+                h("button",{class:"del",type:"button",style:"margin:0",onclick(){ S.delNote = null; renderDrawer(); }},"やめる"))
+            : h("span",{style:"margin-left:auto;display:flex;gap:10px"},
+                h("button",{class:"del",type:"button",style:"margin:0",onclick(){ S.editNote = n.id; S.noteDraft = n.text || ""; S.notePhotos = [...(n.photos||[])]; renderDrawer(); }},"修正"),
+                h("button",{class:"del",type:"button",style:"margin:0",onclick(){ S.delNote = n.id; renderDrawer(); }},"削除"))) : null),
+        n.text ? h("p",{text:n.text}) : null,
+        (n.photos||[]).length ? h("div",{class:"gallery"}, n.photos.map(id => h("button",{type:"button","aria-label":"写真を拡大",onclick(){ showPhoto(id); }},
+          h("img",{src:blobUrl(id),alt:"記録写真",loading:"lazy",onerror(){ this.replaceWith(h("span",{class:"muted",style:"font-size:11px;padding:6px;display:block",text:"表示できません"})); }})))) : null
+      )); })));
+  } else {
+    sect.append(h("p",{class:"muted",style:"margin:12px 0 0;font-size:13px",text:"まだ記録はありません。現場の状況や写真を残すと、チーム全員が同じ情報を見られます。"}));
+  }
+  return sect;
+}
+
+async function shrink(file){
+  try {
+    const bmp = await createImageBitmap(file);
+    const max = 1600, k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    if (k === 1 && file.size < 1.5e6 && /^image\/(jpeg|png|webp)$/.test(file.type)) return file;
+    const c = document.createElement("canvas"); c.width = Math.round(bmp.width*k); c.height = Math.round(bmp.height*k);
+    c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+    return await new Promise(r => c.toBlob(b => r(b || file), "image/jpeg", 0.82));
+  } catch(e){ return file; }
+}
+async function postNote(t, ta, btn){
+  const text = ta.value.trim();
+  if (!text && !S.pendingFiles.length){ ta.focus(); return; }
+  btn.disabled = true; btn.textContent = "保存中…";
+  const photos = [];
+  try {
+    for (let i = 0; i < S.pendingFiles.length; i++){
+      btn.textContent = "写真をアップロード中 "+(i+1)+"/"+S.pendingFiles.length;
+      const blob = await shrink(S.pendingFiles[i].file);
+      const res = await withRetry(() => assets.upload(blob, blob.type ? undefined : {type:"image/jpeg"}));
+      photos.push(res.id);
+    }
+  } catch(e){
+    btn.disabled = false; btn.textContent = "記録する";
+    const c = e && e.code;
+    toast(c === "too_large" ? "写真が大きすぎます（20MBまで）。" : c === "unsupported_type" ? "この形式の画像は添付できません。JPEG・PNG・WebPを使ってください。" : c === "quota_or_state" ? "写真の保存容量が上限です。不要な写真を削除してください。" : "写真をアップロードできませんでした。もう一度お試しください。");
+    return;
+  }
+  const now = new Date().toISOString();
+  try {
+    await withRetry(() => db.doc("tasks/"+t.id).collection("notes").add({text, photos, author:S.myId, createdAt:now}));
+    const patch = {lastNoteAt:now}; if (photos.length) patch.cover = photos[0];
+    await patchTask(t.id, patch);
+    S.pendingFiles.forEach(f => URL.revokeObjectURL(f.url)); S.pendingFiles = [];
+    const ta2 = $("noteText"); if (ta2) ta2.value = "";
+    ta.value = "";
+    toast("記録しました");
+    renderDrawer();
+  } catch(e){ writeError(e); btn.disabled = false; btn.textContent = "記録する"; }
+}
+function noteEditor(t, n){
+  const ta = h("textarea",{id:"noteEdit",rows:"3",style:"width:100%;border:1px solid var(--accent);border-radius:8px;padding:8px;background:var(--surface);color:var(--ink);resize:vertical"});
+  ta.value = S.noteDraft ?? (n.text || "");
+  ta.addEventListener("input", () => { S.noteDraft = ta.value; });
+  const keep = S.notePhotos || [];
+  return h("div",{class:"reply-edit"},
+    h("div",{class:"ai-note",text:"記録を修正しています。写真の ✕ で、その写真だけを外せます。"}), ta,
+    keep.length ? h("div",{class:"thumbs"}, keep.map(id => h("div",{class:"th"}, h("img",{src:blobUrl(id),alt:"記録写真"}),
+      h("button",{class:"x",type:"button","aria-label":"この写真を外す",onclick(){ S.notePhotos = keep.filter(x => x !== id); renderDrawer(); }},"✕")))) : null,
+    h("div",{class:"actions",style:"display:flex;gap:8px"},
+      h("button",{class:"btn primary",type:"button",async onclick(){
+        const removed = (n.photos||[]).filter(id => !keep.includes(id));
+        try {
+          await withRetry(() => db.doc("tasks/"+t.id+"/notes/"+n.id).update({text:ta.value.trim(), photos:keep, editedAt:new Date().toISOString(), editedBy:S.myId}));
+          for (const id of removed) if (assets) assets.delete(id).catch(() => {});
+          if (removed.includes(t.cover)){ const other = S.notes.map(x => x.id === n.id ? {photos:keep} : x).find(x => (x.photos||[]).length); patchTask(t.id, {cover: other ? other.photos[0] : null}); }
+          S.editNote = null; S.noteDraft = null; S.notePhotos = null; toast("記録を修正しました"); renderDrawer();
+        } catch(e){ writeError(e); }
+      }},"保存"),
+      h("button",{class:"btn",type:"button",onclick(){ S.editNote = null; S.noteDraft = null; S.notePhotos = null; renderDrawer(); }},"やめる")));
+}
+async function deleteNote(t, n){
+  try {
+    await withRetry(() => db.doc("tasks/"+t.id+"/notes/"+n.id).delete());
+    for (const id of n.photos||[]) { if (assets) assets.delete(id).catch(() => {}); }
+    if (n.photos && n.photos.includes(t.cover)){
+      const other = S.notes.find(x => x.id !== n.id && (x.photos||[]).length);
+      patchTask(t.id, {cover: other ? other.photos[0] : null});
+    }
+    toast("記録を削除しました");
+  } catch(e){ writeError(e); }
+}
+function dangerZone(t){
+  const z = h("div",{class:"danger-zone"});
+  if (!S.confirmDelete){
+    z.append(h("span",{class:"muted",text:"作成 "+fmtStamp(t.createdAt)+" · "+nameOf(t.createdBy)}),
+      h("button",{class:"btn ghost",type:"button",style:"margin-left:auto;color:var(--danger)",onclick(){ S.confirmDelete = true; renderDrawer(); }},"カードを削除"));
+  } else {
+    z.append(h("span",{text:"このカードと記録・写真をすべて削除します。元に戻せません。"}),
+      h("button",{class:"btn danger",type:"button",onclick: () => deleteTask(t)},"削除する"),
+      h("button",{class:"btn",type:"button",onclick(){ S.confirmDelete = false; renderDrawer(); }},"やめる"));
+  }
+  return z;
+}
+async function deleteTask(t){
+  try {
+    const snap = await db.doc("tasks/"+t.id).collection("notes").get();
+    for (const d of snap.docs){
+      for (const id of (d.data().photos||[])) if (assets) await assets.delete(id).catch(() => {});
+      await withRetry(() => db.doc("tasks/"+t.id+"/notes/"+d.id).delete());
+    }
+    await withRetry(() => tasksCol().doc(t.id).delete());
+    closeTask(); toast("カードを削除しました");
+  } catch(e){ writeError(e); }
+}
+function showPhoto(id){ $("lbImg").src = blobUrl(id); $("lightbox").hidden = false; }
+$("lightbox").addEventListener("click", () => { $("lightbox").hidden = true; $("lbImg").removeAttribute("src"); });
+
+/* ---------- 部署間連絡 ---------- */
+const RK_TABS = [
+  {id:"all", label:"未完了すべて"},
+  ...DEPTS.map(d => ({id:d.id, label:d.label+"宛て"})),
+  {id:"none", label:"未振り分け"},
+  {id:"pending", label:"承認待ち"},
+  {id:"done", label:"過去ログ"},
+];
+function rkFilter(tab, useQ){
+  const q = useQ ? S.q.trim().toLowerCase() : "";
+  const list = [...S.reqs.values()].filter(r => {
+    const done = r.status === "done";
+    if (tab === "done" ? !done : done) return false;
+    if (DEPTS.some(d => d.id === tab) && r.to !== tab) return false;
+    if (tab === "none" && r.to) return false;
+    if (tab === "pending" && r.status !== "pending") return false;
+    if (q && !((r.body||"")+" "+(r.reply||"")).toLowerCase().includes(q)) return false;
+    return true;
+  });
+  if (tab === "done") list.sort((a,b) => (b.doneAt||"").localeCompare(a.doneAt||""));
+  else list.sort((a,b) => (isRecheck(b) - isRecheck(a)) || (b.status === "pending") - (a.status === "pending") || (a.due||"9999").localeCompare(b.due||"9999") || (b.createdAt||"").localeCompare(a.createdAt||""));
+  return list;
+}
+function renderRenraku(){
+  const ro = !S.canWrite || !db;
+  $("subnav").replaceChildren(...RK_TABS.map(tb => {
+    const n = rkFilter(tb.id, false).length;
+    return h("button",{type:"button","aria-pressed":String(S.rkTab === tb.id),onclick(){ S.rkTab = tb.id; S.confirmReq = null; saveFilters(); render(); }},
+      tb.label + (tb.id === S.myDept ? "（自分）" : ""), tb.id === "done" ? null : h("span",{class:"b"+(tb.id === "pending" && n ? " hot" : ""),text:String(n)}));
+  }));
+  $("reqNew").hidden = ro;
+  const formBox = $("reqForm");
+  if (!S.reqFormOpen || ro) formBox.replaceChildren();
+  else if (!formBox.firstChild) formBox.append(reqForm());
+  const listBox = $("reqList"), ae = document.activeElement;
+  if (!(ae && listBox.contains(ae) && ae.tagName === "TEXTAREA")){
+    const list = rkFilter(S.rkTab, true);
+    const emptyMsg = !db ? "共有データに接続できません" : !S.reqLoaded ? "読み込み中…"
+      : S.rkTab === "pending" ? "承認待ちの依頼はありません" : S.rkTab === "done" ? "完了した依頼はまだありません" : "未完了の依頼はありません";
+    listBox.replaceChildren(...(list.length ? list.map(reqEl) : [h("div",{class:"empty"}, h("strong",{text:emptyMsg}),
+      !ro && S.reqLoaded && S.rkTab !== "done" && S.rkTab !== "pending" ? "他部署に頼みたいことは「＋ 依頼を出す」から登録します。宛先の部署のタブに並び、回答もここに残ります。" : "")]));
+  }
+  renderDepts(ro);
+  renderPrompts();
+  renderReport();
+}
+function renderReport(){
+  const box = $("rkReport"), ids = [...S.reports.keys()].sort().reverse();
+  if (!ids.length){ box.replaceChildren(h("div",{class:"report"}, h("div",{class:"rh"}, h("b",{text:"今朝の報告"})),
+    h("p",{class:"sum muted",text:"毎朝 2:50 の自動整理が終わると、ここに報告が届きます（振り分け・監査・期限切れ・経費・材料・予算超過）。"}))); return; }
+  if (!ids.includes(S.reportSel)) S.reportSel = ids[0];
+  const r = S.reports.get(S.reportSel), latest = S.reportSel === ids[0];
+  const sel = h("select",{"aria-label":"報告の日付"}, ids.slice(0,14).map(id => h("option",{value:id},fmtDay(id))));
+  sel.value = S.reportSel;
+  sel.addEventListener("change", () => { S.reportSel = sel.value; S.reportOpen = true; render(); });
+  box.replaceChildren(h("div",{class:"report"},
+    h("div",{class:"rh"}, h("b",{text:(latest && S.reportSel === todayYmd() ? "今朝の報告" : "朝の報告")+" · "+fmtDay(S.reportSel)}),
+      r.createdAt ? h("span",{class:"ai-note",text:fmtStamp(r.createdAt)+" 作成"}) : null, sel),
+    h("p",{class:"sum",text:r.summary || ""}),
+    h("button",{class:"link",type:"button",onclick(){ S.reportOpen = !S.reportOpen; render(); }}, S.reportOpen ? "閉じる" : "全文を見る"),
+    S.reportOpen ? h("pre",{text:r.body || ""}) : null));
+}
+function reqForm(){
+  const sel = (id, opts, val) => { const s = h("select",{id}, opts.map(o => h("option",{value:o.id},o.label))); s.value = val; return s; };
+  const from = sel("rqFrom", FROMS, S.myDept || "sekou");
+  const to = sel("rqTo", [{id:"",label:"未振り分け（あとで振り分け）"}, ...DEPTS], DEPTS.some(d => d.id === S.rkTab) ? S.rkTab : "");
+  const body = h("textarea",{id:"rqBody",rows:"3",placeholder:"例：○○邸 外壁工事の10月出来高（60%）を報告。請求書作成をお願いします"});
+  const due = h("input",{type:"date",id:"rqDue"});
+  const money = h("input",{type:"checkbox",id:"rqMoney"});
+  const tasks = [...S.tasks.values()].filter(t => t.status !== "done" || t.id === S.reqFormTask)
+    .sort((a,b) => ((a.project||"")+(a.title||"")).localeCompare((b.project||"")+(b.title||""), "ja"));
+  const task = h("select",{id:"rqTask"}, h("option",{value:""},"なし"), tasks.map(t => h("option",{value:t.id},(t.project ? t.project+" ／ " : "")+(t.title||"（無題）"))));
+  task.value = S.reqFormTask || "";
+  const tpl = h("select",{id:"rqTpl"}, h("option",{value:""},"使わない（自由に書く）"), REQ_TEMPLATES.map((x,i) => h("option",{value:String(i)},x.label)));
+  tpl.addEventListener("change", () => {
+    const x = REQ_TEMPLATES[Number(tpl.value)]; if (!x) return;
+    const t = S.tasks.get(task.value), mo = (new Date().getMonth()+1) + "月";
+    from.value = x.from; to.value = x.to; money.checked = !!x.money;
+    body.value = x.body.replace(/\{案件\}/g, t ? taskLabel(t) : "（案件名）").replace(/\{月\}/g, mo);
+    body.focus(); const i = body.value.indexOf("（"); if (i >= 0) body.setSelectionRange(i, body.value.indexOf("）", i) + 1);
+  });
+  const submit = h("button",{class:"btn primary",type:"submit"},"依頼を登録");
+  const close = () => { S.reqFormOpen = false; S.reqFormTask = null; $("reqForm").replaceChildren(); render(); };
+  const form = h("form",{class:"req-form",async onsubmit(e){
+    e.preventDefault();
+    const text = body.value.trim();
+    if (!text){ body.focus(); toast("依頼の内容を書いてください"); return; }
+    submit.disabled = true;
+    S.myDept = from.value; saveFilters();
+    const now = new Date().toISOString(), ref = db.collection("requests").doc();
+    try {
+      await withRetry(() => ref.set({date:todayYmd(), from:from.value, to:to.value || null, body:text, due:due.value || null,
+        money:money.checked, status:"open", reply:"", taskId:task.value || null, createdBy:S.myId, createdAt:now, updatedAt:now}));
+      if (S.rkTab !== "all" && S.rkTab !== (to.value || "none")) S.rkTab = to.value || "none";
+      toast("依頼を登録しました");
+      close();
+    } catch(err){ submit.disabled = false; writeError(err); }
+  }},
+    h("label",{class:"full"},"定型文から作る", tpl),
+    h("label",null,"差出", from), h("label",null,"宛先", to),
+    h("label",{class:"full"},"内容", body),
+    h("label",null,"期限", due), h("label",null,"関連する案件", task),
+    h("label",{class:"chk full"}, money, "金額・契約・支払に関わる（承認されるまで完了にしない）"),
+    h("div",{class:"full",style:"display:flex;gap:8px;justify-content:flex-end"},
+      h("button",{class:"btn",type:"button",onclick:close},"やめる"), submit));
+  setTimeout(() => body.focus(), 0);
+  return form;
+}
+function statusPatch(r, v){
+  const now = new Date().toISOString();
+  if (v === "done" && r.money && !r.approvedBy && !S.canEdit){
+    toast("金額・契約・支払に関わる依頼は、承認されるまで「確認待ち」になります");
+    return {status:"pending", doneAt:null};
+  }
+  const p = {status:v, doneAt: v === "done" ? now : null};
+  if (v === "done" && r.money && !r.approvedBy){ p.approvedBy = S.myId; p.approvedAt = now; }
+  return p;
+}
+async function patchReq(id, data){
+  if (!db) return;
+  try { await withRetry(() => db.doc("requests/"+id).update({...data, updatedAt:new Date().toISOString(), updatedBy:S.myId})); }
+  catch(e){ writeError(e); }
+}
+async function saveReply(r, text, finish){
+  const patch = {reply:text.trim(), repliedAt:new Date().toISOString(), repliedBy:S.myId};
+  if (finish) Object.assign(patch, statusPatch(r, "done"));
+  else if (r.status === "open") patch.status = "doing";
+  S.editReply = null; delete S.drafts[r.id];
+  await patchReq(r.id, patch);
+  if (finish && patch.status === "done") toast("回答して完了にしました");
+  render();
+}
+function reqBodyEditor(r){
+  const ta = h("textarea",{id:"rb-"+r.id,rows:"3",style:"width:100%;border:1px solid var(--accent);border-radius:7px;padding:6px 9px;background:var(--surface);color:var(--ink)"}); ta.value = r.body || "";
+  const due = h("input",{type:"date",id:"rd-"+r.id,style:"border:1px solid var(--line);border-radius:7px;padding:5px 8px;background:var(--surface);color:var(--ink)"}); due.value = r.due || "";
+  const money = h("input",{type:"checkbox",id:"rm-"+r.id}); money.checked = !!r.money;
+  return h("div",{class:"reply-edit"}, ta,
+    h("div",{style:"display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:12.5px;color:var(--muted)"},
+      h("label",{style:"display:flex;gap:6px;align-items:center"},"期限", due),
+      h("label",{style:"display:flex;gap:6px;align-items:center"}, money, "金額・契約・支払に関わる")),
+    h("div",{style:"display:flex;gap:8px"},
+      h("button",{class:"btn primary",type:"button",async onclick(){
+        if (!ta.value.trim()){ ta.focus(); return; }
+        await patchReq(r.id, {body:ta.value.trim(), due:due.value || null, money:money.checked, editedAt:new Date().toISOString()});
+        S.editBody = null; toast("依頼を修正しました"); render();
+      }},"保存"),
+      h("button",{class:"btn",type:"button",onclick(){ S.editBody = null; render(); }},"やめる")));
+}
+function reqEl(r){
+  const st = RSMAP[r.status] || RSMAP.open;
+  const ro = !S.canWrite || !db;
+  const task = r.taskId && S.tasks.get(r.taskId);
+  const di = r.due && r.status !== "done" ? dueInfo({due:r.due, status:"open"}) : null;
+  const toSel = h("select",{class:"st","aria-label":"宛先",disabled:ro}, h("option",{value:""},"未振り分け"), DEPTS.map(d => h("option",{value:d.id},d.label+"宛て")));
+  toSel.value = r.to || "";
+  toSel.addEventListener("change", () => patchReq(r.id, {to:toSel.value || null}));
+  const stSel = h("select",{class:"st","aria-label":"状態",disabled:ro}, RSTAT.map(s => h("option",{value:s.id},s.label)));
+  stSel.value = r.status || "open";
+  stSel.addEventListener("change", () => { const p = statusPatch(r, stSel.value); stSel.value = p.status; patchReq(r.id, p); });
+  const editing = S.editReply === r.id && !ro;
+  const canDel = !ro && (S.canEdit || r.createdBy === S.myId);
+  const actions = [];
+  if (!ro && !editing) actions.push(h("button",{class:"btn",type:"button",onclick(){ S.editReply = r.id; render(); setTimeout(() => { const t = $("rp-"+r.id); if (t) t.focus(); }, 0); }}, r.reply ? "回答を編集" : "回答を書く"));
+  if (!ro && S.sample && r.status !== "done"){
+    if (S.aiBusy[r.id]) actions.push(h("span",{class:"busy",text:S.aiBusy[r.id]}));
+    else {
+      if (!r.to) actions.push(h("button",{class:"btn ai",type:"button",onclick(){ aiTriage(r); }},"AIで振り分け"));
+      else if (!editing || !(S.drafts[r.id] || "").trim()) actions.push(h("button",{class:"btn ai",type:"button",onclick(){ aiDraft(r); }},"AIで回答案"));
+      if (r.reply && !editing) actions.push(h("button",{class:"btn ai",type:"button",onclick(){ aiAudit(r); }},"監査役チェック"));
+    }
+  }
+  if (!ro && r.status === "pending" && S.canEdit){
+    actions.push(h("button",{class:"btn primary",type:"button",onclick(){ const now = new Date().toISOString(); patchReq(r.id,{status:"done",doneAt:now,approvedBy:S.myId,approvedAt:now}); toast("承認して完了にしました"); }},"承認して完了"));
+    actions.push(h("button",{class:"btn",type:"button",onclick(){ patchReq(r.id,{status:"doing"}); toast("差し戻しました（対応中に戻しました）"); }},"差し戻す"));
+  }
+  if (canDel && S.editBody !== r.id && r.status !== "done") actions.push(h("button",{class:"btn ghost",type:"button",style:"color:var(--muted)",onclick(){ S.editBody = r.id; render(); setTimeout(() => { const e = $("rb-"+r.id); if (e) e.focus(); }, 0); }},"依頼を修正"));
+  if (canDel){
+    if (S.confirmReq === r.id) actions.push(h("span",{style:"margin-left:auto;font-size:12.5px",text:"この依頼を削除しますか？"}),
+      h("button",{class:"btn danger",type:"button",async onclick(){ try { await withRetry(() => db.doc("requests/"+r.id).delete()); toast("依頼を削除しました"); } catch(e){ writeError(e); } S.confirmReq = null; }},"削除する"),
+      h("button",{class:"btn",type:"button",onclick(){ S.confirmReq = null; render(); }},"やめる"));
+    else actions.push(h("button",{class:"btn ghost",type:"button",style:"margin-left:auto;color:var(--muted)",onclick(){ S.confirmReq = r.id; render(); }},"削除"));
+  }
+  let editor = null;
+  if (editing){
+    const ta = h("textarea",{id:"rp-"+r.id,rows:"5",placeholder:"対応した内容・回答を書く"}); ta.value = S.drafts[r.id] ?? (r.reply || "");
+    ta.addEventListener("input", () => { S.drafts[r.id] = ta.value; });
+    editor = h("div",{class:"reply-edit"}, ta, h("div",{class:"actions"},
+      h("button",{class:"btn primary",type:"button",onclick(){ saveReply(r, ta.value, true); }}, r.money && !r.approvedBy && !S.canEdit ? "回答して確認待ちへ" : "回答して完了"),
+      h("button",{class:"btn",type:"button",onclick(){ saveReply(r, ta.value, false); }},"保存のみ"),
+      h("button",{class:"btn ghost",type:"button",onclick(){ S.editReply = null; delete S.drafts[r.id]; render(); }},"やめる")));
+  }
+  return h("article",{class:"req",style:"--c:"+st.c},
+    h("div",{class:"top-row"},
+      h("span",{class:"route",text:deptLabel(r.from)+" →"}), toSel, stSel,
+      r.money ? h("span",{class:"tag money",text:"金額・契約・支払"}) : null,
+      r.approvedBy ? h("span",{class:"tag ok",text:"承認済み"}) : null,
+      r.due ? h("span",{class:"due "+(di ? di.cls : ""),text: di ? "期限 "+di.txt : "期限 "+fmtDay(r.due)}) : null,
+      h("span",{style:"margin-left:auto",text:(r.date ? fmtDay(r.date)+" 受付" : "")+(r.status === "done" && r.doneAt ? " · "+fmtStamp(r.doneAt)+" 完了" : "")})),
+    S.editBody === r.id && canDel ? reqBodyEditor(r) : h("div",{class:"body",text:r.body || ""}),
+    task ? h("div",null, h("button",{class:"link",type:"button",onclick(){ openTask(task.id); }}, "案件："+(task.project ? task.project+" ／ " : "")+(task.title || "（無題）"))) : null,
+    r.triage ? h("div",{class:"ai-note",text:"AI振り分け："+(r.triage.reason || "")}) : null,
+    auditEl(r, ro),
+    !editing && r.reply ? h("div",{class:"reply"}, h("b",{text:"回答・備考"+(r.repliedAt ? "（"+fmtStamp(r.repliedAt)+"）" : "")}), r.reply) : null,
+    editor,
+    actions.length ? h("div",{class:"actions"}, actions) : null);
+}
+function isRecheck(r){ return r.status !== "done" && r.audit && r.audit.level === "recheck" ? 1 : 0; }
+function auditEl(r, ro){
+  const a = r.audit; if (!a) return null;
+  let label, c;
+  if (a.level === "recheck"){ label = "監査役：3回差し戻し・要確認"; c = "var(--danger)"; }
+  else if (a.pass && a.level === "important"){ label = "監査役：合格・要承認"; c = "var(--s-review)"; }
+  else if (a.pass){ label = "監査役：合格・報告のみ"; c = "var(--s-done)"; }
+  else { label = "監査役：不合格（"+(a.round || 1)+"回目）"; c = "var(--danger)"; }
+  return h("div",{class:"audit",style:"--c:"+c},
+    h("b",{text:label+(a.at ? " · "+fmtStamp(a.at) : "")}), a.findings || "",
+    !ro && !a.pass && a.fixedReply && r.status !== "done" ? h("div",{style:"margin-top:6px"}, h("button",{class:"btn",type:"button",onclick(){
+      S.drafts[r.id] = a.fixedReply; S.editReply = r.id; render();
+    }},"修正案を回答に反映")) : null);
+}
+function ctxFor(r){
+  const task = r.taskId && S.tasks.get(r.taskId);
+  const shared = DEPTS.map(d => "- "+d.label+"："+(((S.depts[d.id]||{}).info) || "（未記入）")).join("\n");
+  return "【依頼】\n受付日："+(r.date||"")+"\n差出："+deptLabel(r.from)+"\n宛先："+(r.to ? deptLabel(r.to) : "未振り分け")+
+    "\n期限："+(r.due || "なし")+"\n金額・契約・支払に関わる："+(r.money ? "はい" : "いいえ")+"\n内容："+(r.body||"")+"\n"+
+    (task ? "\n【関連する案件】\n案件："+(task.project||"")+"\nカード："+(task.title||"")+"\n状態："+(SMAP[task.status]||SMAP.todo).label+
+      "\n工期："+(task.start||"未定")+"〜"+(task.due||"未定")+"\nメモ："+(task.desc||"")+"\n" : "")+
+    "\n【部署別の共有情報（最新）】\n"+shared+"\n"+(r.reply ? "\n【現在の回答】\n"+r.reply+"\n" : "");
+}
+function aiError(e){
+  const c = e && e.code;
+  if (c === "cancelled") return;
+  if (c === "not_granted") toast("AIの利用が許可されていません。ページの権限設定から許可できます。");
+  else if (c === "rate_limited") toast("AIが混み合っています。少し待ってからもう一度お試しください。");
+  else if (c === "invalid_json") toast("AIの返答を読み取れませんでした。もう一度お試しください。");
+  else toast("AIの応答を取得できませんでした。もう一度お試しください。");
+  console.warn(e);
+}
+async function aiDraft(r){
+  const p = S.prompts;
+  const input = (p.common||"")+"\n\n"+(p[r.to]||"")+"\n\n今日は"+todayYmd()+"です。次の依頼に、"+deptLabel(r.to)+"の担当として回答案を書いてください。"+
+    "そのまま回答欄に貼れる日本語の本文だけを出力し、前置きや見出しは付けないでください。分からない点は推測で埋めず「要確認：」として書いてください。\n\n"+ctxFor(r);
+  S.aiBusy[r.id] = "AIが回答案を作成中…"; S.editReply = r.id; S.drafts[r.id] = ""; render();
+  try {
+    const {text} = await S.sample(input, {cache:false, onText:({text}) => { S.drafts[r.id] = text; const ta = $("rp-"+r.id); if (ta) ta.value = text; }});
+    S.drafts[r.id] = text;
+    toast("回答案ができました。確認・修正してから保存してください");
+  } catch(e){ aiError(e); if (!(S.drafts[r.id]||"").trim()){ delete S.drafts[r.id]; S.editReply = null; } }
+  finally { delete S.aiBusy[r.id]; render(); }
+}
+async function aiTriage(r){
+  const input = "あなたは部署間連絡の受付係です。次の依頼を読み、宛先にふさわしい部署を1つ選んでください。\n"+
+    DEPTS.map(d => "- "+d.id+"（"+d.label+"）："+d.scope).join("\n")+
+    "\n判断に迷う場合は unknown にしてください。\n次のJSONだけを返してください：{\"to\":\"keiri|keiei|sekou|unknown\",\"reason\":\"40字以内の理由\"}\n\n"+ctxFor(r);
+  S.aiBusy[r.id] = "AIが振り分け中…"; render();
+  try {
+    const res = await S.sample.json(input, {modelTier:"quick", cache:false});
+    const reason = String((res && res.reason) || "").slice(0,200), now = new Date().toISOString();
+    if (res && DEPTS.some(d => d.id === res.to)){
+      await patchReq(r.id, {to:res.to, triage:{reason, at:now, by:"ai"}});
+      toast(deptLabel(res.to)+"宛てに振り分けました");
+    } else {
+      await patchReq(r.id, {triage:{reason:"要確認："+reason, at:now, by:"ai"}});
+      toast("AIでは判断できませんでした。宛先を選んでください");
+    }
+  } catch(e){ aiError(e); }
+  finally { delete S.aiBusy[r.id]; render(); }
+}
+async function aiAudit(r){
+  const p = S.prompts, th = Number(p.threshold) || 500000;
+  const input = (p.auditor||"")+"\n\n重要の金額基準："+th.toLocaleString("ja-JP")+"円以上。今日は"+todayYmd()+"です。\n"+
+    "次の依頼と回答を点検し、次のJSONだけを返してください：\n"+
+    "{\"pass\":true または false,\"level\":\"important\" または \"minor\",\"findings\":\"所見。数字を具体的に、150字以内\",\"fixedReply\":\"不合格のときだけ、直した回答の全文。合格なら空文字\"}\n"+
+    "level は、金額が基準以上・契約・支払・安全・法令に関わるなら important、それ以外は minor。\n\n"+
+    "【回答した部署の指示文】\n"+(p[r.to]||"")+"\n\n"+ctxFor(r);
+  S.aiBusy[r.id] = "監査役が点検中…"; render();
+  try {
+    const res = await S.sample.json(input, {cache:false});
+    const now = new Date().toISOString(), pass = !!(res && res.pass === true);
+    const prevFails = r.audit && !r.audit.pass ? (r.audit.round || 1) : 0;
+    const audit = {pass, level: (res && res.level === "important") || r.money ? "important" : "minor",
+      findings:String((res && res.findings) || "").slice(0,600), fixedReply: pass ? "" : String((res && res.fixedReply) || "").slice(0,8000),
+      round: pass ? 0 : prevFails + 1, at:now, by:"ai"};
+    const patch = {audit};
+    if (pass){
+      if (audit.level === "important" || S.prompts.minorToApproval) patch.status = "pending";
+      else { patch.status = "done"; patch.doneAt = now; }
+    } else if (audit.round >= 3){ audit.level = "recheck"; patch.status = "pending"; }
+    else if (r.status === "open") patch.status = "doing";
+    await patchReq(r.id, patch);
+    toast(pass ? (patch.status === "pending" ? "合格：承認待ちに回しました" : "合格：報告のみとして完了にしました") : audit.level === "recheck" ? "3回不合格：要確認として承認待ちの先頭に置きました" : "不合格：所見と修正案を確認してください");
+  } catch(e){ aiError(e); }
+  finally { delete S.aiBusy[r.id]; render(); }
+}
+const PROMPT_ITEMS = [
+  {k:"common", label:"共通部分（全部署）"},
+  {k:"keiri", label:"経理"}, {k:"keiei", label:"経営"}, {k:"sekou", label:"施工管理"},
+  {k:"auditor", label:"監査役"},
+  {k:"karteTpl", label:"工事カルテの雛形"},
+];
+function renderPrompts(){
+  const box = $("prompts"), ro = !S.canEdit || !db;
+  $("promptNote").textContent = "「AIで回答案」「AIで振り分け」「監査役チェック」が使う指示です。" +
+    (!S.sample ? "この表示ではAI機能を使えません。" : "") + (ro ? "編集はオーナー・編集者のみです。" : "");
+  if (!box.childElementCount){
+    const save = async (k, v) => {
+      if (v === (S.prompts[k] ?? "")) return;
+      try { await withRetry(() => db.doc("config/prompts").set({...S.prompts, [k]:v, updatedAt:new Date().toISOString(), updatedBy:S.myId})); toast("AIの指示文を保存しました"); }
+      catch(e){ writeError(e); }
+    };
+    for (const it of PROMPT_ITEMS){
+      const ta = h("textarea",{id:"pr-"+it.k,"aria-label":it.label+"の指示文"});
+      ta.addEventListener("change", () => save(it.k, ta.value));
+      box.append(h("details",null, h("summary",{text:it.label}), ta));
+    }
+    const th = h("input",{id:"pr-threshold",type:"number",min:"0",step:"10000","aria-label":"重要の金額基準（円）"});
+    th.addEventListener("change", () => save("threshold", Number(th.value) || 500000));
+    box.append(h("details",null, h("summary",{text:"重要の金額基準"}), th, h("span",{class:"ai-note",text:" 円以上"})));
+    const mta = h("input",{type:"checkbox",id:"pr-minor"});
+    mta.addEventListener("change", () => save("minorToApproval", mta.checked));
+    box.append(h("details",null, h("summary",{text:"軽微な合格の扱い"}),
+      h("label",{class:"ai-note",style:"display:flex;gap:6px;align-items:center;margin-top:6px"}, mta, "軽微（報告のみ）で合格した回答も、完了にせず承認待ちに並べる")));
+  }
+  for (const it of PROMPT_ITEMS){ const ta = $("pr-"+it.k); if (ta !== document.activeElement) ta.value = S.prompts[it.k] || (it.k === "karteTpl" ? KARTE_TPL : ""); ta.readOnly = ro; }
+  $("pr-minor").checked = !!S.prompts.minorToApproval; $("pr-minor").disabled = ro;
+  const th = $("pr-threshold"); if (th !== document.activeElement) th.value = S.prompts.threshold || 500000; th.readOnly = ro;
+}
+function renderDepts(ro){
+  const box = $("depts");
+  if (!box.childElementCount){
+    for (const d of DEPTS){
+      const ta = h("textarea",{id:"dp-"+d.id,placeholder:d.hint,"aria-label":d.label+"の共有情報"});
+      ta.addEventListener("change", async () => {
+        const v = ta.value.trim();
+        if (v === ((S.depts[d.id]||{}).info || "")) return;
+        try { await withRetry(() => db.doc("depts/"+d.id).set({info:v, updatedAt:new Date().toISOString(), updatedBy:S.myId})); toast(d.label+"の共有情報を更新しました"); }
+        catch(e){ writeError(e); }
+      });
+      box.append(h("div",{class:"dept"}, h("div",{class:"dh"}, h("b",{text:d.label}), h("span",{id:"dt-"+d.id})), ta));
+    }
+  }
+  for (const d of DEPTS){
+    const ta = $("dp-"+d.id), v = S.depts[d.id];
+    if (ta !== document.activeElement) ta.value = (v && v.info) || "";
+    ta.readOnly = ro;
+    $("dt-"+d.id).textContent = v && v.updatedAt ? "最終更新 "+fmtStamp(v.updatedAt) : "未記入";
+  }
+}
+function relatedReqs(t, ro){
+  const list = [...S.reqs.values()].filter(r => r.taskId === t.id).sort((a,b) => (b.createdAt||"").localeCompare(a.createdAt||""));
+  if (!list.length && ro) return null;
+  return h("section",{class:"sect"},
+    h("h3",null,"関連する依頼", h("span",{class:"n",text:list.filter(r => r.status !== "done").length+"件 未完了"})),
+    list.length ? h("ul",{class:"rel"}, list.map(r => { const s = RSMAP[r.status] || RSMAP.open;
+      return h("li",null, h("span",{class:"st",style:"--c:"+s.c,text:s.label}), h("span",{class:"t",text:deptLabel(r.from)+" → "+(r.to ? deptLabel(r.to) : "未振り分け")+"："+(r.body||"")})); })) : null,
+    ro ? null : h("button",{class:"btn",type:"button",style:"margin-top:8px",onclick(){
+      S.reqFormOpen = true; S.reqFormTask = t.id; $("reqForm").replaceChildren();
+      closeTask(); location.hash = "#renraku"; route();
+    }},"＋ この案件で他部署に依頼"));
+}
+
+/* ---------- 経費（レシート・伝票） ---------- */
+const CATS = ["材料費","外注費","燃料費","消耗品費","工具器具備品","修繕費","車両費","旅費交通費","通信費","交際費","会議費","福利厚生費","事務用品費","雑費"];
+const PAYS = ["現金","カード","振込","電子マネー","立替（個人）","不明"];
+const KINDS = ["レシート","領収書","納品書","請求書","その他"];
+const yen = n => "¥" + Math.round(Number(n) || 0).toLocaleString("ja-JP");
+const ym = d => d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0");
+function rcMonth(r){ return (r.date || (r.createdAt || "").slice(0,10) || "").slice(0,7); }
+function rcProject(r){ const t = r.taskId && S.tasks.get(r.taskId); return (t && t.project) || r.project || ""; }
+function isDup(r){
+  if (!r.total || !r.date) return false;
+  for (const o of S.receipts.values()) if (o.id !== r.id && o.date === r.date && Number(o.total) === Number(r.total) && (o.vendor||"") === (r.vendor||"")) return true;
+  return false;
+}
+const INV_RE = /^T\d{13}$/;
+function monthReceipts(){
+  const m = S.khMonth;
+  return [...S.receipts.values()].filter(r => rcMonth(r) === m && (!S.q.trim() || ((r.vendor||"")+" "+(r.items||"")+" "+(r.memo||"")+" "+rcProject(r)).toLowerCase().includes(S.q.trim().toLowerCase())))
+    .sort((a,b) => (b.date||"").localeCompare(a.date||"") || (b.createdAt||"").localeCompare(a.createdAt||""));
+}
+function renderKeihi(){
+  if (!S.khMonth) S.khMonth = ym(new Date());
+  const [y, mo] = S.khMonth.split("-").map(Number);
+  $("khTitle").textContent = y + "年 " + mo + "月の経費";
+  const ro = !S.canWrite || !db;
+  $("khScan").hidden = ro || !S.sample; $("khManual").hidden = ro; $("khProj").hidden = ro;
+  $("khCsv").hidden = !S.downloads;
+  const ps = $("khProj"), opts = [...S.tasks.values()].filter(t => t.status !== "done").sort((a,b) => ((a.project||"")+(a.title||"")).localeCompare((b.project||"")+(b.title||""),"ja"));
+  if (ps !== document.activeElement){
+    ps.replaceChildren(h("option",{value:""},"案件：ひも付けない"), ...opts.map(t => h("option",{value:t.id},"案件：" + (t.project ? t.project+" ／ " : "") + (t.title||"（無題）"))));
+    ps.value = opts.some(t => t.id === S.khProj) ? S.khProj : "";
+  }
+  const formBox = $("khForm");
+  if (!S.rcEdit && !S.rcNew) formBox.replaceChildren();
+  else if (!formBox.firstChild || formBox.dataset.id !== (S.rcEdit || "new")) { formBox.replaceChildren(rcForm()); formBox.dataset.id = S.rcEdit || "new"; }
+
+  const list = monthReceipts();
+  const total = list.reduce((a,r) => a + (Number(r.total)||0), 0);
+  const tax = list.reduce((a,r) => a + (Number(r.tax10)||0) + (Number(r.tax8)||0), 0);
+  const unchecked = list.filter(r => r.status !== "checked").length;
+  const noInv = list.filter(r => !INV_RE.test(r.invoiceNo||"")).length;
+  const tile = (k, v, warn) => h("div",{class:"tile"+(warn ? " warn" : "")}, h("div",{class:"k",text:k}), h("div",{class:"v",text:v}));
+  $("khTiles").replaceChildren(tile("合計（税込）", yen(total)), tile("うち消費税", yen(tax)), tile("未確認", unchecked+" 件", unchecked > 0), tile("インボイス番号なし", noInv+" 件", noInv > 0));
+
+  const byCat = {};
+  for (const r of list) byCat[r.category || "未分類"] = (byCat[r.category || "未分類"] || 0) + (Number(r.total)||0);
+  const cats = Object.entries(byCat).sort((a,b) => b[1]-a[1]), max = cats.length ? cats[0][1] : 0;
+  $("khCat").replaceChildren(...(cats.length ? cats.map(([c,v]) => h("div",{class:"bar-row",title:c+"："+yen(v)+"（"+(total ? Math.round(v/total*100) : 0)+"%）"},
+    h("span",{class:"lb",text:c}), h("div",{class:"bar-track"}, h("div",{class:"bar-fill",style:"width:"+(max ? Math.max(1, v/max*100) : 0)+"%"})), h("span",{class:"amt",text:yen(v)}))) :
+    [h("p",{class:"muted",style:"margin:0;font-size:13px",text:"この月の経費はまだありません。"})]));
+
+  const byProj = {};
+  for (const r of list){ const k = rcProject(r) || "（案件なし）"; byProj[k] = byProj[k] || {n:0, v:0}; byProj[k].n++; byProj[k].v += Number(r.total)||0; }
+  const projs = Object.entries(byProj).sort((a,b) => b[1].v - a[1].v);
+  $("khProjTbl").replaceChildren(projs.length ? h("table",{class:"tbl"}, h("thead",null, h("tr",null, h("th",null,"案件"), h("th",{class:"num"},"件数"), h("th",{class:"num"},"金額"))),
+    h("tbody",null, projs.map(([k,o]) => h("tr",null, h("td",{text:k}), h("td",{class:"num",text:String(o.n)}), h("td",{class:"num",text:yen(o.v)}))))) :
+    h("p",{class:"muted",style:"margin:0;font-size:13px",text:"案件にひも付いた経費はまだありません。"}));
+
+  renderReimb();
+  $("khListTitle").textContent = "明細 · " + list.length + "件";
+  $("khList").replaceChildren(list.length ? h("table",{class:"tbl"},
+    h("thead",null, h("tr",null, h("th",null,""), h("th",null,"日付"), h("th",null,"取引先・品目"), h("th",null,"勘定科目"), h("th",null,"案件"), h("th",{class:"num"},"税込"), h("th",null,"状態"))),
+    h("tbody",null, list.map(r => h("tr",{class:"clickable",tabindex:"0",onclick(){ S.rcEdit = r.id; S.rcNew = false; S.rcConfirmDel = false; render(); window.scrollTo({top:0, behavior:"smooth"}); },
+        onkeydown(e){ if (e.key === "Enter") this.click(); }},
+      h("td",null, r.photo ? h("img",{class:"thumb",src:blobUrl(r.photo),alt:"",loading:"lazy",onerror(){ this.remove(); }}) : null),
+      h("td",{class:"num",text: r.date ? fmtDay(r.date) : "日付不明"}),
+      h("td",null, h("div",{text:r.vendor || "（取引先不明）"}), r.items ? h("div",{class:"muted",style:"font-size:12px",text:r.items}) : null),
+      h("td",{text:r.category || "未分類"}),
+      h("td",{text:rcProject(r) || "—"}),
+      h("td",{class:"num",text:yen(r.total)}),
+      h("td",null,
+        r.status === "checked" ? h("span",{class:"flag ok",text:"確認済み"}) : h("span",{class:"flag uncheck",text:"未確認"}),
+        !INV_RE.test(r.invoiceNo||"") ? h("span",{class:"flag bad",text:"インボイス番号なし"}) : null,
+        isDup(r) ? h("span",{class:"flag bad",text:"重複の可能性"}) : null,
+        r.ai && r.ai.confidence === "low" ? h("span",{class:"flag bad",text:"読み取り不確か"}) : null,
+        r.payment === "立替（個人）" ? h("span",{class:"flag "+(r.settled ? "ok" : "uncheck"),text: r.settled ? "立替・精算済み" : "立替・未精算"}) : null)
+    )))) : h("div",{class:"empty"}, h("strong",{text: !db ? "共有データに接続できません" : !S.rcLoaded ? "読み込み中…" : "この月の経費はまだありません"}),
+      ro ? "" : S.sample ? "「📷 レシート・伝票を読み取る」で写真を選ぶと、AIが日付・取引先・金額・勘定科目を読み取って登録します。複数枚まとめて選べます。" : "「＋ 手入力」から登録できます。"));
+}
+function rcForm(){
+  const r = S.rcEdit ? S.receipts.get(S.rcEdit) : null;
+  if (S.rcEdit && !r){ S.rcEdit = null; return h("div"); }
+  const ro = !S.canWrite || !db;
+  const v = r || {date:todayYmd(), kind:"レシート", category:"材料費", payment:"現金", taskId:S.khProj || null};
+  const inp = (id, type, val, attrs) => { const e = h("input",{id, type, ...(attrs||{}), readonly:ro}); e.value = val ?? ""; return e; };
+  const sel = (id, list, val) => { const e = h("select",{id, disabled:ro}, list.map(x => h("option",{value:x},x))); e.value = list.includes(val) ? val : list[list.length-1]; return e; };
+  const fDate = inp("rcDate","date",v.date), fVendor = inp("rcVendor","text",v.vendor,{placeholder:"例：〇〇ホームセンター"}), fItems = inp("rcItems","text",v.items,{placeholder:"例：コンパネ 10枚、ビス"});
+  const fTotal = inp("rcTotal","number",v.total,{min:"0",step:"1",inputmode:"numeric"}), fTax10 = inp("rcTax10","number",v.tax10,{min:"0",step:"1",inputmode:"numeric"}), fTax8 = inp("rcTax8","number",v.tax8,{min:"0",step:"1",inputmode:"numeric"});
+  const fInv = inp("rcInv","text",v.invoiceNo,{placeholder:"T + 13桁",autocapitalize:"characters"});
+  const fKind = sel("rcKind",KINDS,v.kind), fCat = sel("rcCat",CATS,v.category), fPay = sel("rcPay",PAYS,v.payment);
+  const tasks = [...S.tasks.values()].sort((a,b) => ((a.project||"")+(a.title||"")).localeCompare((b.project||"")+(b.title||""),"ja"));
+  const fTask = h("select",{id:"rcTask",disabled:ro}, h("option",{value:""},"なし"), tasks.map(t => h("option",{value:t.id},(t.project ? t.project+" ／ " : "")+(t.title||"（無題）"))));
+  fTask.value = v.taskId || "";
+  const fMemo = h("textarea",{id:"rcMemo",rows:"2",readonly:ro}); fMemo.value = v.memo || "";
+  const close = () => { S.rcEdit = null; S.rcNew = false; S.rcConfirmDel = false; $("khForm").replaceChildren(); render(); };
+  const collect = () => {
+    const t = S.tasks.get(fTask.value);
+    return {date:fDate.value || null, kind:fKind.value, vendor:fVendor.value.trim(), items:fItems.value.trim(), total:Number(fTotal.value)||0,
+      tax10:fTax10.value === "" ? null : Number(fTax10.value), tax8:fTax8.value === "" ? null : Number(fTax8.value),
+      invoiceNo:fInv.value.trim().toUpperCase().replace(/[^T0-9]/g,""), category:fCat.value, payment:fPay.value,
+      taskId:fTask.value || null, project: t ? (t.project || "") : "", memo:fMemo.value.trim()};
+  };
+  const save = async (checked) => {
+    const data = collect();
+    if (!data.total){ fTotal.focus(); toast("税込金額を入れてください"); return; }
+    const now = new Date().toISOString();
+    if (checked){ data.status = "checked"; data.checkedBy = S.myId; data.checkedAt = now; }
+    try {
+      if (r) await withRetry(() => db.doc("receipts/"+r.id).update({...data, updatedAt:now, updatedBy:S.myId}));
+      else { const ref = db.collection("receipts").doc(); await withRetry(() => ref.set({...data, status: checked ? "checked" : "unchecked", photo:null, createdBy:S.myId, createdAt:now, updatedAt:now})); }
+      if (data.date && rcMonth(data) !== S.khMonth) S.khMonth = rcMonth(data);
+      toast(checked ? "確認済みにしました" : "保存しました"); close();
+    } catch(e){ writeError(e); }
+  };
+  const del = async () => {
+    try { await withRetry(() => db.doc("receipts/"+r.id).delete()); if (r.photo && assets) assets.delete(r.photo).catch(() => {}); toast("削除しました"); close(); }
+    catch(e){ writeError(e); }
+  };
+  const ai = r && r.ai;
+  return h("div",{class:"rc-form"},
+    h("div",null,
+      r && r.photo ? h("img",{class:"ph",src:blobUrl(r.photo),alt:"レシートの写真",onclick(){ showPhoto(r.photo); }}) : h("div",{class:"muted",style:"font-size:12px",text: r ? "写真なし" : "手入力"}),
+      ai ? h("p",{class:"ai-note",style:"margin:6px 0 0",text:"AI読み取り（確からしさ："+({high:"高",medium:"中",low:"低"}[ai.confidence] || "不明")+"）"+(ai.notes ? "：" + ai.notes : "")}) : null,
+      r && isDup(r) ? h("p",{class:"ai-note",style:"color:var(--danger);margin:6px 0 0",text:"同じ日付・金額・取引先の伝票がほかにもあります。二重登録でないか確認してください。"}) : null),
+    h("div",{class:"rc-fields"},
+      h("label",null,"日付", fDate), h("label",null,"種類", fKind),
+      h("label",{class:"full"},"取引先", fVendor),
+      h("label",{class:"full"},"品目", fItems),
+      h("label",null,"税込金額（円）", fTotal), h("label",null,"勘定科目", fCat),
+      h("label",null,"消費税 10%（円）", fTax10), h("label",null,"消費税 8%（円）", fTax8),
+      h("label",null,"インボイス登録番号", fInv), h("label",null,"支払方法", fPay),
+      h("label",{class:"full"},"案件", fTask),
+      h("label",{class:"full"},"メモ", fMemo),
+      ro ? null : h("div",{class:"full",style:"display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;align-items:center"},
+        r && (S.canEdit || r.createdBy === S.myId) ? (S.rcConfirmDel
+          ? h("span",{style:"margin-right:auto;display:flex;gap:6px;align-items:center;font-size:12.5px"},"この伝票を削除しますか？", h("button",{class:"btn danger",type:"button",onclick:del},"削除する"), h("button",{class:"btn",type:"button",onclick(){ S.rcConfirmDel = false; $("khForm").replaceChildren(); render(); }},"やめる"))
+          : h("button",{class:"btn ghost",type:"button",style:"margin-right:auto;color:var(--muted)",onclick(){ S.rcConfirmDel = true; $("khForm").replaceChildren(); render(); }},"削除")) : null,
+        h("button",{class:"btn",type:"button",onclick:close},"閉じる"),
+        h("button",{class:"btn",type:"button",onclick(){ save(false); }},"保存"),
+        h("button",{class:"btn primary",type:"button",onclick(){ save(true); }},"確認済みにして保存")),
+      ro ? h("div",{class:"full"}, h("button",{class:"btn",type:"button",onclick:close},"閉じる")) : null));
+}
+async function scanReceipts(files, progEl){
+  const list = [...files]; if (!list.length) return;
+  const prog = progEl || $("khProgress"); prog.hidden = false;
+  let ok = 0;
+  const task = S.tasks.get(S.khProj);
+  for (let i = 0; i < list.length; i++){
+    prog.textContent = "読み取り中 " + (i+1) + " / " + list.length + " 枚…";
+    try {
+      const blob = await shrink(list[i]);
+      const input = "この画像は日本の建設会社が受け取ったレシート・領収書・納品書・請求書のいずれかです。経費として記録するため、読み取った内容を次のJSONだけで返してください。\n" +
+        '{"kind":"レシート|領収書|納品書|請求書|その他","date":"YYYY-MM-DD または null","vendor":"店名・取引先名","items":"主な品目を30字以内","total":税込合計の数値,"tax10":10%対象の消費税額の数値またはnull,"tax8":8%対象の消費税額の数値またはnull,"invoiceNo":"Tで始まる13桁の登録番号またはnull","category":"次の一覧から1つ","payment":"現金|カード|振込|電子マネー|不明","confidence":"high|medium|low","notes":"読み取れなかった点や注意点（なければ空文字）"}\n' +
+        "勘定科目の一覧：" + CATS.join("、") + "。\n" +
+        "金額は数字だけ（カンマや円記号なし）。年が省略されていたら " + todayYmd() + " に最も近い過去の日付にする。" +
+        (task ? "この伝票は「" + (task.project||"") + " ／ " + (task.title||"") + "」の現場のものです。" : "");
+      const res = await S.sample.json(input, {images:[blob], cache:false});
+      let photo = null;
+      if (assets){ try { photo = (await withRetry(() => assets.upload(blob, blob.type ? undefined : {type:"image/jpeg"}))).id; } catch(e){ console.warn(e); } }
+      const now = new Date().toISOString(), num = x => (x === null || x === undefined || x === "" || isNaN(Number(x))) ? null : Math.round(Number(x));
+      const doc = {kind: KINDS.includes(res.kind) ? res.kind : "その他", date: /^\d{4}-\d{2}-\d{2}$/.test(res.date||"") ? res.date : null,
+        vendor:String(res.vendor||"").slice(0,100), items:String(res.items||"").slice(0,100), total:num(res.total) || 0, tax10:num(res.tax10), tax8:num(res.tax8),
+        invoiceNo:String(res.invoiceNo||"").toUpperCase().replace(/[^T0-9]/g,""), category: CATS.includes(res.category) ? res.category : "雑費",
+        payment: PAYS.includes(res.payment) ? res.payment : "不明", taskId: task ? task.id : null, project: task ? (task.project||"") : "", memo:"",
+        photo, status:"unchecked", ai:{confidence:["high","medium","low"].includes(res.confidence) ? res.confidence : "low", notes:String(res.notes||"").slice(0,200)},
+        createdBy:S.myId, createdAt:now, updatedAt:now};
+      const ref = db.collection("receipts").doc();
+      await withRetry(() => ref.set(doc));
+      ok++;
+      if (i === list.length - 1 && doc.date) S.khMonth = rcMonth(doc);
+    } catch(e){
+      if (e && (e.code === "images_unavailable" || e.code === "not_granted")){ aiError(e); break; }
+      if (e && e.code) aiError(e); else writeError(e);
+    }
+  }
+  prog.textContent = ok + " 枚を登録しました。" + (progEl ? "確認は経理がまとめて行います。" : "内容を確認して「確認済み」にしてください。");
+  if (!progEl) setTimeout(() => { prog.hidden = true; }, 6000);
+  render();
+}
+function csvCell(x){ const s = String(x ?? ""); return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s; }
+async function exportCsv(){
+  const list = monthReceipts().slice().reverse();
+  const head = ["日付","種類","取引先","品目","勘定科目","案件","税込金額","消費税10%","消費税8%","インボイス登録番号","支払方法","立替精算","状態","メモ"];
+  const rows = list.map(r => [r.date||"", r.kind||"", r.vendor||"", r.items||"", r.category||"", rcProject(r), Number(r.total)||0, r.tax10 ?? "", r.tax8 ?? "", r.invoiceNo||"", r.payment||"",
+    r.payment === "立替（個人）" ? (r.settled ? "精算済み" : "未精算") : "", r.status === "checked" ? "確認済み" : "未確認", r.memo||""]);
+  const csv = "﻿" + [head, ...rows].map(row => row.map(csvCell).join(",")).join("\r\n");
+  try { await S.downloads.save({filename:"経費_" + S.khMonth + ".csv", data:csv}); }
+  catch(e){ if (e && e.code !== "declined") toast("CSVを書き出せませんでした"); }
+}
+function taskSpend(t){ let v = 0; for (const r of S.receipts.values()) if (r.taskId === t.id) v += Number(r.total) || 0; return v; }
+function overBudget(t){ const b = Number(t.budget) || 0; return b > 0 && taskSpend(t) > b; }
+function costSection(t){
+  const list = [...S.receipts.values()].filter(r => r.taskId === t.id);
+  const total = list.reduce((a,r) => a + (Number(r.total)||0), 0), budget = Number(t.budget) || 0;
+  const ordered = mtList(t.id).filter(m => m.status === "発注済" || m.status === "納品済").reduce((a,m) => a + mtCalc(m).amount, 0);
+  if (!list.length && !budget && !ordered) return null;
+  const pct = budget ? Math.round(total / budget * 100) : null;
+  const byCat = {}; for (const r of list) byCat[r.category||"未分類"] = (byCat[r.category||"未分類"]||0) + (Number(r.total)||0);
+  return h("section",{class:"sect"},
+    h("h3",null,"原価（予算と実績）", h("span",{class:"n",text: pct != null ? "消化率 "+pct+"%" : "予算 未設定"})),
+    budget ? h("div",{class:"meter"+(pct > 100 ? " over" : pct >= 80 ? " warn" : ""),role:"img","aria-label":"予算の消化率 "+pct+"%"}, h("i",{style:"width:"+Math.min(100, pct)+"%"})) : null,
+    h("div",{class:"meta",style:"gap:4px 14px;font-size:13px;color:var(--ink)"},
+      h("span",{text:"予算 "+(budget ? yen(budget) : "未設定")}),
+      h("span",{text:"経費実績 "+yen(total)+"（"+list.length+"件）"}),
+      budget ? h("span",{style: total > budget ? "color:var(--danger);font-weight:700" : "",text:(total > budget ? "超過 " : "残り ")+yen(Math.abs(budget - total))}) : null,
+      ordered ? h("span",{class:"muted",text:"発注済み材料 "+yen(ordered)}) : null),
+    list.length ? h("div",{class:"meta",style:"gap:6px 12px;margin-top:4px"}, Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([c,v]) => h("span",{text:c+" "+yen(v)}))) : null,
+    list.length ? h("button",{class:"link",type:"button",style:"margin-top:6px",onclick(){ S.khProj = t.id; closeTask(); location.hash = "#keihi"; route(); }},"経費の画面で見る") : null);
+}
+
+/* ---------- 共通ヘルパー ---------- */
+async function patchDoc(path, data){
+  if (!db) return;
+  try { await withRetry(() => db.doc(path).update({...data, updatedAt:new Date().toISOString(), updatedBy:S.myId})); }
+  catch(e){ writeError(e); }
+}
+async function saveFile(filename, data){
+  if (!S.downloads){ toast("この表示ではファイルを保存できません"); return; }
+  try { await S.downloads.save({filename, data}); }
+  catch(e){ if (e && e.code !== "declined") toast("ファイルを保存できませんでした"); }
+}
+async function createRequest(data){
+  const now = new Date().toISOString(), ref = db.collection("requests").doc();
+  await withRetry(() => ref.set({date:todayYmd(), from:"sekou", to:null, body:"", due:null, money:false, status:"open", reply:"", taskId:null,
+    createdBy:S.myId, createdAt:now, updatedAt:now, ...data}));
+  return ref.id;
+}
+function taskLabel(t){ return t ? (t.project && t.project !== t.title ? t.project+" ／ " : "")+(t.title||"（無題）") : "（削除された案件）"; }
+function sortedTasks(includeId){
+  return [...S.tasks.values()].filter(t => t.status !== "done" || t.id === includeId)
+    .sort((a,b) => ((a.project||"")+(a.title||"")).localeCompare((b.project||"")+(b.title||""),"ja"));
+}
+function threshold(){ return Number(S.prompts.threshold) || 500000; }
+function showModal(title, text, filename){
+  const m = $("modal");
+  const ta = h("textarea",{id:"modalText","aria-label":title}); ta.value = text;
+  m.replaceChildren(h("div",{class:"modal-box",role:"dialog","aria-label":title},
+    h("div",{class:"d-head"}, h("span",{class:"crumb",style:"font-weight:700;color:var(--ink);font-size:14px",text:title}),
+      h("button",{class:"btn ghost",type:"button",onclick(){ m.hidden = true; }},"閉じる ✕")),
+    h("div",{style:"padding:12px 16px;display:flex;flex-direction:column;gap:10px;min-height:0;flex:1"}, ta,
+      h("div",{style:"display:flex;gap:8px;flex-wrap:wrap"},
+        h("button",{class:"btn primary",type:"button",async onclick(){ try { await navigator.clipboard.writeText(ta.value); toast("コピーしました"); } catch(e){ ta.focus(); ta.select(); toast("選択しました。コピーしてください"); } }},"コピー"),
+        filename && S.downloads ? h("button",{class:"btn",type:"button",onclick(){ saveFile(filename, ta.value); }},"ファイルに保存") : null))));
+  m.hidden = false;
+  return ta;
+}
+function csvOf(head, rows){ return "﻿" + [head, ...rows].map(row => row.map(csvCell).join(",")).join("\r\n"); }
+
+/* ---------- 立替精算 ---------- */
+function renderReimb(){
+  const box = $("khReimb"), ro = !S.canWrite || !db;
+  const by = {};
+  for (const r of S.receipts.values()) if (r.payment === "立替（個人）" && !r.settled){ const k = r.createdBy || "unknown"; (by[k] = by[k] || []).push(r); }
+  const rows = Object.entries(by);
+  if (!rows.length){ box.replaceChildren(h("p",{class:"muted",style:"margin:0;font-size:13px",text:"未精算の立替はありません。支払方法を「立替（個人）」にした伝票がここに人ごとにまとまります。"})); return; }
+  box.replaceChildren(h("table",{class:"tbl"},
+    h("thead",null, h("tr",null, h("th",null,"立て替えた人"), h("th",{class:"num"},"件数"), h("th",{class:"num"},"金額"), h("th",null,"期間"), h("th",null,""))),
+    h("tbody",null, rows.map(([uid, list]) => {
+      const sum = list.reduce((a,r) => a + (Number(r.total)||0), 0), dates = list.map(r => r.date).filter(Boolean).sort();
+      return h("tr",null, h("td",{text: uid === "unknown" ? "（不明）" : nameOf(uid)}), h("td",{class:"num",text:String(list.length)}), h("td",{class:"num",text:yen(sum)}),
+        h("td",{text: dates.length ? fmtDay(dates[0])+" 〜 "+fmtDay(dates[dates.length-1]) : "—"}),
+        h("td",null, !ro && S.canEdit ? h("button",{class:"btn",type:"button",async onclick(){
+          this.disabled = true; const now = new Date().toISOString();
+          for (const r of list) await patchDoc("receipts/"+r.id, {settled:true, settledAt:now, settledBy:S.myId});
+          toast(nameOf(uid)+"さんの立替 "+yen(sum)+" を精算済みにしました");
+        }},"精算済みにする") : h("span",{class:"ai-note",text:"精算は編集者が行います"})));
+    }))));
+}
+
+/* ---------- 材料の拾い出し・発注管理 ---------- */
+const MSTAT = ["未発注","発注済","納品済","不要"];
+function mtCalc(m){ const need = Math.ceil((Number(m.qty)||0) * (1 + (Number(m.loss)||0)/100) * 100) / 100; return {need, amount: Math.round(need * (Number(m.price)||0))}; }
+function mtList(taskId){ return [...S.materials.values()].filter(m => m.taskId === taskId).sort((a,b) => (a.order||0) - (b.order||0)); }
+function mtAlerts(m){
+  const out = [], today = todayYmd(), {amount} = mtCalc(m);
+  if (m.status === "未発注" && m.needDate){ const d = daysBetween(today, m.needDate); if (d < 0) out.push({t:"要発注（使用日を過ぎています）",c:"bad"}); else if (d <= 7) out.push({t:"要発注（使用日まで"+d+"日）",c:"uncheck"}); }
+  if (m.status === "発注済" && m.deliveryDate && m.deliveryDate < today) out.push({t:"納品遅れ",c:"bad"});
+  if ((m.status === "未発注" || m.status === "発注済") && m.deliveryDate && m.needDate && m.deliveryDate > m.needDate) out.push({t:"納品が使用日に間に合わない",c:"bad"});
+  if (m.status === "未発注" && amount >= threshold() && !m.keieiReqId) out.push({t:"要判断（"+yen(threshold())+"以上）",c:"uncheck"});
+  if (/要確認/.test(m.memo||"")) out.push({t:"要確認",c:"uncheck"});
+  return out;
+}
+function renderZairyo(){
+  const ro = !S.canWrite || !db, tasks = sortedTasks(S.mtTask);
+  if (!S.mtTask || !S.tasks.has(S.mtTask)) S.mtTask = (tasks[0] || {}).id || "";
+  const sel = $("mtTask");
+  if (sel !== document.activeElement){
+    sel.replaceChildren(...(tasks.length ? tasks.map(t => h("option",{value:t.id},taskLabel(t))) : [h("option",{value:""},"案件がありません")]));
+    sel.value = S.mtTask;
+  }
+  $("mtAdd").hidden = ro || !S.mtTask; $("mtScan").hidden = ro || !S.mtTask || !S.sample; $("mtCsv").hidden = !S.downloads || !S.mtTask;
+  const list = S.mtTask ? mtList(S.mtTask) : [], live = list.filter(m => m.status !== "不要");
+  const sum = live.reduce((a,m) => a + mtCalc(m).amount, 0), ordered = live.filter(m => m.status !== "未発注").reduce((a,m) => a + mtCalc(m).amount, 0);
+  const nNeed = list.filter(m => mtAlerts(m).some(a => a.t.startsWith("要発注"))).length, nLate = list.filter(m => mtAlerts(m).some(a => a.t.startsWith("納品"))).length;
+  const tile = (k, v, warn) => h("div",{class:"tile"+(warn ? " warn" : "")}, h("div",{class:"k",text:k}), h("div",{class:"v",text:v}));
+  $("mtTiles").replaceChildren(tile("見込み金額", yen(sum)), tile("発注済み金額", yen(ordered)), tile("要発注", nNeed+" 件", nNeed > 0), tile("納品の問題", nLate+" 件", nLate > 0));
+  const box = $("mtList"), ae = document.activeElement;
+  if (ae && box.contains(ae) && /INPUT|SELECT/.test(ae.tagName)) return;
+  if (!S.mtTask){ box.replaceChildren(h("div",{class:"empty"}, h("strong",{text:"案件がありません"}), "ボードで案件カードを作ると、その案件の材料を管理できます。")); return; }
+  if (!list.length){ box.replaceChildren(h("div",{class:"empty"}, h("strong",{text:"まだ材料がありません"}),
+    ro ? "" : "「＋ 行を追加」で1行ずつ入力するか、「📷 数量表・図面から拾い出す」で写真から拾い出します。拾い出した行は「要確認」付きで入るので、数量と根拠を確かめてください。")); return; }
+  const H = ["材料名","規格","設計数量","単位","ロス%","必要数量","使用済み","単価","金額","使用予定日","仕入先","状態","発注日","納品予定日","図面番号","備考","知らせ",""];
+  box.replaceChildren(h("table",{class:"tbl"},
+    h("thead",null, h("tr",null, H.map((x,i) => h("th",{class:[2,4,5,6,7,8].includes(i) ? "num" : null,text:x})))),
+    h("tbody",null, list.map(m => mtRow(m, ro)))));
+  if (S.mtFocus){ const el = box.querySelector('[data-mid="'+S.mtFocus+'"] input'); if (el){ el.focus(); S.mtFocus = null; } }
+}
+function mtRow(m, ro){
+  const tr = h("tr",{"data-mid":m.id});
+  const up = (k, v) => { if ((m[k] ?? null) === v || (m[k] ?? "") === v) return; m[k] = v; patchDoc("materials/"+m.id, {[k]:v}); };
+  const needTd = h("td",{class:"num"}), amtTd = h("td",{class:"num"});
+  const vals = {qty:m.qty, loss:m.loss, price:m.price};
+  const refresh = () => { const c = mtCalc(vals); needTd.textContent = c.need ? String(c.need) : ""; amtTd.textContent = c.amount ? yen(c.amount) : ""; };
+  const inp = (k, type, w) => {
+    const e = h("input",{class:"grid-in",type:type||"text",readonly:ro,"aria-label":k,style:w ? "min-width:"+w+"px" : null});
+    e.value = m[k] ?? "";
+    if (type === "number"){ e.step = "any"; e.style.textAlign = "right"; e.addEventListener("input", () => { if (k in vals){ vals[k] = e.value === "" ? null : Number(e.value); refresh(); } }); }
+    e.addEventListener("change", () => up(k, type === "number" ? (e.value === "" ? null : Number(e.value)) : type === "date" ? (e.value || null) : e.value.trim()));
+    return h("td",null,e);
+  };
+  const st = h("select",{class:"grid-in",disabled:ro,"aria-label":"状態"}, MSTAT.map(x => h("option",{value:x},x)));
+  st.value = MSTAT.includes(m.status) ? m.status : "未発注";
+  st.addEventListener("change", () => { const p = {status:st.value}; if (st.value === "発注済" && !m.orderDate) p.orderDate = todayYmd(); patchDoc("materials/"+m.id, p); });
+  refresh();
+  const t = S.tasks.get(m.taskId), {amount, need} = mtCalc(m), alerts = mtAlerts(m), acts = [];
+  if (!ro && m.status === "未発注" && amount >= threshold() && !m.keieiReqId) acts.push(h("button",{class:"btn",type:"button",async onclick(){
+    this.disabled = true;
+    try { const id = await createRequest({from:"sekou", to:"keiei", money:true, taskId:m.taskId, due:m.needDate || null,
+      body:"【発注判断】"+taskLabel(t)+"：「"+(m.name||"")+" "+(m.spec||"")+"」"+need+(m.unit||"")+"、見込み金額 "+yen(amount)+"（単価 "+yen(m.price)+"）。発注してよいか判断をお願いします。"+(m.needDate ? "使用予定日 "+fmtDay(m.needDate)+"。" : "")});
+      await patchDoc("materials/"+m.id, {keieiReqId:id}); toast("経営に発注判断を依頼しました"); } catch(e){ writeError(e); this.disabled = false; }
+  }},"経営に判断を依頼"));
+  if (!ro && (m.status === "発注済" || m.status === "納品済") && amount > 0 && !m.keiriReqId) acts.push(h("button",{class:"btn",type:"button",async onclick(){
+    this.disabled = true;
+    try { const id = await createRequest({from:"sekou", to:"keiri", money:true, taskId:m.taskId,
+      body:"【支払予定】"+taskLabel(t)+"：「"+(m.name||"")+" "+(m.spec||"")+"」"+need+(m.unit||"")+"を"+(m.orderDate ? fmtDay(m.orderDate)+"に" : "")+"発注しました（仕入先 "+(m.supplier||"未記入")+"）。金額 "+yen(amount)+(m.deliveryDate ? "、納品予定 "+fmtDay(m.deliveryDate) : "")+"。支払予定に入れてください。"});
+      await patchDoc("materials/"+m.id, {keiriReqId:id}); toast("経理に支払予定を連絡しました"); } catch(e){ writeError(e); this.disabled = false; }
+  }},"経理に支払予定を連絡"));
+  if (m.keieiReqId) acts.push(h("span",{class:"flag ok",text:"経営に依頼済み"}));
+  if (m.keiriReqId) acts.push(h("span",{class:"flag ok",text:"経理に連絡済み"}));
+  if (!ro){
+    if (S.mtConfirm === m.id) acts.push(h("button",{class:"btn danger",type:"button",async onclick(){ try { await withRetry(() => db.doc("materials/"+m.id).delete()); } catch(e){ writeError(e); } S.mtConfirm = null; }},"削除する"),
+      h("button",{class:"btn",type:"button",onclick(){ S.mtConfirm = null; render(); }},"やめる"));
+    else acts.push(h("button",{class:"btn ghost",type:"button",style:"color:var(--muted)",onclick(){ S.mtConfirm = m.id; render(); }},"削除"));
+  }
+  const used = usedQty(m.id), usedTd = h("td",{class:"num",title:"日報に記入された使用数量の合計",style: used && need && used > need ? "color:var(--danger);font-weight:700" : null,text: used ? String(used) : ""});
+  tr.append(inp("name","text",140), inp("spec","text",120), inp("qty","number",70), inp("unit","text",48), inp("loss","number",56), needTd, usedTd, inp("price","number",86), amtTd,
+    inp("needDate","date",130), inp("supplier","text",110), h("td",null,st), inp("orderDate","date",130), inp("deliveryDate","date",130), inp("drawingNo","text",80), inp("memo","text",160),
+    h("td",null, alerts.map(a => h("span",{class:"flag "+a.c,text:a.t}))), h("td",null, h("div",{style:"display:flex;gap:6px;flex-wrap:wrap;align-items:center"}, acts)));
+  return tr;
+}
+async function mtAddRow(extra){
+  const now = new Date().toISOString(), ref = db.collection("materials").doc();
+  const last = mtList(S.mtTask).reduce((a,m) => Math.max(a, m.order||0), 0);
+  await withRetry(() => ref.set({taskId:S.mtTask, name:"", spec:"", qty:null, unit:"", loss:0, price:null, needDate:null, supplier:"", status:"未発注",
+    orderDate:null, deliveryDate:null, drawingNo:"", memo:"", order:last + 1000, createdBy:S.myId, createdAt:now, updatedAt:now, ...(extra||{})}));
+  return ref.id;
+}
+async function mtScan(files){
+  const list = [...files]; if (!list.length) return;
+  const prog = $("mtProgress"), t = S.tasks.get(S.mtTask); prog.hidden = false; let n = 0;
+  for (let i = 0; i < list.length; i++){
+    prog.textContent = "拾い出し中 " + (i+1) + " / " + list.length + " 枚…";
+    try {
+      const blob = await shrink(list[i]);
+      const res = await S.sample.json("この画像は建設工事「" + taskLabel(t) + "」の図面・数量表・見積書などです。必要な材料を1行ずつ拾い出し、次のJSONだけを返してください。\n" +
+        '{"items":[{"name":"材料名","spec":"規格・寸法","qty":数量の数値またはnull,"unit":"単位","drawingNo":"図面番号があれば","note":"根拠や不確かな点"}]}\n' +
+        "数量が読み取れないものは qty を null にし、推測で埋めないでください。重複して載っている材料はまとめてください。", {images:[blob], cache:false});
+      const items = Array.isArray(res && res.items) ? res.items.slice(0, 80) : [];
+      for (const it of items){
+        const q = Number(it.qty);
+        await mtAddRow({name:String(it.name||"").slice(0,80), spec:String(it.spec||"").slice(0,80), qty: it.qty == null || isNaN(q) ? null : q, unit:String(it.unit||"").slice(0,12),
+          drawingNo:String(it.drawingNo||"").slice(0,40), memo:"AI拾い出し・要確認" + (it.note ? "：" + String(it.note).slice(0,100) : "")});
+        n++;
+      }
+    } catch(e){ if (e && e.code) aiError(e); else writeError(e); if (e && (e.code === "not_granted" || e.code === "images_unavailable")) break; }
+  }
+  prog.textContent = n + " 行を拾い出しました。数量と根拠を確認し、備考の「要確認」を消してください。";
+  setTimeout(() => { prog.hidden = true; }, 7000);
+}
+function mtCsv(){
+  const t = S.tasks.get(S.mtTask), list = mtList(S.mtTask);
+  const head = ["材料名","規格","設計数量","単位","ロス%","必要数量","使用済み","単価","金額","使用予定日","仕入先","状態","発注日","納品予定日","図面番号","備考","知らせ"];
+  const rows = list.map(m => { const c = mtCalc(m); return [m.name, m.spec, m.qty ?? "", m.unit, m.loss ?? "", c.need || "", usedQty(m.id) || "", m.price ?? "", c.amount || "", m.needDate||"", m.supplier, m.status, m.orderDate||"", m.deliveryDate||"", m.drawingNo, m.memo, mtAlerts(m).map(a => a.t).join(" / ")]; });
+  saveFile("材料拾い出し・発注管理_" + ((t && (t.project || t.title)) || "案件") + ".csv", csvOf(head, rows));
+}
+
+/* ---------- 職人・協力会社の手配 ---------- */
+function weekStartYmd(d){ const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() - (x.getDay()+6)%7); return ymd(x); }
+function weekDays(){ const s = parseYmd(S.thWeek); return [...Array(7)].map((_,i) => { const d = new Date(s); d.setDate(s.getDate()+i); return ymd(d); }); }
+const CREW_KINDS = ["協力会社","一人親方","自社"];
+function renderTehai(){
+  if (!S.thWeek) S.thWeek = weekStartYmd(new Date());
+  const ro = !S.canWrite || !db, days = weekDays();
+  $("thTitle").textContent = fmtDay(days[0]) + " 〜 " + fmtDay(days[6]) + " の手配";
+  $("crewAdd").hidden = ro;
+  const fb = $("crewForm");
+  if (!S.crewEdit) fb.replaceChildren();
+  else if (!fb.firstChild || fb.dataset.id !== S.crewEdit){ fb.replaceChildren(crewForm()); fb.dataset.id = S.crewEdit; }
+  const crews = [...S.crews.values()].filter(c => c.active !== false).sort((a,b) => (a.kind||"").localeCompare(b.kind||"","ja") || (a.name||"").localeCompare(b.name||"","ja"));
+  const tasks = sortedTasks(), today = todayYmd(), grid = $("thGrid"), ae = document.activeElement;
+  if (!(ae && grid.contains(ae) && ae.tagName === "SELECT")){
+    if (!crews.length) grid.replaceChildren(h("div",{class:"empty"}, h("strong",{text:"まだ職人・協力会社が登録されていません"}),
+      ro ? "" : "「＋ 職人・協力会社を登録」で名前・職種・連絡先を登録すると、週ごとにどの現場へ入るかを割り当てられます。"));
+    else grid.replaceChildren(h("table",{class:"tbl"},
+      h("thead",null, h("tr",null, h("th",null,"職人・協力会社"), days.map(d => h("th",{style: d === today ? "color:var(--accent)" : null,text:fmtDay(d)})))),
+      h("tbody",null, crews.map(c => h("tr",null,
+        h("td",null, h("button",{class:"crew-name",type:"button",disabled:ro,onclick(){ S.crewEdit = c.id; render(); }}, c.name || "（名前なし）"),
+          h("div",{class:"ai-note",text:[c.kind, c.trade].filter(Boolean).join("・")})),
+        days.map(d => {
+          const a = S.assign.get(d+"_"+c.id), sun = parseYmd(d).getDay() === 0;
+          const sel = h("select",{disabled:ro,"aria-label":(c.name||"")+" "+fmtDay(d)+"の現場"}, h("option",{value:""},"—"),
+            tasks.map(t => h("option",{value:t.id},taskLabel(t))),
+            a && !tasks.some(t => t.id === a.taskId) ? h("option",{value:a.taskId},taskLabel(S.tasks.get(a.taskId))) : null);
+          sel.value = a ? a.taskId : "";
+          sel.addEventListener("change", async () => {
+            const id = d+"_"+c.id;
+            try {
+              if (sel.value) await withRetry(() => db.doc("assign/"+id).set({date:d, crewId:c.id, taskId:sel.value, updatedAt:new Date().toISOString(), updatedBy:S.myId}));
+              else await withRetry(() => db.doc("assign/"+id).delete());
+            } catch(e){ writeError(e); }
+          });
+          return h("td",{class:"th-cell"+(a ? " on" : "")+(sun ? " sun" : "")}, sel);
+        }))))));
+  }
+  // 案件別の人工
+  const rows = [];
+  for (const t of S.tasks.values()){
+    const counts = days.map(d => [...S.assign.values()].filter(a => a.date === d && a.taskId === t.id && S.crews.has(a.crewId)).length);
+    const need = Number(t.needCrew) || 0;
+    const inPeriod = d => (!t.start || d >= t.start) && (!t.due || d <= t.due) && (t.start || t.due) && parseYmd(d).getDay() !== 0;
+    const short = need ? days.filter((d,i) => inPeriod(d) && counts[i] < need && t.status !== "done").length : 0;
+    if (counts.some(Boolean) || short) rows.push({t, counts, need, short, total:counts.reduce((a,b) => a+b, 0), inPeriod});
+  }
+  rows.sort((a,b) => b.short - a.short || b.total - a.total);
+  $("thByTask").replaceChildren(rows.length ? h("table",{class:"tbl"},
+    h("thead",null, h("tr",null, h("th",null,"案件"), days.map(d => h("th",{class:"num",text:fmtDay(d)})), h("th",{class:"num"},"合計"), h("th",null,""))),
+    h("tbody",null, rows.map(r => h("tr",null, h("td",{text:taskLabel(r.t)}),
+      r.counts.map((n,i) => h("td",{class:"num",style: r.need && r.inPeriod(days[i]) && n < r.need ? "color:var(--danger);font-weight:700" : null,
+        text: r.need && r.inPeriod(days[i]) ? n+"/"+r.need : (n ? String(n) : "")})),
+      h("td",{class:"num",text:r.total+" 人工"}),
+      h("td",null, r.short ? h("span",{class:"flag bad",text:"人工不足 "+r.short+"日"}) : null))))) :
+    h("p",{class:"muted",style:"margin:0;font-size:13px",text:"この週の手配はまだありません。カードの詳細で「必要人工」を入れると、工期中の不足日が赤く出ます。"}));
+}
+function crewForm(){
+  const c = S.crewEdit === "new" ? {kind:"協力会社", active:true} : S.crews.get(S.crewEdit);
+  if (!c){ S.crewEdit = null; return h("div"); }
+  const f = (id, val, ph) => { const e = h("input",{id, type:"text", placeholder:ph||""}); e.value = val || ""; return e; };
+  const name = f("crName", c.name, "例：山田組、佐藤 一郎"), trade = f("crTrade", c.trade, "例：とび、伐採、重機オペ"), phone = f("crPhone", c.phone, "例：090-0000-0000"), memo = f("crMemo", c.memo, "得意な作業、注意事項など");
+  const kind = h("select",{id:"crKind"}, CREW_KINDS.map(x => h("option",{value:x},x))); kind.value = c.kind || "協力会社";
+  const active = h("input",{type:"checkbox",id:"crActive"}); active.checked = c.active !== false;
+  const close = () => { S.crewEdit = null; S.crewDel = false; $("crewForm").replaceChildren(); render(); };
+  const save = async () => {
+    if (!name.value.trim()){ name.focus(); toast("名前を入れてください"); return; }
+    const data = {name:name.value.trim(), kind:kind.value, trade:trade.value.trim(), phone:phone.value.trim(), memo:memo.value.trim(), active:active.checked, updatedAt:new Date().toISOString(), updatedBy:S.myId};
+    try {
+      if (S.crewEdit === "new"){ const ref = db.collection("crews").doc(); await withRetry(() => ref.set({...data, createdAt:data.updatedAt, createdBy:S.myId})); }
+      else await withRetry(() => db.doc("crews/"+S.crewEdit).update(data));
+      toast("保存しました"); close();
+    } catch(e){ writeError(e); }
+  };
+  return h("div",{class:"req-form"},
+    h("label",null,"名前", name), h("label",null,"区分", kind),
+    h("label",null,"職種", trade), h("label",null,"連絡先", phone),
+    h("label",{class:"full"},"メモ", memo),
+    h("label",{class:"chk full"}, active, "手配表に表示する（取引がなくなったらチェックを外す）"),
+    h("div",{class:"full",style:"display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;align-items:center"},
+      S.crewEdit !== "new" ? (S.crewDel
+        ? h("span",{style:"margin-right:auto;display:flex;gap:6px;align-items:center;font-size:12.5px"},"登録と、この人の手配をすべて削除しますか？",
+            h("button",{class:"btn danger",type:"button",async onclick(){
+              try {
+                for (const a of [...S.assign.values()].filter(a => a.crewId === S.crewEdit)) await withRetry(() => db.doc("assign/"+a.id).delete());
+                await withRetry(() => db.doc("crews/"+S.crewEdit).delete()); toast("削除しました"); close();
+              } catch(e){ writeError(e); }
+            }},"削除する"),
+            h("button",{class:"btn",type:"button",onclick(){ S.crewDel = false; $("crewForm").replaceChildren(); render(); }},"やめる"))
+        : h("button",{class:"btn ghost",type:"button",style:"margin-right:auto;color:var(--muted)",onclick(){ S.crewDel = true; $("crewForm").replaceChildren(); render(); }},"削除")) : null,
+      h("button",{class:"btn",type:"button",onclick:close},"やめる"), h("button",{class:"btn primary",type:"button",onclick:save},"保存")));
+}
+
+/* ---------- 資料の仕分け ---------- */
+const DS_VERDICTS = ["有用","不要","要確認"], DS_DESTS = ["共通","経理","経営","施工管理","監査役","なし"];
+function renderShiryo(){
+  const ro = !S.canWrite || !db;
+  $("dsAdd").hidden = ro || !S.sample; $("dsCsv").hidden = !S.downloads || !S.docsort.size;
+  const list = [...S.docsort.values()].sort((a,b) => (b.createdAt||"").localeCompare(a.createdAt||""));
+  const cnt = v => list.filter(d => d.verdict === v).length;
+  const tile = (k, v, warn) => h("div",{class:"tile"+(warn ? " warn" : "")}, h("div",{class:"k",text:k}), h("div",{class:"v",text:v}));
+  $("dsTiles").replaceChildren(tile("有用", cnt("有用")+" 件"), tile("不要", cnt("不要")+" 件"), tile("要確認", cnt("要確認")+" 件", cnt("要確認") > 0), tile("社長の確定待ち", list.filter(d => !d.confirmed).length+" 件", list.some(d => !d.confirmed)));
+  const box = $("dsList"), ae = document.activeElement;
+  if (ae && box.contains(ae) && ae.tagName === "SELECT") return;
+  if (!list.length){ box.replaceChildren(h("div",{class:"empty"}, h("strong",{text:"まだ仕分けた資料はありません"}),
+    ro ? "" : S.sample ? "「資料を選んで仕分ける」で、書類の写真・テキスト・CSVなどを選んでください。写真とテキストは中身を読み、それ以外（PDF・Excelなど）はファイル名から判断して「要確認」にします。" : "この表示ではAI機能を使えません。")); return; }
+  const mk = (d, k, opts) => { const e = h("select",{class:"grid-in",disabled:ro || d.confirmed,"aria-label":k}, opts.map(x => h("option",{value:x},x))); e.value = d[k] || opts[opts.length-1];
+    e.addEventListener("change", () => patchDoc("docsort/"+d.id, {[k]:e.value, editedBy:S.myId})); return e; };
+  box.replaceChildren(h("table",{class:"tbl"},
+    h("thead",null, h("tr",null, h("th",null,"資料名"), h("th",null,"判定"), h("th",null,"入れる先"), h("th",null,"理由"), h("th",null,"状態"), h("th",null,""))),
+    h("tbody",null, list.map(d => h("tr",null,
+      h("td",null, h("div",{text:d.name||""}), h("div",{class:"ai-note",text:(d.readMode === "name" ? "ファイル名のみで判断" : "中身を読んで判断")+" · "+fmtStamp(d.createdAt)})),
+      h("td",null, mk(d,"verdict",DS_VERDICTS)), h("td",null, mk(d,"dest",DS_DESTS)),
+      h("td",{style:"min-width:220px",text:d.reason||""}),
+      h("td",null, d.confirmed ? h("span",{class:"flag ok",text:"確定"}) : h("span",{class:"flag uncheck",text:"確定待ち"})),
+      h("td",null, h("div",{style:"display:flex;gap:6px"},
+        !ro && S.canEdit ? h("button",{class:"btn",type:"button",onclick(){ patchDoc("docsort/"+d.id, d.confirmed ? {confirmed:false} : {confirmed:true, confirmedAt:new Date().toISOString(), confirmedBy:S.myId}); }}, d.confirmed ? "確定を戻す" : "確定") : null,
+        !ro ? (S.dsConfirm === d.id
+          ? h("button",{class:"btn danger",type:"button",async onclick(){ try { await withRetry(() => db.doc("docsort/"+d.id).delete()); } catch(e){ writeError(e); } S.dsConfirm = null; }},"記録を消す")
+          : h("button",{class:"btn ghost",type:"button",style:"color:var(--muted)",onclick(){ S.dsConfirm = d.id; render(); }},"削除")) : null))
+    )))));
+}
+async function dsClassify(files){
+  const list = [...files]; if (!list.length) return;
+  const prog = $("dsProgress"); prog.hidden = false; let n = 0;
+  const rule = "渡された資料を読み、次の基準で仕分けてください。\n- 有用：今も使っている書式、単価・歩掛、過去工事の実績、協力会社の一覧、安全書類の雛形など。\n- 不要：古い版や重複、取引のなくなった相手の資料、中身がほとんど空のもの。\n- 要確認：新旧が分からないもの、個人情報が多いもの、判断に迷うもの。\n有用な資料は、入れる先（共通・経理・経営・施工管理・監査役）も決める。不要・要確認なら入れる先は「なし」でもよい。\n次のJSONだけを返す：{\"verdict\":\"有用|不要|要確認\",\"dest\":\"共通|経理|経営|施工管理|監査役|なし\",\"reason\":\"60字以内の理由\"}\n";
+  for (let i = 0; i < list.length; i++){
+    const f = list[i]; prog.textContent = "仕分け中 " + (i+1) + " / " + list.length + " 件…";
+    try {
+      let res, mode;
+      const meta = "ファイル名：" + f.name + "\nサイズ：" + Math.round(f.size/1024) + "KB\n更新日：" + (f.lastModified ? ymd(new Date(f.lastModified)) : "不明") + "\n";
+      if (/^image\//.test(f.type)){ mode = "image"; res = await S.sample.json(rule + "\n" + meta, {images:[await shrink(f)], cache:false}); }
+      else if (/^text\//.test(f.type) || /\.(txt|csv|md|tsv|json)$/i.test(f.name)){ mode = "text"; const txt = (await f.text()).slice(0, 15000); res = await S.sample.json(rule + "\n" + meta + "\n【中身】\n" + txt, {cache:false}); }
+      else { mode = "name"; res = await S.sample.json(rule + "\n中身は読めていません。ファイル名と更新日だけで判断し、確信がなければ要確認にしてください。\n" + meta, {modelTier:"quick", cache:false}); }
+      const now = new Date().toISOString(), ref = db.collection("docsort").doc();
+      await withRetry(() => ref.set({name:f.name.slice(0,200), size:f.size, type:f.type || "", readMode:mode,
+        verdict: DS_VERDICTS.includes(res && res.verdict) ? res.verdict : "要確認", dest: DS_DESTS.includes(res && res.dest) ? res.dest : "なし",
+        reason:String((res && res.reason) || "").slice(0,300), confirmed:false, createdBy:S.myId, createdAt:now, updatedAt:now}));
+      n++;
+    } catch(e){ if (e && e.code) aiError(e); else writeError(e); if (e && e.code === "not_granted") break; }
+  }
+  prog.textContent = n + " 件を仕分けました。判定を確かめて「確定」を押してください。";
+  setTimeout(() => { prog.hidden = true; }, 7000);
+}
+function dsCsv(){
+  const list = [...S.docsort.values()].sort((a,b) => (a.createdAt||"").localeCompare(b.createdAt||""));
+  saveFile("資料仕分け_" + todayYmd() + ".csv", csvOf(["資料名","判定","入れる先","理由","確定"], list.map(d => [d.name, d.verdict, d.dest, d.reason, d.confirmed ? "確定" : "確定待ち"])));
+}
+
+/* ---------- 写真帳・工事カルテ（カード詳細） ---------- */
+const KARTE_TPL = "# 工事カルテ：<工事名>\n\n- 場所：\n- 元請／施主：\n- 工期：<着工> 〜 <完工>\n- 契約金額：\n- 実際にかかった原価：\n- 工種ごとの単価・歩掛：\n- 使った重機・人工（にんく）：\n- 見積もりと実績のズレと理由：\n\n## メモ\n（追加で残したいことがあればここに書く）";
+function extraSection(t, ro){
+  const mats = mtList(t.id), alerts = mats.reduce((a,m) => a + mtAlerts(m).length, 0);
+  const photoCount = S.notesFor === t.id ? S.notes.reduce((n,x) => n + (x.photos||[]).length, 0) : 0;
+  return h("section",{class:"sect"},
+    h("h3",null,"材料・書類"),
+    h("div",{class:"meta",style:"margin-bottom:8px;font-size:13px"},
+      h("span",{text:"材料 "+mats.length+"品目"}), alerts ? h("span",{class:"flag uncheck",text:"知らせ "+alerts+"件"}) : null,
+      t.karteAt ? h("span",{text:"工事カルテ "+fmtStamp(t.karteAt)}) : null),
+    h("div",{class:"tools"},
+      h("button",{class:"btn",type:"button",onclick(){ S.npTask = t.id; S.npDate = todayYmd(); closeTask(); goTo("#nippo"); }},"日報（"+[...S.dailies.values()].filter(d => d.taskId === t.id).length+"件）"),
+      h("button",{class:"btn",type:"button",onclick(){ S.mtTask = t.id; closeTask(); location.hash = "#zairyo"; route(); }},"材料の発注管理を開く"),
+      S.downloads && photoCount ? h("button",{class:"btn",type:"button",onclick(){ exportAlbum(t, this); }},"写真帳を書き出す（"+photoCount+"枚）") : null,
+      t.karte ? h("button",{class:"btn",type:"button",onclick(){ showModal("工事カルテ："+(t.title||""), t.karte, "工事カルテ_"+(t.title||"案件")+".md"); }},"工事カルテを見る") : null,
+      !ro && S.sample ? h("button",{class:"btn ai",type:"button",onclick(){ makeKarte(t, this); }}, t.karte ? "カルテを作り直す" : "工事カルテを作る") : null));
+}
+function blobToDataUrl(b){ return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(b); }); }
+function escHtml(x){ return String(x ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+async function exportAlbum(t, btn){
+  btn.disabled = true; const label = btn.textContent; btn.textContent = "写真帳を作成中…";
+  try {
+    const snap = await db.doc("tasks/"+t.id).collection("notes").orderBy("createdAt","asc").get();
+    const items = [];
+    for (const d of snap.docs){ const n = d.data(); for (const id of (n.photos||[])) items.push({id, at:n.createdAt, text:n.text||"", author:n.author}); }
+    if (!items.length){ toast("写真がありません"); return; }
+    for (let i = 0; i < items.length; i++){
+      btn.textContent = "写真を読み込み中 " + (i+1) + " / " + items.length;
+      try { const r = await fetch(blobUrl(items[i].id)); items[i].src = r.ok ? await blobToDataUrl(await r.blob()) : ""; } catch(e){ items[i].src = ""; }
+    }
+    const pages = [];
+    for (let i = 0; i < items.length; i += 2) pages.push(items.slice(i, i+2));
+    const html = "<!doctype html><html lang=\"ja\"><meta charset=\"utf-8\"><title>工事写真帳 " + escHtml(taskLabel(t)) + "</title><style>" +
+      "@page{size:A4;margin:12mm}body{font-family:'Hiragino Sans','Yu Gothic','Noto Sans JP',sans-serif;color:#111;margin:0}" +
+      ".pg{page-break-after:always;padding:0}.cover{display:flex;flex-direction:column;justify-content:center;align-items:center;height:260mm;text-align:center}" +
+      ".cover h1{font-size:28pt;margin:0 0 10mm}.cover p{font-size:13pt;margin:2mm}.ph{display:grid;grid-template-columns:118mm 1fr;border:1px solid #333;margin-bottom:8mm;height:125mm}" +
+      ".ph .im{border-right:1px solid #333;display:flex;align-items:center;justify-content:center;background:#fafafa}.ph img{max-width:100%;max-height:123mm;object-fit:contain}" +
+      ".ph table{border-collapse:collapse;width:100%;font-size:10pt}.ph th,.ph td{border-bottom:1px solid #999;padding:2mm;text-align:left;vertical-align:top}.ph th{width:16mm;background:#f2f2f2;white-space:nowrap}" +
+      "</style><body><div class=\"pg cover\"><h1>工事写真帳</h1><p>工事名：" + escHtml(t.project || "") + "</p><p>" + escHtml(t.title || "") + "</p><p>工期：" + escHtml(t.start || "未定") + " 〜 " + escHtml(t.due || "未定") + "</p><p>写真 " + items.length + " 枚 · 作成 " + todayYmd() + "</p></div>" +
+      pages.map((pg, pi) => "<div class=\"pg\">" + pg.map((it, k) => "<div class=\"ph\"><div class=\"im\">" + (it.src ? "<img src=\"" + it.src + "\" alt=\"\">" : "（画像を読み込めませんでした）") + "</div><table>" +
+        "<tr><th>No.</th><td>" + (pi*2 + k + 1) + "</td></tr><tr><th>工事名</th><td>" + escHtml(t.project || t.title || "") + "</td></tr><tr><th>撮影日</th><td>" + escHtml(fmtStamp(it.at)) + "</td></tr>" +
+        "<tr><th>内容</th><td>" + escHtml(it.text).replace(/\n/g,"<br>") + "</td></tr><tr><th>記録者</th><td>" + escHtml(nameOf(it.author)) + "</td></tr></table></div>").join("") + "</div>").join("") +
+      "</body></html>";
+    await saveFile("工事写真帳_" + (t.project || t.title || "案件") + ".html", html);
+  } catch(e){ writeError(e); }
+  finally { btn.disabled = false; btn.textContent = label; }
+}
+async function makeKarte(t, btn){
+  btn.disabled = true;
+  try {
+    const notes = (await db.doc("tasks/"+t.id).collection("notes").orderBy("createdAt","asc").get()).docs.map(d => d.data()).filter(n => n.text).slice(-40);
+    const rc = [...S.receipts.values()].filter(r => r.taskId === t.id), byCat = {};
+    for (const r of rc) byCat[r.category||"未分類"] = (byCat[r.category||"未分類"]||0) + (Number(r.total)||0);
+    const mats = mtList(t.id).filter(m => m.status !== "不要");
+    const crewDays = {}; for (const a of S.assign.values()) if (a.taskId === t.id && S.crews.has(a.crewId)){ const c = S.crews.get(a.crewId); const k = (c.name||"")+"（"+(c.trade||c.kind||"")+"）"; crewDays[k] = (crewDays[k]||0) + 1; }
+    const total = rc.reduce((a,r) => a + (Number(r.total)||0), 0);
+    const rec = "【案件】" + taskLabel(t) + "\n状態：" + (SMAP[t.status]||SMAP.todo).label + "\n工期：" + (t.start||"未定") + " 〜 " + (t.due||"未定") + "\n予算（実行予算）：" + (t.budget ? yen(t.budget) : "未設定") + "\nメモ：" + (t.desc||"") +
+      "\n\n【経費の実績】合計 " + yen(total) + "（" + rc.length + "件）\n" + Object.entries(byCat).map(([c,v]) => "- " + c + "：" + yen(v)).join("\n") +
+      "\n\n【材料】\n" + (mats.length ? mats.map(m => { const c = mtCalc(m); return "- " + (m.name||"") + " " + (m.spec||"") + "：" + c.need + (m.unit||"") + "、単価 " + (m.price ? yen(m.price) : "未記入") + "、金額 " + (c.amount ? yen(c.amount) : "未記入") + "、" + m.status; }).join("\n") : "記録なし") +
+      "\n\n【人工（手配表の延べ日数）】\n" + (Object.keys(crewDays).length ? Object.entries(crewDays).map(([k,v]) => "- " + k + "：" + v + "人工").join("\n") : "記録なし") +
+      "\n\n【日報（古い順）】\n" + (dailiesOf(t.id).length ? dailiesOf(t.id).slice().reverse().map(d => "- " + d.date + "：人工 " + (d.totalLabor||0) + "人（自社 " + sumCount(d.self) + "・協力 " + sumCount(d.partners) + "）、" + (d.weather||"") + "、作業：" + String(d.work||"").replace(/\n/g," ").slice(0,120) + (d.materials && d.materials.length ? "、材料：" + d.materials.map(x => (x.name||"") + " " + (x.qty ?? "") + (x.unit||"")).join("・") : "") + (d.machines && d.machines.length ? "、重機：" + d.machines.map(x => (x.name||"") + (x.hours ? " " + x.hours + "h" : "")).join("・") : "")).join("\n") : "記録なし") +
+      "\n\n【現場の記録（古い順）】\n" + (notes.length ? notes.map(n => "- " + fmtStamp(n.createdAt) + "：" + String(n.text).replace(/\n/g," ").slice(0,200)).join("\n") : "記録なし");
+    const input = "完工した工事について、次の記録をもとに「工事カルテ」をマークダウンで作成してください。\n- 雛形の各項目を、分かっている情報で埋める。不明な項目は「（未確認）」と書き、空欄にしない。\n- 予算（見積もり）と実績がずれた工種は、金額差と理由を具体的に書く。理由が記録から分からなければ「理由は未確認」と書く。\n- 単価・歩掛は、材料と人工の記録から分かる範囲で計算して書く。\n- マークダウン本文だけを出力する。\n\n【雛形】\n" + (S.prompts.karteTpl || KARTE_TPL) + "\n\n" + rec;
+    const ta = showModal("工事カルテ（作成中…）", "AIが記録を読んでいます…", null);
+    const {text} = await S.sample(input, {cache:false, onText:({text}) => { ta.value = text; }});
+    await patchTask(t.id, {karte:text, karteAt:new Date().toISOString()});
+    showModal("工事カルテ：" + (t.title||""), text, "工事カルテ_" + (t.title||"案件") + ".md");
+    toast("工事カルテを作成してカードに保存しました。Obsidian にはコピーして貼り付けてください");
+  } catch(e){ $("modal").hidden = true; if (e && e.code) aiError(e); else writeError(e); }
+  finally { btn.disabled = false; }
+}
+
+/* ---------- 定型文 ---------- */
+const REQ_TEMPLATES = [
+  {label:"出来高報告 → 請求のお願い（施工管理→経理）", from:"sekou", to:"keiri", money:true, body:"【出来高報告】{案件}の{月}の出来高は（　）%です。請求書の作成をお願いします。根拠：（出来高の内訳・写真など）"},
+  {label:"支払予定の連絡（施工管理→経理）", from:"sekou", to:"keiri", money:true, body:"【支払予定】{案件}で（材料・外注先）に（　）円の支払いが発生します。支払予定日は（　）です。支払予定に入れてください。"},
+  {label:"発注の判断のお願い（施工管理→経営）", from:"sekou", to:"keiei", money:true, body:"【発注判断】{案件}：（材料名・数量）、見込み金額（　）円。発注してよいか判断をお願いします。使用予定日は（　）です。"},
+  {label:"工程の遅れ報告（施工管理→経営）", from:"sekou", to:"keiei", money:false, body:"【工程の遅れ】{案件}：（理由）により、工程が（　）日遅れる見込みです。対応方針の判断をお願いします。"},
+  {label:"追加工事の発生（施工管理→経営）", from:"sekou", to:"keiei", money:true, body:"【追加工事】{案件}で（内容）の追加工事が発生しました。概算（　）円、元請・施主との協議が必要です。対応方針の判断をお願いします。"},
+  {label:"安全上の問題・ヒヤリハット（施工管理→経営）", from:"sekou", to:"keiei", money:false, body:"【安全】{案件}で（いつ・どこで・何が）ありました。けが人（なし／あり）。再発防止策は（　）です。確認をお願いします。"},
+  {label:"資金繰りの警告（経理→経営）", from:"keiri", to:"keiei", money:true, body:"【資金繰り】（　）月に約（　）円の資金不足が見込まれます。主な原因は（入金の遅れ・大きな支払いなど）です。対応の判断をお願いします。"},
+  {label:"設備投資の判断のお願い（経理→経営）", from:"keiri", to:"keiei", money:true, body:"【設備投資】（重機・車両名）の（購入／リース）について試算しました。毎月の返済（　）円、期間（　）か月。運転資金への影響は（　）です。判断をお願いします。"},
+  {label:"数量・手間の確認（経営→施工管理）", from:"keiei", to:"sekou", money:false, body:"【数量確認】{案件}の見積もりで、（工種）の数量と手間の確認をお願いします。図面は（　）です。（　）までに回答をお願いします。"},
+  {label:"方針の連絡（経営→全体）", from:"keiei", to:"sekou", money:false, body:"【方針】（決まったこと）。理由は（　）です。（いつから）この方針で進めてください。"},
+];
+
+/* ---------- カードの進み具合 ---------- */
+function cardChips(t){
+  const out = [], budget = Number(t.budget) || 0;
+  if (budget){ const pct = Math.round(taskSpend(t) / budget * 100); out.push(h("span",{class:"chip"+(pct > 100 ? " bad" : pct >= 80 ? " warn" : ""),title:"予算の消化率",text:(pct > 100 ? "予算超過 " : "予算 ")+pct+"%"})); }
+  const mats = mtList(t.id).filter(m => m.status === "未発注");
+  if (mats.length){ const urgent = mats.some(m => mtAlerts(m).some(a => a.t.startsWith("要発注"))); out.push(h("span",{class:"chip"+(urgent ? " warn" : ""),title:"未発注の材料",text:"未発注 "+mats.length})); }
+  if ([...S.materials.values()].some(m => m.taskId === t.id && mtAlerts(m).some(a => a.t.startsWith("納品")))) out.push(h("span",{class:"chip bad",text:"納品の問題"}));
+  const reqs = [...S.reqs.values()].filter(r => r.taskId === t.id && r.status !== "done");
+  if (reqs.length) out.push(h("span",{class:"chip"+(reqs.some(r => r.due && r.due < todayYmd()) ? " bad" : ""),title:"未完了の依頼",text:"依頼 "+reqs.length}));
+  const today = todayYmd(), crew = [...S.assign.values()].filter(a => a.taskId === t.id && a.date === today && S.crews.has(a.crewId)).length;
+  if (crew) out.push(h("span",{class:"chip",title:"今日の手配",text:"今日 "+crew+"人"}));
+  return out.length ? h("div",{class:"chips"}, out) : null;
+}
+
+/* ---------- 今日やること ---------- */
+function goTo(hash, prep){ if (prep) prep(); if (location.hash === hash) route(); else location.hash = hash; }
+function renderToday(){
+  const today = todayYmd(), tmr = ymd(new Date(Date.now() + 864e5));
+  const isSoon = d => d && d <= tmr;
+  const myTasks = [...S.tasks.values()].filter(t => S.myId && t.assignee === S.myId && t.status !== "done")
+    .sort((a,b) => (a.due||"9999").localeCompare(b.due||"9999"));
+  const myReqs = [...S.reqs.values()].filter(r => r.status !== "done" && ((S.myDept && r.to === S.myDept && r.status !== "pending") || (S.canEdit && r.status === "pending")))
+    .sort((a,b) => (b.status === "pending") - (a.status === "pending") || (a.due||"9999").localeCompare(b.due||"9999"));
+  const asg = [...S.assign.values()].filter(a => a.date === today && S.crews.has(a.crewId));
+  const mtIssues = [...S.materials.values()].map(m => ({m, al:mtAlerts(m).filter(a => a.t.startsWith("要発注") || a.t.startsWith("納品") || a.t.startsWith("要判断"))})).filter(x => x.al.length);
+  const unchecked = [...S.receipts.values()].filter(r => r.status !== "checked");
+  const soonTasks = [...S.tasks.values()].filter(t => t.status !== "done" && isSoon(t.due));
+  const soonReqs = [...S.reqs.values()].filter(r => r.status !== "done" && isSoon(r.due));
+  const name = S.myId ? nameOf(S.myId) : "";
+  const total = myTasks.length + myReqs.length;
+  $("tdHead").replaceChildren(h("h2",{text:fmtDay(today)+" の今日やること"}),
+    h("span",{class:"muted",style:"font-size:13px",text:(name && name !== "自分" ? name+"さん · " : "")+"担当 "+myTasks.length+"件 · 依頼 "+myReqs.length+"件 · 期限が近いもの "+(soonTasks.length + soonReqs.length)+"件"}));
+  const li = (main, sub, onclick, flag) => h("li",null, h("button",{type:"button",onclick}, flag || null, h("span",{class:"t",text:main}), sub ? h("span",{class:"sub",text:sub}) : null));
+  const panel = (title, n, body, more) => h("div",{class:"panel"}, h("h3",null,title, h("span",{class:"n",text:n})), body, more || null);
+  const dueChip = d => { if (!d) return null; const x = dueInfo({due:d, status:"open"}); return h("span",{class:"due "+x.cls,text:x.txt}); };
+  const report = [...S.reports.keys()].sort().reverse()[0];
+  const kids = [];
+  if (report) kids.push(panel("今朝の報告", fmtDay(report), h("p",{class:"td-hint",style:"color:var(--ink);font-size:13.5px",text:(S.reports.get(report).summary || "")}),
+    h("button",{class:"link td-more",type:"button",onclick(){ goTo("#renraku", () => { S.reportSel = report; S.reportOpen = true; }); }},"全文を見る")));
+  kids.push(panel("期限が近いもの（今日・明日）", (soonTasks.length + soonReqs.length)+"件",
+    soonTasks.length + soonReqs.length ? h("ul",{class:"td-list"},
+      soonTasks.map(t => li(taskLabel(t), null, () => openTask(t.id), dueChip(t.due))),
+      soonReqs.map(r => li(deptLabel(r.from)+" → "+(r.to ? deptLabel(r.to) : "未振り分け")+"："+(r.body||""), null, () => goTo("#renraku", () => { S.rkTab = r.to || "none"; }), dueChip(r.due)))) :
+      h("p",{class:"td-hint",text:"今日・明日が期限のカードや依頼はありません。"})));
+  kids.push(panel("自分の担当", myTasks.length+"件",
+    !S.myId ? h("p",{class:"td-hint",text:"サインインすると、自分が担当のカードがここに並びます。"}) :
+    myTasks.length ? h("ul",{class:"td-list"}, myTasks.slice(0,8).map(t => li(taskLabel(t), (SMAP[t.status]||SMAP.todo).label, () => openTask(t.id), dueChip(t.due)))) :
+      h("p",{class:"td-hint",text: S.limited ? "あなたが担当の現場はありません。会社の担当者があなたを担当にすると、ここに出ます。" : "担当のカードはありません。カードの詳細で「自分にする」を押すとここに出ます。"}),
+    myTasks.length > 8 ? h("button",{class:"link td-more",type:"button",onclick(){ goTo("#board", () => { S.fMine = true; saveFilters(); }); }},"すべて見る（"+myTasks.length+"件）") : null));
+  if (!S.limited) kids.push(panel(S.myDept ? deptLabel(S.myDept)+"宛ての依頼"+(S.canEdit ? "・承認待ち" : "") : "自分宛ての依頼", myReqs.length+"件",
+    !S.myDept && !S.canEdit ? h("p",{class:"td-hint",text:"「連絡」タブの右上で自分の部署を選ぶと、自部署宛ての依頼がここに並びます。"}) :
+    myReqs.length ? h("ul",{class:"td-list"}, myReqs.slice(0,8).map(r => li((r.status === "pending" ? "【承認待ち】" : "")+(r.body||""), deptLabel(r.from)+"から",
+      () => goTo("#renraku", () => { S.rkTab = r.status === "pending" ? "pending" : (r.to || "all"); }), r.due ? dueChip(r.due) : null))) :
+      h("p",{class:"td-hint",text:"対応が必要な依頼はありません。"})));
+  kids.push(panel("今日の手配", asg.length+"人",
+    asg.length ? h("ul",{class:"td-list"}, asg.map(a => { const c = S.crews.get(a.crewId), t = S.tasks.get(a.taskId);
+      return li((c.name||"")+" → "+taskLabel(t), c.trade || c.kind || "", () => t ? openTask(t.id) : goTo("#tehai")); })) :
+      h("p",{class:"td-hint",text:"今日の手配は登録されていません。"}),
+    S.limited ? null : h("button",{class:"link td-more",type:"button",onclick(){ goTo("#tehai"); }},"手配表を開く")));
+  const siteToday = [...new Set(asg.map(a => a.taskId))].filter(id => S.tasks.has(id));
+  const npMissing = siteToday.filter(id => !S.dailies.has(today + "_" + id));
+  kids.push(panel("今日の日報", npMissing.length ? "未記入 " + npMissing.length + "件" : "",
+    siteToday.length ? h("ul",{class:"td-list"}, siteToday.map(id => li(taskLabel(S.tasks.get(id)), S.dailies.has(today + "_" + id) ? "記入済み" : null,
+      () => goTo("#nippo", () => { S.npTask = id; S.npDate = today; }), S.dailies.has(today + "_" + id) ? null : h("span",{class:"flag uncheck",text:"未記入"})))) :
+      h("p",{class:"td-hint",text:"今日の手配がある現場がここに並び、日報の記入状況がわかります。"}),
+    h("button",{class:"link td-more",type:"button",onclick(){ goTo("#nippo", () => { S.npDate = today; }); }},"日報を開く")));
+  if (!S.limited) kids.push(panel("材料の知らせ", mtIssues.length+"件",
+    mtIssues.length ? h("ul",{class:"td-list"}, mtIssues.slice(0,8).map(({m, al}) => li((m.name||"（材料名なし）")+" "+(m.spec||""), taskLabel(S.tasks.get(m.taskId)),
+      () => goTo("#zairyo", () => { S.mtTask = m.taskId; }), h("span",{class:"flag "+al[0].c,text:al[0].t})))) :
+      h("p",{class:"td-hint",text:"要発注・納品遅れ・判断待ちの材料はありません。"})));
+  if (!S.limited) kids.push(panel("未確認の伝票", unchecked.length+"件",
+    h("p",{class:"td-hint",text: unchecked.length ? "合計 "+yen(unchecked.reduce((a,r) => a + (Number(r.total)||0), 0))+"。現場で撮ったレシートは、経理が中身を確かめて「確認済み」にします。" : "確認待ちの伝票はありません。"}),
+    unchecked.length ? h("button",{class:"link td-more",type:"button",onclick(){ goTo("#keihi", () => { const d = unchecked.map(r => rcMonth(r)).filter(Boolean).sort()[0]; if (d) S.khMonth = d; }); }},"経費を開く") : null));
+  $("tdGrid").replaceChildren(...kids);
+}
+
+/* ---------- 現場モード ---------- */
+function renderGenba(){
+  const sel = $("gbTask"), tasks = sortedTasks(S.gbTask), ro = !S.canWrite || !db;
+  if (!S.gbTask || !S.tasks.has(S.gbTask)) S.gbTask = (tasks.find(t => t.assignee === S.myId) || tasks[0] || {}).id || "";
+  if (sel !== document.activeElement){
+    sel.replaceChildren(...(tasks.length ? tasks.map(t => h("option",{value:t.id},taskLabel(t))) : [h("option",{value:""},"案件がありません")]));
+    sel.value = S.gbTask;
+  }
+  $("gbPhoto").disabled = ro || !S.gbTask || !assets || S.gbBusy;
+  $("gbReceipt").disabled = ro || !assets || S.gbBusy;
+  $("gbTask").hidden = !tasks.length;
+  const nb = $("gbNew"), why = !db ? "共有データに接続できません。claude.ai にサインインして開き直してください。"
+    : ro ? "閲覧のみの権限のため記録できません。オーナーに「Contributor」以上の権限をもらってください。"
+    : !assets ? "この表示では写真を保存できません。オーナーに「Contributor」以上の権限をもらうか、claude.ai で開き直してください。" : "";
+  if (S.limited) nb.replaceChildren(tasks.length ? "" : h("div",{class:"gb-panel"}, h("p",{style:"margin:0;font-size:14px",text:"まだ現場が登録されていません。会社の担当者が現場を登録すると、ここで選べるようになります。"})));
+  else if (!tasks.length && !ro && db){
+    if (!nb.firstChild){
+      const inp = h("input",{type:"text",id:"gbNewName",placeholder:"例：〇〇公園 伐採工事",enterkeyhint:"done",style:"font-size:16px;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);width:100%"});
+      const add = async () => {
+        const name = inp.value.trim(); if (!name){ inp.focus(); return; }
+        const now = new Date().toISOString(), ref = tasksCol().doc();
+        try {
+          await withRetry(() => ref.set({title:name, project:name, status:"doing", order:Date.now(), assignee:S.myId, start:todayYmd(), due:null, desc:"", cover:null,
+            createdAt:now, createdBy:S.myId, updatedAt:now, updatedBy:S.myId}));
+          S.gbTask = ref.id; try { localStorage.setItem("anken-gbtask", ref.id); } catch(_) {}
+          nb.replaceChildren(); $("gbStatus").textContent = "「" + name + "」を登録しました。写真で記録できます。";
+        } catch(e){ writeError(e); }
+      };
+      inp.addEventListener("keydown", e => { if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229){ e.preventDefault(); add(); } });
+      nb.replaceChildren(h("div",{class:"gb-panel"},
+        h("p",{style:"margin:0;font-size:14px",text:"まだ現場が登録されていません。現場名を入れて登録すると、写真で記録できるようになります。"}),
+        inp, h("button",{class:"btn primary big",type:"button",onclick:add},"この現場を登録する")));
+    }
+  } else if (tasks.length && !ro && db){
+    if (S.gbAdding){
+      if (!nb.querySelector("#gbNewName2")){
+        const inp = h("input",{type:"text",id:"gbNewName2",placeholder:"新しい現場名",enterkeyhint:"done",style:"font-size:16px;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--ink);width:100%"});
+        const add = async () => {
+          const name = inp.value.trim(); if (!name){ inp.focus(); return; }
+          const now = new Date().toISOString(), ref = tasksCol().doc();
+          try {
+            await withRetry(() => ref.set({title:name, project:name, status:"doing", order:Date.now(), assignee:S.myId, start:todayYmd(), due:null, desc:"", cover:null, createdAt:now, createdBy:S.myId, updatedAt:now, updatedBy:S.myId}));
+            S.gbTask = ref.id; S.gbAdding = false; try { localStorage.setItem("anken-gbtask", ref.id); } catch(_) {}
+            nb.replaceChildren(); $("gbStatus").textContent = "「" + name + "」を登録しました。"; render();
+          } catch(e){ writeError(e); }
+        };
+        inp.addEventListener("keydown", e => { if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229){ e.preventDefault(); add(); } });
+        nb.replaceChildren(h("div",{class:"gb-panel"}, inp,
+          h("div",{style:"display:flex;gap:8px"}, h("button",{class:"btn primary big",type:"button",style:"flex:1",onclick:add},"登録する"),
+            h("button",{class:"btn big",type:"button",onclick(){ S.gbAdding = false; nb.replaceChildren(); render(); }},"やめる"))));
+        setTimeout(() => inp.focus(), 0);
+      }
+    } else nb.replaceChildren(h("div",{style:"display:flex;gap:16px;flex-wrap:wrap;font-size:14px"},
+      h("button",{class:"link",type:"button",style:"font-size:14px",onclick(){ S.gbAdding = true; nb.replaceChildren(); render(); }},"＋ 別の現場を追加"),
+      S.gbTask ? h("button",{class:"link",type:"button",style:"font-size:14px",onclick(){ openTask(S.gbTask); }},"この現場の名前・工期を直す／削除する") : null));
+  } else nb.replaceChildren();
+  if (why && !S.gbBusy && !$("gbStatus").textContent) $("gbStatus").textContent = why;
+  const panel = $("gbPanel");
+  if (S.gbMode === "photo" && S.gbFiles.length){
+    if (panel.dataset.mode !== "photo"){
+      const ta = h("textarea",{id:"gbText",placeholder:"ひとこと（任意）例：No.5〜8 伐採完了。根株は明日処理"});
+      panel.replaceChildren(h("div",{class:"gb-panel"},
+        h("div",{class:"thumbs"}, S.gbFiles.map(f => h("div",{class:"th"}, h("img",{src:f.url,alt:"撮った写真"})))), ta,
+        h("button",{class:"btn primary big",type:"button",onclick(){ genbaPost(ta.value.trim()); }},"この現場に記録する"),
+        h("button",{class:"btn big",type:"button",onclick(){ gbReset(); render(); }},"やめる")));
+      panel.dataset.mode = "photo";
+    }
+  } else if (S.gbMode === "today"){
+    const today = todayYmd(), asg = [...S.assign.values()].filter(a => a.date === today && S.crews.has(a.crewId));
+    const tasksToday = [...S.tasks.values()].filter(t => t.status !== "done" && (t.start||t.due) && (!t.start || t.start <= today) && (!t.due || t.due >= today));
+    panel.replaceChildren(h("div",{class:"gb-panel"},
+      h("h3",{style:"margin:0;font-family:var(--f-head)",text:fmtDay(today)+" の手配"}),
+      asg.length ? h("ul",{class:"td-list"}, asg.map(a => { const c = S.crews.get(a.crewId); return h("li",{style:"padding:6px;font-size:15px",text:(c.name||"")+"（"+(c.trade||c.kind||"")+"） → "+taskLabel(S.tasks.get(a.taskId))}); })) : h("p",{class:"td-hint",text:"今日の手配は登録されていません。"}),
+      h("h3",{style:"margin:6px 0 0;font-family:var(--f-head)",text:"今日 工期中の現場"}),
+      tasksToday.length ? h("ul",{class:"td-list"}, tasksToday.map(t => h("li",{style:"padding:6px;font-size:15px",text:taskLabel(t)}))) : h("p",{class:"td-hint",text:"工期中の現場はありません。"}),
+      h("button",{class:"btn big",type:"button",onclick(){ S.gbMode = null; render(); }},"閉じる")));
+    panel.dataset.mode = "today";
+  } else { panel.replaceChildren(); panel.dataset.mode = ""; }
+}
+function gbReset(){ S.gbFiles.forEach(f => URL.revokeObjectURL(f.url)); S.gbFiles = []; S.gbMode = null; $("gbPanel").dataset.mode = ""; }
+async function genbaPost(text){
+  if (S.gbBusy) return; S.gbBusy = true; const st = $("gbStatus"); render();
+  try {
+    const photos = [];
+    for (let i = 0; i < S.gbFiles.length; i++){
+      st.textContent = "写真を送信中 " + (i+1) + " / " + S.gbFiles.length;
+      const blob = await shrink(S.gbFiles[i].file);
+      photos.push((await withRetry(() => assets.upload(blob, blob.type ? undefined : {type:"image/jpeg"}))).id);
+    }
+    const now = new Date().toISOString();
+    await withRetry(() => db.doc("tasks/"+S.gbTask).collection("notes").doc().set({text, photos, author:S.myId, createdAt:now}));
+    await patchTask(S.gbTask, {lastNoteAt:now, ...(photos.length ? {cover:photos[0]} : {})});
+    st.textContent = "記録しました（写真 " + photos.length + " 枚）";
+    gbReset();
+  } catch(e){ st.textContent = "送信できませんでした。電波の良い場所でもう一度お試しください。"; console.warn(e); }
+  finally { S.gbBusy = false; render(); }
+}
+async function genbaReceipt(files){
+  const list = [...files]; if (!list.length) return;
+  S.gbBusy = true; render(); const st = $("gbStatus");
+  try {
+    if (S.sample){ S.khProj = S.gbTask; await scanReceipts(list, st); }
+    else {
+      let n = 0; const t = S.tasks.get(S.gbTask);
+      for (let i = 0; i < list.length; i++){
+        st.textContent = "レシートを送信中 " + (i+1) + " / " + list.length;
+        const blob = await shrink(list[i]);
+        const photo = (await withRetry(() => assets.upload(blob, blob.type ? undefined : {type:"image/jpeg"}))).id;
+        const now = new Date().toISOString(), ref = db.collection("receipts").doc();
+        await withRetry(() => ref.set({kind:"レシート", date:todayYmd(), vendor:"", items:"", total:0, tax10:null, tax8:null, invoiceNo:"", category:"雑費", payment:"不明",
+          taskId: t ? t.id : null, project: t ? (t.project||"") : "", memo:"現場で撮影（未入力）", photo, status:"unchecked", createdBy:S.myId, createdAt:now, updatedAt:now}));
+        n++;
+      }
+      st.textContent = n + " 枚を送りました。中身は経理が入力・確認します。";
+    }
+  } catch(e){ st.textContent = "送信できませんでした。電波の良い場所でもう一度お試しください。"; console.warn(e); }
+  finally { S.gbBusy = false; render(); }
+}
+
+/* ---------- 日報 ---------- */
+const WEATHERS = ["晴","曇","雨","雪","晴のち曇","曇のち雨","雨のち晴"];
+function sumCount(rows){ return (rows||[]).reduce((a,r) => a + (Number(r.count)||0), 0); }
+function dailiesOf(taskId){ return [...S.dailies.values()].filter(d => d.taskId === taskId).sort((a,b) => (b.date||"").localeCompare(a.date||"")); }
+function usedQty(mid){ let v = 0; for (const d of S.dailies.values()) for (const x of (d.materials||[])) if (x.materialId === mid) v += Number(x.qty)||0; return Math.round(v*100)/100; }
+function draftFor(date, taskId){
+  const ex = S.dailies.get(date + "_" + taskId);
+  if (ex) return JSON.parse(JSON.stringify({weather:"", temp:"", startTime:"", endTime:"", work:"", self:[], partners:[], materials:[], machines:[], safety:"", tomorrow:"", notes:"", ...ex}));
+  const asg = [...S.assign.values()].filter(a => a.date === date && a.taskId === taskId && S.crews.has(a.crewId)).map(a => S.crews.get(a.crewId));
+  const prev = dailiesOf(taskId).find(d => d.date < date);
+  return {weather:"", temp:"", startTime: prev ? prev.startTime || "08:00" : "08:00", endTime: prev ? prev.endTime || "17:00" : "17:00", work:"",
+    self: asg.filter(c => c.kind === "自社").map(c => ({name:c.name, count:1, note:c.trade||""})),
+    partners: asg.filter(c => c.kind !== "自社").map(c => ({company:c.name, trade:c.trade||"", count:1, work:""})),
+    materials:[], machines: prev ? (prev.machines||[]).map(x => ({name:x.name, hours:null})) : [], safety:"", tomorrow:"", notes:"", _prefilled: asg.length > 0};
+}
+function npDirty(){ S.drDirty = true; const st = $("npSaveState"); if (st){ st.textContent = "未保存の変更があります"; st.className = "state dirty"; } }
+function npTotal(){ const e = $("npTotal"); if (e && S.dr) e.textContent = "人工合計 " + (sumCount(S.dr.self) + sumCount(S.dr.partners)) + " 人"; }
+function rowsEd(key, cols, ro, onAny){
+  const wrap = h("div",{class:"tbl-wrap"});
+  const draw = () => {
+    const rows = S.dr[key];
+    wrap.replaceChildren(
+      rows.length ? h("table",{class:"tbl np-rows"},
+        h("thead",null, h("tr",null, cols.map(c => h("th",{class:c.type === "number" ? "num" : null,text:c.label})), h("th",null,""))),
+        h("tbody",null, rows.map((r,i) => h("tr",null, cols.map(c => {
+          const e = h("input",{class:"grid-in",type:c.type||"text",readonly:ro,list:c.list||null,inputmode:c.type === "number" ? "decimal" : null,style:"min-width:"+(c.w||80)+"px"+(c.type === "number" ? ";text-align:right" : ""),"aria-label":c.label});
+          e.value = r[c.k] ?? "";
+          e.addEventListener("input", () => { r[c.k] = c.type === "number" ? (e.value === "" ? null : Number(e.value)) : e.value; if (c.onInput) c.onInput(r, e); npDirty(); if (onAny) onAny(); });
+          return h("td",null,e);
+        }), h("td",null, ro ? null : h("button",{class:"btn ghost",type:"button","aria-label":"この行を消す",style:"color:var(--muted);padding:4px 8px",onclick(){ rows.splice(i,1); npDirty(); draw(); if (onAny) onAny(); }},"✕")))))) :
+        h("p",{class:"td-hint",text:"まだ行がありません。"}),
+      ro ? null : h("button",{class:"link",type:"button",style:"margin-top:6px",onclick(){ rows.push({}); npDirty(); draw(); const ins = wrap.querySelectorAll("tbody tr:last-child input"); if (ins[0]) ins[0].focus(); }},"＋ 行を追加"));
+  };
+  draw(); return wrap;
+}
+function renderNippo(){
+  if (!S.npDate) S.npDate = todayYmd();
+  const ro = !S.canWrite || !db, tasks = sortedTasks(S.npTask);
+  if (!S.npTask || !S.tasks.has(S.npTask)) S.npTask = (S.gbTask && S.tasks.has(S.gbTask) ? S.gbTask : (tasks.find(t => t.assignee === S.myId) || tasks[0] || {}).id) || "";
+  $("npTitle").textContent = fmtDay(S.npDate) + " の日報";
+  const sel = $("npTask");
+  if (sel !== document.activeElement){ sel.replaceChildren(...(tasks.length ? tasks.map(t => h("option",{value:t.id},taskLabel(t))) : [h("option",{value:""},"現場がありません")])); sel.value = S.npTask; }
+  if ($("npDate") !== document.activeElement) $("npDate").value = S.npDate;
+  $("npCsv").hidden = !S.downloads || !S.npTask || !dailiesOf(S.npTask).length;
+  const box = $("npForm"), key = S.npDate + "_" + S.npTask;
+  if (!S.npTask){ box.replaceChildren(h("div",{class:"empty"}, h("strong",{text:"現場がありません"}), "「現場」タブかボードで現場（案件カード）を登録すると、日報を書けます。")); S.drKey = ""; }
+  else {
+    const doc = S.dailies.get(key), from = doc ? doc.updatedAt || "" : "";
+    if (S.drKey !== key || (!S.drDirty && from !== S.drFrom)){
+      S.dr = draftFor(S.npDate, S.npTask); S.drKey = key; S.drDirty = false; S.drFrom = from; S.npDel = false;
+      box.replaceChildren(nippoForm(ro, !!doc));
+    }
+  }
+  const list = S.npTask ? dailiesOf(S.npTask) : [];
+  $("npListTitle").textContent = "この現場の日報 · " + list.length + "件" + (list.length ? "（延べ人工 " + list.reduce((a,d) => a + (Number(d.totalLabor)||0), 0) + " 人）" : "");
+  $("npList").replaceChildren(list.length ? h("table",{class:"tbl"},
+    h("thead",null, h("tr",null, h("th",null,"日付"), h("th",null,"天候"), h("th",{class:"num"},"人工"), h("th",null,"協力業者"), h("th",null,"作業内容"), h("th",null,"記入"))),
+    h("tbody",null, list.map(d => h("tr",{class:"clickable",tabindex:"0",style: d.date === S.npDate ? "background:var(--accent-soft)" : null,onclick(){ if (S.drDirty && S.drKey !== d.date + "_" + d.taskId){ toast("未保存の変更があります。保存するか、変更を取り消してから移動してください"); return; } S.npDate = d.date; render(); window.scrollTo({top:0, behavior:"smooth"}); }},
+      h("td",{class:"num",text:fmtDay(d.date)}), h("td",{text:d.weather||""}), h("td",{class:"num",text:(d.totalLabor||0)+"人"}),
+      h("td",{text:(d.partners||[]).map(p => p.company).filter(Boolean).join("、")}),
+      h("td",{style:"max-width:360px",text:String(d.work||"").slice(0,80)}),
+      h("td",{class:"ai-note",text:nameOf(d.updatedBy || d.author)})))) ) :
+    h("p",{class:"td-hint",text:"この現場の日報はまだありません。"}));
+}
+function nippoForm(ro, exists){
+  const d = S.dr, t = S.tasks.get(S.npTask);
+  const field = (k, label, el) => { el.value = d[k] ?? ""; el.addEventListener("input", () => { d[k] = el.value; npDirty(); }); el.addEventListener("change", () => { d[k] = el.value; npDirty(); }); if (ro) el.disabled = true; return h("label",null,label,el); };
+  const area = (k, label, ph) => { const el = h("textarea",{id:"np-"+k,placeholder:ph||"",readonly:ro}); el.value = d[k] || ""; el.addEventListener("input", () => { d[k] = el.value; npDirty(); }); return h("label",{class:"blk"},label,el); };
+  const weather = h("select",{id:"np-weather"}, h("option",{value:""},"選ぶ"), WEATHERS.map(w => h("option",{value:w},w)));
+  const crewNames = [...S.crews.values()].filter(c => c.active !== false);
+  const mats = mtList(S.npTask).filter(m => m.status !== "不要");
+  const matLabel = m => ((m.name||"") + (m.spec ? " " + m.spec : "")).trim();
+  const dl = h("div",{hidden:true},
+    h("datalist",{id:"dlSelf"}, crewNames.filter(c => c.kind === "自社").map(c => h("option",{value:c.name}))),
+    h("datalist",{id:"dlPartner"}, crewNames.filter(c => c.kind !== "自社").map(c => h("option",{value:c.name}))),
+    h("datalist",{id:"dlMat"}, mats.map(m => h("option",{value:matLabel(m)}))));
+  const matInput = (r, e) => {
+    const m = mats.find(x => matLabel(x) === e.value.trim());
+    r.materialId = m ? m.id : null;
+    if (m && !r.unit){ r.unit = m.unit || ""; const ins = e.closest("tr").querySelectorAll("input"); if (ins[2]) ins[2].value = r.unit; }
+  };
+  const partnerInput = (r, e) => {
+    const c = crewNames.find(x => x.name === e.value.trim());
+    if (c && !r.trade){ r.trade = c.trade || ""; const ins = e.closest("tr").querySelectorAll("input"); if (ins[1]) ins[1].value = r.trade; }
+  };
+  const aiBtn = !ro && S.sample ? h("button",{class:"btn ai",type:"button",async onclick(){
+    this.disabled = true; this.textContent = "下書き中…";
+    try {
+      const notes = (await db.doc("tasks/"+S.npTask).collection("notes").orderBy("createdAt","asc").get()).docs.map(x => x.data()).filter(n => n.text && ymd(new Date(n.createdAt)) === S.npDate);
+      const input = "建設現場の日報の「作業内容」欄を、次の情報から箇条書きで下書きしてください。事実だけを書き、分からないことは書かないでください。本文だけを出力してください。\n" +
+        "現場：" + taskLabel(t) + "\n日付：" + S.npDate + "\n人工：自社 " + sumCount(d.self) + "人、協力業者 " + (d.partners||[]).map(p => (p.company||"") + "（" + (p.trade||"") + "）" + (p.count||"") + "人").join("、") + "\n" +
+        "使用材料：" + (d.materials||[]).map(x => (x.name||"") + " " + (x.qty ?? "") + (x.unit||"")).join("、") + "\nこの日の現場の記録：\n" + (notes.length ? notes.map(n => "- " + String(n.text).replace(/\n/g," ")).join("\n") : "（記録なし）") +
+        (d.work ? "\n今書いてある作業内容：\n" + d.work : "");
+      const {text} = await S.sample(input, {cache:false, onText:({text}) => { const e = $("np-work"); if (e) e.value = text; }});
+      d.work = text; const e = $("np-work"); if (e) e.value = text; npDirty();
+    } catch(e){ aiError(e); }
+    finally { this.disabled = false; this.textContent = "記録から作業内容を下書き"; }
+  }},"記録から作業内容を下書き") : null;
+  const save = async () => {
+    const clean = rows => (rows||[]).filter(r => Object.entries(r).some(([k,v]) => k !== "materialId" && v !== null && v !== undefined && String(v).trim() !== ""));
+    const now = new Date().toISOString(), cur = S.dailies.get(S.drKey);
+    const body = {date:S.npDate, taskId:S.npTask, weather:d.weather||"", temp:d.temp||"", startTime:d.startTime||"", endTime:d.endTime||"", work:(d.work||"").trim(),
+      self:clean(d.self), partners:clean(d.partners), materials:clean(d.materials).map(x => ({name:x.name||"", qty:x.qty ?? null, unit:x.unit||"", materialId:x.materialId||null})),
+      machines:clean(d.machines), safety:(d.safety||"").trim(), tomorrow:(d.tomorrow||"").trim(), notes:(d.notes||"").trim(),
+      totalLabor: sumCount(clean(d.self)) + sumCount(clean(d.partners)),
+      author: cur ? cur.author || null : S.myId, createdAt: cur ? cur.createdAt || now : now, updatedAt:now, updatedBy:S.myId};
+    try { await withRetry(() => db.doc("dailies/"+S.drKey).set(body)); S.drDirty = false; S.drFrom = ""; toast("日報を保存しました（人工合計 " + body.totalLabor + " 人）"); render(); }
+    catch(e){ writeError(e); }
+  };
+  const del = async () => { try { await withRetry(() => db.doc("dailies/"+S.drKey).delete()); S.drKey = ""; S.drDirty = false; toast("日報を削除しました"); render(); } catch(e){ writeError(e); } };
+  const startT = h("input",{type:"time",id:"np-start"}), endT = h("input",{type:"time",id:"np-end"}), temp = h("input",{type:"text",id:"np-temp",placeholder:"例：12℃",inputmode:"decimal"});
+  return h("div",{class:"np"}, dl,
+    d._prefilled && !exists ? h("p",{class:"ai-note",style:"margin:0",text:"この日の手配表から、人工と協力業者を下書きしました。人数と作業内容を確認してください。"}) : null,
+    h("div",{class:"np-sec"}, h("h3",null,"基本"),
+      h("div",{class:"np-grid"}, field("weather","天候",weather), field("temp","気温",temp), field("startTime","作業開始",startT), field("endTime","作業終了",endT))),
+    h("div",{class:"np-sec"}, h("h3",null,"作業内容", aiBtn ? h("span",{style:"margin-left:auto"}, aiBtn) : null), area("work","", "例：No.5〜8 伐採、枝葉の場内集積、根株の掘削準備")),
+    h("div",{class:"np-sec"}, h("h3",null,"人工（自社）", h("span",{class:"n",text:"氏名か職種と人数"})),
+      rowsEd("self", [{k:"name",label:"氏名・職種",w:140,list:"dlSelf"},{k:"count",label:"人数",type:"number",w:60},{k:"note",label:"作業・備考",w:200}], ro, npTotal)),
+    h("div",{class:"np-sec"}, h("h3",null,"協力業者", h("span",{class:"n",text:"手配表に登録した会社名を候補に出します"})),
+      rowsEd("partners", [{k:"company",label:"会社名",w:140,list:"dlPartner",onInput:partnerInput},{k:"trade",label:"職種",w:90},{k:"count",label:"人数",type:"number",w:60},{k:"work",label:"作業内容",w:200}], ro, npTotal)),
+    h("div",{class:"np-sec"}, h("h3",null,"使用材料", h("span",{class:"n",text: mats.length ? "材料表の品目を選ぶと、材料表の「使用済み」に足されます" : "この現場の材料表は空です。自由に書けます"})),
+      rowsEd("materials", [{k:"name",label:"材料名・規格",w:180,list:"dlMat",onInput:matInput},{k:"qty",label:"数量",type:"number",w:70},{k:"unit",label:"単位",w:56}], ro)),
+    h("div",{class:"np-sec"}, h("h3",null,"使用重機・車両"),
+      rowsEd("machines", [{k:"name",label:"重機・車両",w:180},{k:"hours",label:"稼働時間(h)",type:"number",w:80},{k:"note",label:"備考",w:160}], ro)),
+    h("div",{class:"np-sec"}, h("h3",null,"安全・明日の予定・特記事項"),
+      h("div",{style:"display:grid;gap:10px"}, area("safety","安全（KY・ヒヤリハット）","例：チェーンソー作業時の立入禁止範囲の確認。ヒヤリハットなし"),
+        area("tomorrow","明日の予定","例：根株処理 No.1〜4、残材搬出"), area("notes","特記事項・連絡","例：近隣から騒音の問い合わせ1件（対応済み）"))),
+    h("div",{class:"np-bar"},
+      h("span",{class:"total",id:"npTotal",text:"人工合計 " + (sumCount(d.self) + sumCount(d.partners)) + " 人"}),
+      h("span",{class:"state",id:"npSaveState",text: exists ? "保存済み" + (S.dailies.get(S.drKey).updatedAt ? "（" + fmtStamp(S.dailies.get(S.drKey).updatedAt) + "）" : "") : "まだ保存していません"}),
+      ro ? null : h("span",{style:"margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;align-items:center"},
+        exists ? (S.npDel
+          ? h("span",{style:"display:flex;gap:6px;align-items:center;font-size:12.5px"},"この日報を削除しますか？", h("button",{class:"btn danger",type:"button",onclick:del},"削除する"), h("button",{class:"btn",type:"button",onclick(){ S.npDel = false; S.drKey = ""; render(); }},"やめる"))
+          : h("button",{class:"btn ghost",type:"button",style:"color:var(--muted)",onclick(){ if (S.drDirty){ toast("先に保存するか、変更を取り消してください"); return; } S.npDel = true; S.drKey = ""; render(); }},"削除")) : null,
+        h("button",{class:"btn",type:"button",onclick(){ S.drKey = ""; S.drDirty = false; render(); }},"変更を取り消す"),
+        h("button",{class:"btn primary",type:"button",onclick:save},"日報を保存"))));
+}
+function npCsv(){
+  const t = S.tasks.get(S.npTask), list = dailiesOf(S.npTask).slice().reverse();
+  const head = ["日付","天候","気温","開始","終了","作業内容","自社人工","自社の内訳","協力業者人工","協力業者の内訳","人工合計","使用材料","使用重機・車両","安全","明日の予定","特記事項"];
+  const rows = list.map(d => [d.date, d.weather, d.temp, d.startTime, d.endTime, d.work, sumCount(d.self), (d.self||[]).map(x => (x.name||"") + " " + (x.count||"") + "人").join(" / "),
+    sumCount(d.partners), (d.partners||[]).map(x => (x.company||"") + "（" + (x.trade||"") + "）" + (x.count||"") + "人").join(" / "), d.totalLabor||0,
+    (d.materials||[]).map(x => (x.name||"") + " " + (x.qty ?? "") + (x.unit||"")).join(" / "), (d.machines||[]).map(x => (x.name||"") + (x.hours ? " " + x.hours + "h" : "")).join(" / "), d.safety, d.tomorrow, d.notes]);
+  saveFile("日報_" + ((t && (t.project || t.title)) || "現場") + ".csv", csvOf(head, rows));
+}
+
+/* ---------- wiring ---------- */
+const npMove = days => { if (S.drDirty){ toast("未保存の変更があります。保存するか、変更を取り消してから移動してください"); return; } const d = parseYmd(S.npDate); d.setDate(d.getDate() + days); S.npDate = ymd(d); render(); };
+$("npPrev").addEventListener("click", () => npMove(-1));
+$("npNext").addEventListener("click", () => npMove(1));
+$("npToday").addEventListener("click", () => { if (S.drDirty && S.npDate !== todayYmd()){ toast("未保存の変更があります。保存するか、変更を取り消してから移動してください"); return; } S.npDate = todayYmd(); render(); });
+$("npDate").addEventListener("change", e => { if (!e.target.value) return; if (S.drDirty){ e.target.value = S.npDate; toast("未保存の変更があります。保存するか、変更を取り消してから移動してください"); return; } S.npDate = e.target.value; render(); });
+$("npTask").addEventListener("change", e => { if (S.drDirty){ e.target.value = S.npTask; toast("未保存の変更があります。保存するか、変更を取り消してから移動してください"); return; } S.npTask = e.target.value; render(); });
+$("npCsv").addEventListener("click", npCsv);
+$("gbNippo").addEventListener("click", () => goTo("#nippo", () => { S.npTask = S.gbTask; S.npDate = todayYmd(); }));
+$("gbTask").addEventListener("change", e => { S.gbTask = e.target.value; try { localStorage.setItem("anken-gbtask", S.gbTask); } catch(_) {} });
+$("gbPhoto").addEventListener("click", () => { $("gbStatus").textContent = ""; $("gbPhotoIn").click(); });
+$("gbPhotoIn").addEventListener("change", e => {
+  for (const f of e.target.files) S.gbFiles.push({file:f, url:URL.createObjectURL(f)});
+  e.target.value = ""; if (S.gbFiles.length){ S.gbMode = "photo"; $("gbPanel").dataset.mode = ""; } render();
+  setTimeout(() => { const t = $("gbText"); if (t) t.focus(); }, 50);
+});
+$("gbReceipt").addEventListener("click", () => { $("gbStatus").textContent = ""; $("gbRcIn").click(); });
+$("gbRcIn").addEventListener("change", e => { const f = [...e.target.files]; e.target.value = ""; genbaReceipt(f); });
+$("gbToday").addEventListener("click", () => { const open = S.gbMode === "today"; gbReset(); S.gbMode = open ? null : "today"; render(); });
+$("mtTask").addEventListener("change", e => { S.mtTask = e.target.value; S.mtConfirm = null; render(); });
+$("mtAdd").addEventListener("click", async () => { try { S.mtFocus = await mtAddRow(); render(); } catch(e){ writeError(e); } });
+$("mtScan").addEventListener("click", () => $("mtFiles").click());
+$("mtFiles").addEventListener("change", e => { mtScan(e.target.files).finally(() => { e.target.value = ""; render(); }); });
+$("mtCsv").addEventListener("click", mtCsv);
+$("thPrev").addEventListener("click", () => { const d = parseYmd(S.thWeek); d.setDate(d.getDate()-7); S.thWeek = ymd(d); render(); });
+$("thNext").addEventListener("click", () => { const d = parseYmd(S.thWeek); d.setDate(d.getDate()+7); S.thWeek = ymd(d); render(); });
+$("thThis").addEventListener("click", () => { S.thWeek = weekStartYmd(new Date()); render(); });
+$("crewAdd").addEventListener("click", () => { S.crewEdit = "new"; $("crewForm").replaceChildren(); render(); });
+$("dsAdd").addEventListener("click", () => $("dsFiles").click());
+$("dsFiles").addEventListener("change", e => { dsClassify(e.target.files).finally(() => { e.target.value = ""; render(); }); });
+$("dsCsv").addEventListener("click", dsCsv);
+$("myDeptSel").value = S.myDept || "";
+$("myDeptSel").addEventListener("change", e => { S.myDept = e.target.value; if (DEPTS.some(d => d.id === S.myDept)) S.rkTab = S.myDept; saveFilters(); render(); });
+$("khPrev").addEventListener("click", () => { const [y,m] = S.khMonth.split("-").map(Number); S.khMonth = ym(new Date(y, m-2, 1)); render(); });
+$("khNext").addEventListener("click", () => { const [y,m] = S.khMonth.split("-").map(Number); S.khMonth = ym(new Date(y, m, 1)); render(); });
+$("khThis").addEventListener("click", () => { S.khMonth = ym(new Date()); render(); });
+$("khProj").addEventListener("change", e => { S.khProj = e.target.value; });
+$("khScan").addEventListener("click", () => $("khFiles").click());
+$("khFiles").addEventListener("change", e => { const f = e.target.files; scanReceipts(f).finally(() => { e.target.value = ""; }); });
+$("khManual").addEventListener("click", () => { S.rcNew = true; S.rcEdit = null; $("khForm").replaceChildren(); render(); });
+$("khCsv").addEventListener("click", exportCsv);
+$("reqNew").addEventListener("click", () => { S.reqFormOpen = true; S.reqFormTask = null; $("reqForm").replaceChildren(); render(); });
+function route(){
+  const v = location.hash.replace("#","");
+  S.view = VIEWS.includes(v) ? v : "today";
+  if (S.limited && !LIMITED_VIEWS.includes(S.view)) S.view = "genba";
+  render();
+}
+window.addEventListener("hashchange", route);
+$("scrim").addEventListener("click", closeTask);
+document.addEventListener("keydown", e => {
+  if (e.key !== "Escape") return;
+  if (!$("modal").hidden){ $("modal").hidden = true; return; }
+  if (!$("lightbox").hidden){ $("lightbox").click(); return; }
+  if (S.picker){ S.picker = false; renderDrawer(); return; }
+  if (S.openId) closeTask();
+});
+$("newBtn").addEventListener("click", () => createTask({title:"", status:"todo", open:true}));
+$("fProject").addEventListener("change", e => { S.fProject = e.target.value; saveFilters(); render(); });
+$("fMine").addEventListener("click", () => { S.fMine = !S.fMine; saveFilters(); render(); });
+$("fQ").addEventListener("input", e => { S.q = e.target.value; render(); });
+$("calPrev").addEventListener("click", () => { S.month = new Date(S.month.getFullYear(), S.month.getMonth()-1, 1); S.selDay = null; render(); });
+$("calNext").addEventListener("click", () => { S.month = new Date(S.month.getFullYear(), S.month.getMonth()+1, 1); S.selDay = null; render(); });
+$("calToday").addEventListener("click", () => { S.month = firstOfMonth(new Date()); S.selDay = todayYmd(); render(); });
+
+route();
+
+(async () => {
+  const C = window.claude;
+  if (!C || !C.use){ banner("共有データに接続できません。claude.ai 上でこのページを開いてください。"); db = null; S.loaded = true; render(); return; }
+  [db, user, assets, S.sample, S.downloads] = await Promise.all([C.use("db"), C.use("user"), C.use("assets"), C.use("sample"), C.use("downloads")]);
+  if (user){
+    S.myId = await user.id();
+    const cw = await user.can("data.write");
+    S.canWrite = cw !== false;
+    S.canEdit = await user.canEdit();
+    S.limited = (await user.can("view.limited")) === true;
+    if (S.limited) route();
+    const me = await user.me();
+    $("who").textContent = me.name ? me.name+" でログイン中" : "";
+  }
+  if (!db){ S.loaded = true; banner("共有データに接続できません。claude.ai にサインインしてから開き直してください。"); render(); return; }
+  loadTimer = setTimeout(() => banner(S.tasks.size ? "サーバーに接続できていません。表示が最新でない可能性があります。" : "データを取得できません。通信状態を確認してください。"), 10000);
+  tasksCol().onSnapshot(snap => {
+    const m = new Map();
+    for (const d of snap.docs) m.set(d.id, {id:d.id, ...d.data()});
+    S.tasks = m;
+    if (!snap.metadata.fromCache){ S.loaded = true; clearTimeout(loadTimer); banner(""); }
+    render(); refreshProfiles();
+  }, err => {
+    clearTimeout(loadTimer); S.loaded = true;
+    banner(err.code === "revoked" ? "" : "データの同期が停止しました。ページを開き直してください。");
+    render();
+  });
+  db.collection("requests").onSnapshot(snap => {
+    const m = new Map();
+    for (const d of snap.docs) m.set(d.id, {id:d.id, ...d.data()});
+    S.reqs = m;
+    if (!snap.metadata.fromCache) S.reqLoaded = true;
+    render();
+  }, err => { S.reqLoaded = true; console.warn(err); render(); });
+  db.collection("receipts").onSnapshot(snap => {
+    const m = new Map();
+    for (const d of snap.docs) m.set(d.id, {id:d.id, ...d.data()});
+    S.receipts = m;
+    if (!snap.metadata.fromCache) S.rcLoaded = true;
+    render();
+  }, err => { S.rcLoaded = true; console.warn(err); render(); });
+  const sub = (col, key) => db.collection(col).onSnapshot(snap => {
+    const m = new Map(); for (const d of snap.docs) m.set(d.id, {id:d.id, ...d.data()}); S[key] = m; render();
+  }, err => console.warn(err));
+  sub("materials","materials"); sub("crews","crews"); sub("assign","assign"); sub("docsort","docsort"); sub("reports","reports"); sub("dailies","dailies");
+  db.doc("config/prompts").onSnapshot(snap => { S.prompts = (snap.exists && snap.data()) || {}; render(); }, err => console.warn(err));
+  db.collection("depts").onSnapshot(snap => {
+    const o = {};
+    for (const d of snap.docs) o[d.id] = d.data();
+    S.depts = o;
+    render();
+  }, err => console.warn(err));
+  render();
+})();
+})();
+</script>

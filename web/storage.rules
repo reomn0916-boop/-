@@ -1,0 +1,19 @@
+rules_version = '2';
+// 写真・レシートの保存先：uploads/<アップロードした人のID>/<ファイル>
+service firebase.storage {
+  match /b/{bucket}/o {
+    function role() {
+      return request.auth != null && firestore.exists(/databases/(default)/documents/users/$(request.auth.uid))
+        ? firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role : 'none';
+    }
+    function isMember() { return role() in ['owner', 'admin', 'staff', 'partner']; }
+    function isStaff() { return role() in ['owner', 'admin', 'staff']; }
+    match /uploads/{uid}/{file} {
+      allow read: if isMember();
+      allow create: if isMember() && request.auth.uid == uid
+        && request.resource.size < 20 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*|application/pdf|text/.*');
+      allow delete: if isStaff() || (request.auth != null && request.auth.uid == uid);
+    }
+  }
+}

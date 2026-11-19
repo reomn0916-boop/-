@@ -158,3 +158,13 @@ sw.js                 オフライン用 Service Worker（更新時は VERSION �
 manifest.webmanifest  ホーム画面追加用の設定
 icons/                アイコン
 ```
+
+---
+
+## 案件ボード（`app/`・`web/`）
+
+同じリポジトリに、チームで案件・日報・材料・手配・経費・部署間連絡を管理する「案件ボード」も入っています。現場CAD とはファイルの場所が分かれていて、互いに影響しません。
+
+- Claude 版：`app/index.html`（説明は [`app/README.md`](app/README.md)）
+- Claude を使わない人も Google ログインで使える Firebase 版：`web/`（準備と公開の手順は [`web/README.md`](web/README.md)）
+- Firebase への公開は、Actions の「Firebase に公開」を手動で実行したときだけ行われます。公開されるのは案件ボードだけです。
