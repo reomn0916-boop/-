@@ -1,10 +1,10 @@
 // ラク経費のオフライン対応と、Android の「共有」から画像を受け取る処理
 // ファイルを更新したら VERSION を上げる
-const VERSION = 'rakukeihi-v3';
+const VERSION = 'rakukeihi-v4';
 const FILES = [
   './', './index.html', './app.css', './manifest.webmanifest',
   './js/app.js', './js/db.js', './js/ocr.js', './js/parse.js', './js/report.js', './js/crop.js',
-  './js/store.js', './js/pdfin.js',
+  './js/store.js', './js/pdfin.js', './js/books.js',
   './pc/', './pc/index.html', './pc/pc.css', './pc/pc.js', './pc/ui.js', './pc/editor.js', './pc/charts.js', './pc/manifest.webmanifest',
   './vendor/anthropic-sdk.mjs',
   './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png',

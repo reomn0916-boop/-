@@ -52,8 +52,10 @@ function fit(g, text, maxW) {
   return text.slice(0, lo) + '…';
 }
 
-function text(g, s, xMm, yMm, { size = 3.2, weight = 400, align = 'left', color = INK, maxMm = 0 } = {}) {
+function text(g, s, xMm, yMm, { size = 3.2, weight = 400, align = 'left', color = INK, maxMm = 0, shrink = false } = {}) {
   font(g, size, weight);
+  // 長い科目名は切らずに、入るまで小さくする
+  if (shrink && maxMm) { while (size > 2.1 && g.measureText(String(s ?? '')).width > maxMm * MM) { size -= 0.1; font(g, size, weight); } }
   g.fillStyle = color; g.textAlign = align;
   g.fillText(maxMm ? fit(g, s, maxMm * MM) : String(s ?? ''), xMm * MM, yMm * MM);
 }
@@ -349,4 +351,196 @@ export function toJournalCSV(items, { credit = '未払金' } = {}) {
     for (const [amt, tax] of parts) rows.push([date, e.category, amt, tax, credit, amt, desc, e.payee, inv, e.invoiceNo || '', e.site || '', e.method || '']);
   }
   return '﻿' + [head, ...rows].map((r) => r.map(q).join(',')).join('\r\n') + '\r\n';
+}
+
+// ---- 決算書（損益計算書・貸借対照表・月別推移） ------------------------------------------
+// st は books.js の buildStatements の結果
+
+const amt = (n) => (n < 0 ? `△${Math.abs(Math.round(n)).toLocaleString('ja-JP')}` : Math.round(n || 0).toLocaleString('ja-JP'));
+const KIND_SRC = { expense: '経費', income: '売上・収入', journal: '振替', settle: '精算' };
+
+function stHead(g, title, sub, settings, books) {
+  text(g, title, 105, 22, { size: 7.4, weight: 700, align: 'center' });
+  hline(g, 72, 138, 27.2, INK, 2); hline(g, 72, 138, 28.2, INK, 1);
+  text(g, sub, 105, 34.5, { size: 3.3, align: 'center', color: SUB });
+  const who = books.tradeName || settings.company || settings.name || '';
+  if (who) text(g, who, 25, 45, { size: 3.9, weight: 700, maxMm: 120 });
+  text(g, '（単位：円）', 185, 45, { size: 2.8, align: 'right', color: SUB });
+}
+
+function stFooter(pages, settings, books) {
+  const who = books.tradeName || settings.company || settings.name || '';
+  pages.forEach((c, i) => text(c.getContext('2d'), `${who ? `${who}　` : ''}決算書（参考資料）　${i + 1} / ${pages.length}`, 105, 287, { size: 2.6, align: 'center', color: SUB }));
+}
+
+function plPage(st, settings, books) {
+  const { c, g } = page();
+  stHead(g, '損 益 計 算 書', `自 ${jpDate(st.from)}　至 ${jpDate(st.to)}`, settings, books);
+  const L = 25; const R = 185; const inner = 150; const outer = 183;
+  const rows = [];
+  for (const s of st.pl.sections) {
+    if (s.result) { if (!s.skipIfNoCogs) rows.push({ kind: 'result', label: s.result, value: s.value, final: s.final }); continue; }
+    if (s.skipIfEmpty && !s.items.length) continue;
+    rows.push({ kind: 'head', label: `【${s.title}】` });
+    if (!s.items.length) rows.push({ kind: 'item', label: '（なし）', value: 0, muted: true });
+    for (const [name, v] of s.items) rows.push({ kind: 'item', label: name, value: v });
+    rows.push({ kind: 'total', label: s.totalLabel, value: s.total });
+  }
+  const top = 52; const bottom = 262;
+  const rh = Math.min(7.4, (bottom - top) / Math.max(1, rows.length));
+  let y = top;
+  hline(g, L, R, y, INK, 2);
+  for (const r of rows) {
+    const cy = y + rh / 2 + 0.2;
+    if (r.kind === 'head') {
+      rect(g, L, y, R - L, rh, { fill: HEAD, stroke: null });
+      text(g, r.label, L + 2, cy, { size: 3.1, weight: 700 });
+    } else if (r.kind === 'item') {
+      text(g, r.label, L + 8, cy, { size: 3.1, color: r.muted ? SUB : INK, maxMm: 100 });
+      text(g, amt(r.value), inner, cy, { size: 3.2, align: 'right', color: r.muted ? SUB : INK });
+    } else if (r.kind === 'total') {
+      hline(g, inner - 34, inner, y + 0.4, LINE);
+      text(g, r.label, L + 8, cy, { size: 3.1, weight: 600 });
+      text(g, amt(r.value), outer, cy, { size: 3.3, align: 'right', weight: 700 });
+    } else {
+      rect(g, L, y, R - L, rh, { fill: r.final ? '#dff1e8' : '#f6f8f7', stroke: null });
+      text(g, r.label, L + 2, cy, { size: r.final ? 3.6 : 3.3, weight: 700 });
+      text(g, amt(r.value), outer, cy, { size: r.final ? 4 : 3.4, align: 'right', weight: 800 });
+      if (r.final) { hline(g, outer - 40, outer, y + rh - 1.2, INK, 1); hline(g, outer - 40, outer, y + rh - 0.4, INK, 1); }
+    }
+    hline(g, L, R, y + rh, '#d5dbe0');
+    y += rh;
+  }
+  hline(g, L, R, y, INK, 2);
+  const note = st.mode === 'corp'
+    ? '税込経理。法人税等・減価償却・棚卸は自動では計算していません（必要なら振替伝票で入れてください）。'
+    : '税込経理。青色申告特別控除・減価償却・棚卸は自動では計算していません。確定申告では税理士・会計ソフトで確認してください。';
+  text(g, note, L, y + 7, { size: 2.6, color: SUB, maxMm: R - L });
+  return c;
+}
+
+function bsTable(g, x, y0, w, title, groups, totalLabel, total, alignY) {
+  const nameX = x + 2; const openR = x + w - 26; const closeR = x + w - 2;
+  rect(g, x, y0, w, 8, { fill: HEAD, stroke: INK });
+  text(g, title, nameX, y0 + 4.2, { size: 3.2, weight: 700 });
+  text(g, '期首', openR, y0 + 4.2, { size: 2.7, weight: 700, align: 'right', color: SUB });
+  text(g, '期末', closeR, y0 + 4.2, { size: 2.7, weight: 700, align: 'right', color: SUB });
+  let y = y0 + 8; const rh = 6.8;
+  for (const gr of groups) {
+    if (gr.label) { text(g, gr.label, nameX, y + rh / 2 + 0.2, { size: 2.8, weight: 700, color: SUB }); y += rh * 0.85; }
+    for (const r of gr.rows) {
+      text(g, r.name, nameX + 3, y + rh / 2 + 0.2, { size: 3, maxMm: w - 56, shrink: true });
+      text(g, amt(r.open), openR, y + rh / 2 + 0.2, { size: 3, align: 'right', color: SUB });
+      text(g, amt(r.close), closeR, y + rh / 2 + 0.2, { size: 3.1, align: 'right', weight: 600 });
+      hline(g, x, x + w, y + rh, '#e1e6e9');
+      y += rh;
+    }
+    if (gr.total) {
+      text(g, gr.total.label, nameX + 3, y + rh / 2 + 0.2, { size: 2.9, weight: 700 });
+      text(g, amt(gr.total.open), openR, y + rh / 2 + 0.2, { size: 3, align: 'right', weight: 700, color: SUB });
+      text(g, amt(gr.total.close), closeR, y + rh / 2 + 0.2, { size: 3.1, align: 'right', weight: 700 });
+      hline(g, x, x + w, y, LINE); hline(g, x, x + w, y + rh, '#e1e6e9');
+      y += rh;
+    }
+    y += 1.5;
+  }
+  const ty = Math.max(y, alignY || 0);
+  rect(g, x, ty, w, 8.5, { fill: '#dff1e8', stroke: INK });
+  text(g, totalLabel, nameX, ty + 4.4, { size: 3.2, weight: 800 });
+  text(g, amt(total.open), openR, ty + 4.4, { size: 3.1, align: 'right', weight: 700, color: SUB });
+  text(g, amt(total.close), closeR, ty + 4.4, { size: 3.4, align: 'right', weight: 800 });
+  g.strokeStyle = INK; g.lineWidth = 1; g.strokeRect(x * MM + 0.5, y0 * MM + 0.5, w * MM, (ty + 8.5 - y0) * MM);
+  return y;
+}
+
+function bsPage(st, settings, books) {
+  const { c, g } = page();
+  stHead(g, '貸 借 対 照 表', `${jpDate(st.to)} 現在（期首 ${jpDate(st.from)}）`, settings, books);
+  const { bs } = st;
+  const cur = bs.assets.filter((r) => r.group === 'cur'); const fix = bs.assets.filter((r) => r.group === 'fix'); const own = bs.assets.filter((r) => r.group === 'own');
+  const sumG = (l) => ({ open: l.reduce((s, r) => s + r.open, 0), close: l.reduce((s, r) => s + r.close, 0) });
+  const left = [{ label: '流動資産', rows: cur, total: { label: '流動資産合計', ...sumG(cur) } }];
+  if (fix.length) left.push({ label: '固定資産', rows: fix, total: { label: '固定資産合計', ...sumG(fix) } });
+  if (own.length) left.push({ label: '', rows: own });
+  const sole = st.mode !== 'corp';
+  const right = [
+    { label: '負債', rows: bs.liabs.length ? bs.liabs : [{ name: '（なし）', open: 0, close: 0 }], total: { label: '負債合計', ...bs.totalLiabs } },
+    { label: sole ? '資本' : '純資産', rows: bs.equity, total: { label: sole ? '資本合計' : '純資産合計', ...bs.totalEquity } },
+  ];
+  // 両方の合計の行をそろえる
+  const height = (groups) => groups.reduce((h, gr) => h + (gr.label ? 6.8 * 0.85 : 0) + gr.rows.length * 6.8 + (gr.total ? 6.8 : 0) + 1.5, 8);
+  const y0 = 52; const alignY = y0 + Math.max(height(left), height(right));
+  const totalLiabEq = { open: bs.totalLiabs.open + bs.totalEquity.open, close: bs.totalLiabs.close + bs.totalEquity.close };
+  bsTable(g, 15, y0, 88, '資産の部', left, '資産合計', bs.totalAssets, alignY);
+  bsTable(g, 107, y0, 88, sole ? '負債・資本の部' : '負債・純資産の部', right, sole ? '負債・資本合計' : '負債・純資産合計', totalLiabEq, alignY);
+  const ok = bs.balanced;
+  text(g, ok ? `✓ 資産合計と${sole ? '負債・資本合計' : '負債・純資産合計'}が一致しています` : '× 貸借が一致しません', 15, alignY + 16, { size: 2.9, weight: 700, color: ok ? '#0d7a55' : '#c0372d' });
+  text(g, sole ? '元入金（期首）＝ 期首の資産 − 期首の負債。事業主貸・事業主借は翌期の期首に元入金へ入れます。' : '繰越利益剰余金（期首）＝ 期首の資産 − 期首の負債 − 資本金。法人税等は含みません。', 15, alignY + 23, { size: 2.6, color: SUB, maxMm: 180 });
+  return c;
+}
+
+function monthlyPage(st, settings, books) {
+  const { c, g } = page();
+  stHead(g, '月 別 推 移', `自 ${jpDate(st.from)}　至 ${jpDate(st.to)}`, settings, books);
+  const L = 25; const R = 185;
+  const cols = [['月', L + 2, 'left'], [st.mode === 'corp' ? '売上・収益' : '売上（収入）', 92, 'right'], ['経費・費用', 124, 'right'], ['利益', 154, 'right'], ['累計', 183, 'right']];
+  let y = 52; const rh = 7.4;
+  rect(g, L, y, R - L, 8, { fill: HEAD, stroke: INK });
+  cols.forEach(([l, x, a]) => text(g, l, x, y + 4.2, { size: 2.9, weight: 700, align: a }));
+  y += 8;
+  for (const m of st.monthly) {
+    const cy = y + rh / 2 + 0.2;
+    text(g, `${+m.ym.slice(0, 4)}年${+m.ym.slice(5)}月`, L + 2, cy, { size: 3 });
+    text(g, amt(m.rev), 92, cy, { size: 3.1, align: 'right' });
+    text(g, amt(m.exp), 124, cy, { size: 3.1, align: 'right' });
+    text(g, amt(m.profit), 154, cy, { size: 3.1, align: 'right', weight: 700, color: m.profit < 0 ? '#c0372d' : INK });
+    text(g, amt(m.cum), 183, cy, { size: 3.1, align: 'right', color: SUB });
+    hline(g, L, R, y + rh, '#e1e6e9');
+    y += rh;
+  }
+  const tot = st.monthly.reduce((a, m) => ({ rev: a.rev + m.rev, exp: a.exp + m.exp }), { rev: 0, exp: 0 });
+  rect(g, L, y, R - L, 8.5, { fill: '#dff1e8', stroke: INK });
+  text(g, '合計', L + 2, y + 4.4, { size: 3.2, weight: 800 });
+  text(g, amt(tot.rev), 92, y + 4.4, { size: 3.2, align: 'right', weight: 700 });
+  text(g, amt(tot.exp), 124, y + 4.4, { size: 3.2, align: 'right', weight: 700 });
+  text(g, amt(tot.rev - tot.exp), 154, y + 4.4, { size: 3.3, align: 'right', weight: 800 });
+  g.strokeStyle = INK; g.lineWidth = 1; g.strokeRect(L * MM + 0.5, 52 * MM + 0.5, (R - L) * MM, (y + 8.5 - 52) * MM);
+  // 経費の科目別（期間の合計）
+  y += 18;
+  const exps = st.pl.sections.filter((s) => s.items && s.title && /経費|販売費|売上原価|営業外費用/.test(s.title)).flatMap((s) => s.items);
+  const totalExp = exps.reduce((s, [, v]) => s + v, 0) || 1;
+  text(g, '経費の内訳（勘定科目別）', L, y, { size: 3.4, weight: 700 });
+  y += 5;
+  const maxV = Math.max(1, ...exps.map(([, v]) => v));
+  for (const [name, v] of exps.slice(0, Math.floor((272 - y) / 6.4))) {
+    text(g, name, L + 2, y + 3.2, { size: 2.9, maxMm: 36 });
+    g.fillStyle = '#e9eeeb'; g.fillRect((L + 42) * MM, (y + 1.8) * MM, 90 * MM, 2.8 * MM);
+    g.fillStyle = '#0d7a55'; g.fillRect((L + 42) * MM, (y + 1.8) * MM, Math.max(0.6, (v / maxV) * 90) * MM, 2.8 * MM);
+    text(g, amt(v), 175, y + 3.2, { size: 2.9, align: 'right', weight: 600 });
+    text(g, `${Math.round((v / totalExp) * 100)}%`, R, y + 3.2, { size: 2.6, align: 'right', color: SUB });
+    y += 6.4;
+  }
+  return c;
+}
+
+export function renderStatements(st, settings, books) {
+  const pages = [plPage(st, settings, books), bsPage(st, settings, books), monthlyPage(st, settings, books)];
+  stFooter(pages, settings, books);
+  return pages;
+}
+
+const csvq = (v) => { const s = String(v ?? ''); return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+const csv = (rows) => '﻿' + rows.map((r) => r.map(csvq).join(',')).join('\r\n') + '\r\n';
+const TYPE_JA = { asset: '資産', liability: '負債', equity: '純資産', revenue: '収益', expense: '費用' };
+
+// 試算表
+export function toTrialCSV(st) {
+  return csv([['区分', '勘定科目', '期首残高', '借方合計', '貸方合計', '期末残高・金額'],
+    ...st.trial.map((r) => [TYPE_JA[r.type], r.name, r.type === 'revenue' || r.type === 'expense' ? '' : r.open, r.debit, r.credit, r.close])]);
+}
+
+// 仕訳帳（経費・売上・振替・精算から作った仕訳）
+export function toJournalBookCSV(st) {
+  return csv([['日付', '借方勘定科目', '借方金額', '貸方勘定科目', '貸方金額', '摘要', '元の記録'],
+    ...st.journals.map((j) => [j.date.replace(/-/g, '/'), j.debit, j.amount, j.credit, j.amount, j.memo, KIND_SRC[j.src] || ''])]);
 }

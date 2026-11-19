@@ -41,6 +41,7 @@ export const METHODS = ['現金', '個人カード', '電子マネー', '会社�
 export const S = {
   expenses: [],
   reports: [],
+  ledger: [],
   settings: { ...DEF_SETTINGS, ...lsGet('settings', {}) },
   learned: lsGet('learned', { payeeCat: {}, tnoPayee: {} }),
   templates: lsGet('templates', []),
@@ -62,6 +63,7 @@ export const isCompanyPaid = (e) => e.method === '会社カード' || e.method =
 export async function loadAll() {
   S.expenses = (await db.all('expenses')) || [];
   S.reports = (await db.all('reports')) || [];
+  S.ledger = (await db.all('ledger')) || [];
   emit('change');
 }
 
@@ -388,6 +390,27 @@ export async function undoReport(id) {
   emit('change');
 }
 
+// ---- 帳簿（売上・収入・振替伝票） ----------------------------------------------------
+
+export async function saveLedger(l) {
+  if (!l.id) l.id = newId(l.type === 'income' ? 'n' : 'j');
+  if (!l.created) l.created = Date.now();
+  l.updated = Date.now();
+  await db.put('ledger', l);
+  const i = S.ledger.findIndex((x) => x.id === l.id);
+  if (i >= 0) S.ledger[i] = l; else S.ledger.push(l);
+  persist();
+  emit('change');
+  return l;
+}
+export async function removeLedger(id) {
+  const l = S.ledger.find((x) => x.id === id); if (!l) return null;
+  await db.del('ledger', id);
+  S.ledger = S.ledger.filter((x) => x.id !== id);
+  emit('change');
+  return l;
+}
+
 // ---- バックアップ・取り込み ----------------------------------------------------------
 
 function blobToB64(blob) {
@@ -398,7 +421,7 @@ function b64ToBlob(b64, type) { const bin = atob(b64); const u = new Uint8Array(
 export async function makeBackup() {
   const images = await db.all('images');
   const { apiKey, ...settings } = S.settings; void apiKey;
-  const parts = [`{"app":"rakukeihi","version":2,"exportedAt":${JSON.stringify(new Date().toISOString())},"settings":${JSON.stringify(settings)},"learned":${JSON.stringify(S.learned)},"templates":${JSON.stringify(S.templates)},"expenses":${JSON.stringify(S.expenses)},"reports":${JSON.stringify(S.reports)},"images":[`];
+  const parts = [`{"app":"rakukeihi","version":3,"exportedAt":${JSON.stringify(new Date().toISOString())},"settings":${JSON.stringify(settings)},"learned":${JSON.stringify(S.learned)},"templates":${JSON.stringify(S.templates)},"expenses":${JSON.stringify(S.expenses)},"reports":${JSON.stringify(S.reports)},"ledger":${JSON.stringify(S.ledger)},"images":[`];
   for (let i = 0; i < images.length; i++) {
     const im = images[i];
     const o = { id: im.id, w: im.w, h: im.h, blob: await blobToB64(im.blob), thumb: im.thumb ? await blobToB64(im.thumb) : '' };
@@ -418,7 +441,9 @@ export async function readBackup(file) {
   const incoming = j.expenses || [];
   const added = incoming.filter((e) => !have.has(e.id)).length;
   const updated = incoming.filter((e) => have.has(e.id) && (e.updated || 0) > (have.get(e.id).updated || 0)).length;
-  return { j, total: incoming.length, added, updated };
+  const led = new Set(S.ledger.map((l) => l.id));
+  const ledgerAdded = (j.ledger || []).filter((l) => !led.has(l.id)).length;
+  return { j, total: incoming.length, added, updated, ledgerAdded };
 }
 
 // 取り込む（同じ経費は新しい方を残す。ほかの経費は消さない）
@@ -437,6 +462,9 @@ export async function mergeBackup(j, { takeSettings = true } = {}) {
   const reps = new Set(S.reports.map((r) => r.id));
   const newReps = (j.reports || []).filter((r) => !reps.has(r.id));
   if (newReps.length) await db.putMany('reports', newReps);
+  const led = new Map(S.ledger.map((l) => [l.id, l]));
+  const putLed = (j.ledger || []).filter((l) => !led.has(l.id) || (l.updated || 0) > (led.get(l.id).updated || 0));
+  if (putLed.length) await db.putMany('ledger', putLed);
   if (takeSettings && j.settings) { S.settings = { ...DEF_SETTINGS, ...j.settings, ...pickFilled(S.settings), apiKey: S.settings.apiKey }; saveSettings(); }
   S.learned = { payeeCat: { ...(j.learned?.payeeCat || {}), ...S.learned.payeeCat }, tnoPayee: { ...(j.learned?.tnoPayee || {}), ...S.learned.tnoPayee } }; saveLearned();
   const tids = new Set(S.templates.map((t) => t.id));
@@ -448,8 +476,8 @@ export async function mergeBackup(j, { takeSettings = true } = {}) {
 function pickFilled(st) { const o = {}; ['company', 'dept', 'name'].forEach((k) => { if (st[k]) o[k] = st[k]; }); return o; }
 
 export async function wipeAll() {
-  await db.clear('expenses'); await db.clear('images'); await db.clear('reports');
-  S.expenses = []; S.reports = []; S.templates = []; saveTemplates();
+  await db.clear('expenses'); await db.clear('images'); await db.clear('reports'); await db.clear('ledger');
+  S.expenses = []; S.reports = []; S.ledger = []; S.templates = []; saveTemplates();
   S.learned = { payeeCat: {}, tnoPayee: {} }; saveLearned();
   emit('change');
 }

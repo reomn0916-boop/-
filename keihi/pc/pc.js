@@ -3,7 +3,8 @@ import * as st from '../js/store.js';
 import { usage } from '../js/db.js';
 import { readWithClaude, AI_MODELS, AiError } from '../js/ocr.js';
 import { DEFAULT_CATEGORIES, checkInvoiceNo } from '../js/parse.js';
-import { renderReport, pagesToPdf, toCSV, toJournalCSV, summarize, sortForReport, memoOf } from '../js/report.js';
+import { renderReport, pagesToPdf, toCSV, toJournalCSV, summarize, sortForReport, memoOf, renderStatements, toTrialCSV, toJournalBookCSV } from '../js/report.js';
+import { journalsFrom, buildStatements, fiscalRange, booksOf, accountGroups, ASSET_ACCOUNTS, LIABILITY_ACCOUNTS, REVENUE_ACCOUNTS, MODES } from '../js/books.js';
 import {
   $, $$, esc, ic, kbd, MOD, yen, md, mdw, ymd, jpYM, wd, ago, debounce, toast, modal, confirmDialog, menu, closeTop, topLayer, hideTip, download,
 } from './ui.js';
@@ -24,6 +25,8 @@ const P = {
   ed: null, edIds: null,
   review: { id: null, skipped: [] },
   rep: { mode: 'unsettled', from: '', to: '', includeDone: false, advance: '', pages: null, sum: null, sig: '', token: 0, zoom: pget('zoom', 0.6) },
+  books: { tab: 'income', from: '', to: '' },
+  fin: { mode: 'this', from: '', to: '', pages: null, sig: '', zoom: pget('finZoom', 0.6) },
 };
 P.list.ym = thisYM();
 
@@ -32,6 +35,8 @@ const VIEWS = {
   review: { title: '確認待ち', sub: () => '読み取った内容を確かめて確定します。Ctrl+Enter で確定して次へ。' },
   list: { title: '経費一覧', sub: () => '並べ替え・まとめて変更・CSV の書き出し' },
   report: { title: '精算書', sub: () => '期間を選ぶと、そのまま提出できる精算書ができます' },
+  books: { title: '帳簿', sub: () => '売上・収入、振替伝票、仕訳帳、期首残高' },
+  statements: { title: '決算書', sub: () => '損益計算書・貸借対照表をボタンひとつで' },
   templates: { title: 'よく使う', sub: () => '毎回同じ経費を、ワンクリックで入れられます' },
   settings: { title: '設定', sub: () => '申請者・読み取り方・データの管理' },
 };
@@ -167,6 +172,7 @@ function viewHome() {
         <span class="kpi-l">${ym.slice(0, 4)}年の合計</span>
         <b class="kpi-v">${yen(yearSum)}</b>
         <span class="kpi-s">1月から今日まで</span>
+        <button class="kpi-act" data-view-go="statements">決算書を作る ${ic('arrowR')}</button>
       </section>
     </div>
     <div class="dash">
@@ -530,7 +536,7 @@ async function ensurePages() {
   Object.assign(P.rep, { pages, sum, sig: repSig() });
   return pages;
 }
-async function printPages(pages) {
+async function printPages(pages, title = repFileName()) {
   const urls = pages.map((c) => c.toDataURL('image/jpeg', 0.92));
   const f = document.createElement('iframe');
   f.setAttribute('aria-hidden', 'true');
@@ -538,11 +544,286 @@ async function printPages(pages) {
   document.body.appendChild(f);
   const d = f.contentDocument;
   d.open();
-  d.write(`<!doctype html><html><head><title>${esc(repFileName())}</title><style>@page{size:A4;margin:0}html,body{margin:0;background:#fff}img{display:block;width:210mm;height:296.6mm;break-after:page}img:last-child{break-after:auto}</style></head><body>${urls.map((u) => `<img src="${u}">`).join('')}</body></html>`);
+  d.write(`<!doctype html><html><head><title>${esc(title)}</title><style>@page{size:A4;margin:0}html,body{margin:0;background:#fff}img{display:block;width:210mm;height:296.6mm;break-after:page}img:last-child{break-after:auto}</style></head><body>${urls.map((u) => `<img src="${u}">`).join('')}</body></html>`);
   d.close();
   await Promise.all([...d.images].map((i) => (i.decode ? i.decode().catch(() => {}) : null)));
   f.contentWindow.focus(); f.contentWindow.print();
   setTimeout(() => f.remove(), 60000);
+}
+
+// ===========================================================================
+// 帳簿（売上・収入／振替伝票／仕訳帳／帳簿の設定）
+// ===========================================================================
+const SRC_LABEL = { expense: ['経費', 'ok'], income: ['売上・収入', 'done'], journal: ['振替', 'draft'], settle: ['精算', 'ok'] };
+const bk = () => booksOf(S.settings);
+const fyOf = (iso) => fiscalRange(iso, bk().closeMonth);
+const fyLabel = (r) => `${ymd(r.from)} 〜 ${ymd(r.to)}`;
+function allJournals() { return journalsFrom({ expenses: S.expenses, ledger: S.ledger, reports: S.reports, settings: S.settings }); }
+function booksRange() { return P.books.from ? { from: P.books.from, to: P.books.to } : fyOf(today()); }
+function shiftFY(r, k) { const [y, m] = r.from.split('-').map(Number); return fyOf(`${y + k}-${String(m).padStart(2, '0')}-15`); }
+
+function accountOptions(selected, { only = null } = {}) {
+  return accountGroups(bk().mode, st.cats()).filter(([g]) => !only || only.includes(g))
+    .map(([g, list]) => `<optgroup label="${g}">${list.map((a) => `<option ${a === selected ? 'selected' : ''}>${esc(a)}</option>`).join('')}</optgroup>`).join('');
+}
+
+function viewBooks() {
+  const tab = P.books.tab; const r = booksRange(); const b = bk();
+  const tabs = [['income', '売上・収入', 'arrowR'], ['journal', '振替伝票', 'layers'], ['book', '仕訳帳', 'list'], ['setup', '帳簿の設定', 'sliders']];
+  const inR = (l) => l.date >= r.from && l.date <= r.to;
+  let body = '';
+  if (tab === 'income') {
+    const list = S.ledger.filter((l) => l.type === 'income' && inR(l)).sort((a, c) => c.date.localeCompare(a.date));
+    const paid = new Map(S.ledger.filter((l) => l.type === 'journal' && l.ref).map((l) => [l.ref, l]));
+    const total = sumOf(list);
+    const unpaid = list.filter((l) => l.debit === '売掛金' && !paid.has(l.id));
+    body = `
+      <div class="sumbar"><span>${list.length}件</span><span>合計 <b>${yen(total)}</b></span>${unpaid.length ? `<span class="warn-text">${ic('clock')}まだ入金されていない売掛金 ${unpaid.length}件 ${yen(sumOf(unpaid))}</span>` : ''}</div>
+      <div class="table-wrap">${list.length ? `<table class="grid ledger">
+        <thead><tr><th class="c-date">日付</th><th>取引先・内容</th><th class="c-cat">科目</th><th class="c-site">入金先</th><th class="c-amt num">金額</th><th class="c-act"></th></tr></thead>
+        <tbody>${list.map((l) => { const p = paid.get(l.id); return `<tr data-led="${l.id}">
+          <td class="c-date"><b>${md(l.date)}</b><small>${wd(l.date)}</small></td>
+          <td class="c-payee"><b>${esc(l.partner || '（取引先なし）')}</b>${l.memo ? `<small>${esc(l.memo)}</small>` : ''}</td>
+          <td class="c-cat"><span class="tag">${esc(l.credit)}</span></td>
+          <td class="c-site">${l.debit === '売掛金' ? (p ? `<span class="badge done">${ic('checkCircle')}入金済み ${md(p.date)}</span>` : `<button class="chip sm" data-paid="${l.id}">${ic('clock')}入金を記録</button>`) : esc(l.debit)}</td>
+          <td class="c-amt num"><b>${yen(l.amount)}</b></td>
+          <td class="c-act"><button class="icon-btn sm" data-led-del="${l.id}" title="削除">${ic('trash')}</button></td>
+        </tr>`; }).join('')}</tbody></table>`
+        : emptyState('arrowR', 'この期の売上・収入はまだありません', '請求した売上や、入金された収入を入れると、損益計算書・貸借対照表に反映されます。', `<button class="btn primary" data-act="newIncome">${ic('plus')}売上・収入を入れる</button>`)}</div>`;
+  } else if (tab === 'journal') {
+    const list = S.ledger.filter((l) => l.type === 'journal' && inR(l)).sort((a, c) => c.date.localeCompare(a.date));
+    body = `
+      <div class="sumbar"><span>${list.length}件</span><span class="muted">売掛金の入金・借入・返済・事業主貸／借・減価償却など、経費と売上以外のお金の動きを入れます</span></div>
+      <div class="table-wrap">${list.length ? `<table class="grid ledger">
+        <thead><tr><th class="c-date">日付</th><th>借方</th><th>貸方</th><th>摘要</th><th class="c-amt num">金額</th><th class="c-act"></th></tr></thead>
+        <tbody>${list.map((l) => `<tr data-led="${l.id}">
+          <td class="c-date"><b>${md(l.date)}</b><small>${wd(l.date)}</small></td>
+          <td><span class="tag">${esc(l.debit)}</span></td><td><span class="tag">${esc(l.credit)}</span></td>
+          <td class="c-payee"><b>${esc(l.memo || '')}</b>${l.partner ? `<small>${esc(l.partner)}</small>` : ''}</td>
+          <td class="c-amt num"><b>${yen(l.amount)}</b></td>
+          <td class="c-act"><button class="icon-btn sm" data-led-del="${l.id}" title="削除">${ic('trash')}</button></td>
+        </tr>`).join('')}</tbody></table>`
+        : emptyState('layers', 'この期の振替伝票はありません', '経費・売上・精算の仕訳は自動で作られます。それ以外（入金・借入・返済・生活費の引き出しなど）だけ入れてください。', `<button class="btn primary" data-act="newJournal">${ic('plus')}振替を入れる</button>`)}</div>`;
+  } else if (tab === 'book') {
+    const list = allJournals().filter(inR);
+    body = `
+      <div class="sumbar"><span>${list.length}行</span><span class="muted">経費・売上・振替・精算から自動で作った仕訳です（行をクリックすると元の記録を開きます）</span><span class="grow"></span><button class="btn sm" data-act="csvJournalBook">${ic('download')}仕訳帳 CSV</button></div>
+      <div class="table-wrap">${list.length ? `<table class="grid ledger">
+        <thead><tr><th class="c-date">日付</th><th>借方</th><th>貸方</th><th>摘要</th><th class="c-amt num">金額</th><th class="c-status">元の記録</th></tr></thead>
+        <tbody>${list.slice(-1500).reverse().map((j) => { const [l, c] = SRC_LABEL[j.src] || ['', '']; return `<tr ${j.src === 'expense' ? `data-open="${j.ref}"` : j.src === 'settle' ? '' : `data-led="${j.ref}"`}>
+          <td class="c-date"><b>${md(j.date)}</b><small>${wd(j.date)}</small></td>
+          <td><span class="tag">${esc(j.debit)}</span></td><td><span class="tag">${esc(j.credit)}</span></td>
+          <td class="c-payee"><b>${esc(j.memo || '')}</b></td>
+          <td class="c-amt num"><b>${yen(j.amount)}</b></td>
+          <td class="c-status"><span class="badge ${c}">${l}</span></td>
+        </tr>`; }).join('')}</tbody></table>` : emptyState('list', 'この期の仕訳はありません', '経費を確定したり、売上を入れたりすると、ここに仕訳が並びます。')}</div>`;
+  } else {
+    const assets = ASSET_ACCOUNTS.map(([a]) => a); const liabs = LIABILITY_ACCOUNTS;
+    const sumA = assets.reduce((s, a) => s + (+b.opening[a] || 0), 0); const sumL = liabs.reduce((s, a) => s + (+b.opening[a] || 0), 0);
+    const corp = b.mode === 'corp';
+    const credits = corp ? ['未払金', '普通預金', '現金', '買掛金'] : ['事業主借', '現金', '普通預金', '未払金', '買掛金'];
+    body = `<div class="books-setup">
+      <section class="card"><h2>帳簿の形</h2>
+        <div class="choice">
+          ${Object.entries(MODES).map(([k, v]) => `<label class="choice-card ${b.mode === k ? 'on' : ''}"><input type="radio" name="bmode" value="${k}" ${b.mode === k ? 'checked' : ''}><span class="cc-ic">${ic(k === 'corp' ? 'box' : 'pen')}</span><span><b>${v}</b><small>${k === 'corp' ? '損益計算書（売上総利益・営業利益・経常利益）と、資本金・繰越利益剰余金の貸借対照表を作ります。' : '青色申告決算書の形（売上・経費・所得）と、元入金・事業主貸・事業主借の貸借対照表を作ります。'}</small></span></label>`).join('')}
+        </div>
+        <div class="row3">
+          <label class="fld"><span class="lb">${corp ? '会社名' : '屋号（なければ氏名）'}</span><input data-b="tradeName" value="${esc(b.tradeName)}" placeholder="${esc(S.settings.company || S.settings.name || '例: 山田工業')}"></label>
+          <label class="fld"><span class="lb">決算月</span><span class="select">${ic('calendar')}<select data-b="closeMonth">${Array.from({ length: 12 }, (_, i) => i + 1).map((m) => `<option value="${m}" ${+b.closeMonth === m ? 'selected' : ''}>${m}月${!corp && m === 12 ? '（個人事業主はふつう12月）' : ''}</option>`).join('')}</select>${ic('chevD', 'caret')}</span></label>
+          ${corp ? `<label class="fld"><span class="lb">精算で払うときの口座</span><span class="select">${ic('card')}<select data-b="reimbAccount">${['普通預金', '現金'].map((a) => `<option ${b.reimbAccount === a ? 'selected' : ''}>${a}</option>`).join('')}</select>${ic('chevD', 'caret')}</span></label>` : '<span></span>'}
+        </div>
+      </section>
+      <section class="card"><h2>期首残高</h2><p class="muted">帳簿を始める日の残高を 1 回だけ入れます。次の期からは記録から自動で繰り越します。分からない科目は 0 のままで大丈夫です。</p>
+        <div class="row3"><label class="fld"><span class="lb">期首残高の日付</span><input type="date" data-b="openDate" value="${esc(b.openDate)}"></label>
+          ${corp ? `<label class="fld"><span class="lb">資本金</span><span class="amt-in sm"><em>¥</em><input data-b="capital" inputmode="numeric" value="${b.capital ? Number(b.capital).toLocaleString('ja-JP') : ''}" placeholder="0"></span></label>` : ''}</div>
+        <div class="open-grid">
+          <div><h3>資産</h3>${assets.map((a) => `<label class="open-row"><span>${a}</span><span class="amt-in sm"><em>¥</em><input data-open="${a}" inputmode="numeric" value="${b.opening[a] ? Number(b.opening[a]).toLocaleString('ja-JP') : ''}" placeholder="0"></span></label>`).join('')}<div class="open-sum"><span>資産合計</span><b>${yen(sumA)}</b></div></div>
+          <div><h3>負債</h3>${liabs.map((a) => `<label class="open-row"><span>${a}</span><span class="amt-in sm"><em>¥</em><input data-open="${a}" inputmode="numeric" value="${b.opening[a] ? Number(b.opening[a]).toLocaleString('ja-JP') : ''}" placeholder="0"></span></label>`).join('')}<div class="open-sum"><span>負債合計</span><b>${yen(sumL)}</b></div>
+            <div class="open-eq">${corp ? `<span>繰越利益剰余金（自動）</span><b>${yen(sumA - sumL - (+b.capital || 0))}</b>` : `<span>元入金（自動）＝ 資産 − 負債</span><b>${yen(sumA - sumL)}</b>`}</div></div>
+        </div>
+      </section>
+      <section class="card"><h2>経費の支払方法と科目</h2><p class="muted">経費は「借方 = 勘定科目 ／ 貸方 = 下の科目」で仕訳します。${corp ? '従業員が立て替えた経費は「未払金」にして、精算したときに口座から払った仕訳を自動で作ります。' : '個人のお財布・カードで払った経費は「事業主借」にします。事業用の現金や口座を分けている人は変えてください。'}</p>
+        <div class="row3 paymap">${st.METHODS.map((m) => `<label class="fld"><span class="lb">${m}で払った経費</span><span class="select">${ic('card')}<select data-pay="${m}">${[...new Set([b.payMap[m], ...credits])].map((a) => `<option ${b.payMap[m] === a ? 'selected' : ''}>${a}</option>`).join('')}</select>${ic('chevD', 'caret')}</span></label>`).join('')}</div>
+      </section>
+    </div>`;
+  }
+  return `<div class="books-page">
+    <div class="toolbar"><div class="tb-row">
+      <div class="seg">${tabs.map(([k, v, i]) => `<button class="${tab === k ? 'on' : ''}" data-btab="${k}">${ic(i)}${v}</button>`).join('')}</div>
+      ${tab !== 'setup' ? `<div class="period"><button class="icon-btn" data-act="fyPrev" title="前の期">${ic('chevL')}</button><span class="period-btn static">${ic('calendar')}<b>${fyLabel(r)}</b></span><button class="icon-btn" data-act="fyNext" title="次の期">${ic('chevR')}</button></div>` : ''}
+      <span class="grow"></span>
+      ${tab === 'income' ? `<button class="btn primary" data-act="newIncome">${ic('plus')}売上・収入を入れる</button>` : ''}
+      ${tab === 'journal' ? `<button class="btn primary" data-act="newJournal">${ic('plus')}振替を入れる</button>` : ''}
+      <button class="btn" data-view-go="statements">${ic('doc')}決算書へ</button>
+    </div></div>
+    ${body}
+  </div>`;
+}
+
+function ledgerForm(l) {
+  const income = l.type === 'income';
+  const partners = [...new Set(S.ledger.map((x) => x.partner).filter(Boolean))];
+  const presets = [
+    ['売掛金の入金', '普通預金', '売掛金'], ['生活費などを引き出した', '事業主貸', '普通預金'], ['個人のお金を事業に入れた', '普通預金', '事業主借'],
+    ['借入をした', '普通預金', '借入金'], ['借入の返済', '借入金', '普通預金'], ['カードの引き落とし', '未払金', '普通預金'], ['仮払いを渡した', '仮払金', '現金'], ['減価償却', '減価償却費', '車両運搬具'],
+  ].filter(([, d, c]) => bk().mode === 'sole' || (!['事業主貸', '事業主借'].includes(d) && !['事業主貸', '事業主借'].includes(c)));
+  return `<div class="led-form">
+    <datalist id="dlPartner">${partners.map((p) => `<option value="${esc(p)}">`).join('')}</datalist>
+    ${income ? '' : `<div class="fld"><span class="lb">よくある振替</span><div class="chips">${presets.map(([n, d, c]) => `<button type="button" class="chip sm" data-preset="${esc(d)}|${esc(c)}|${esc(n)}">${esc(n)}</button>`).join('')}</div></div>`}
+    <div class="row2">
+      <label class="fld"><span class="lb">日付</span><input type="date" id="lDate" value="${esc(l.date)}"></label>
+      <label class="fld"><span class="lb">金額</span><span class="amt-in"><em>¥</em><input id="lAmt" inputmode="numeric" placeholder="0" value="${l.amount ? Number(l.amount).toLocaleString('ja-JP') : ''}" autofocus></span></label>
+    </div>
+    ${income ? `
+      <label class="fld"><span class="lb">取引先</span><input id="lPartner" list="dlPartner" value="${esc(l.partner || '')}" placeholder="例: ○○工務店"></label>
+      <label class="fld"><span class="lb">内容</span><input id="lMemo" value="${esc(l.memo || '')}" placeholder="例: 11月分 A邸 内装工事"></label>
+      <div class="row2">
+        <label class="fld"><span class="lb">科目</span><span class="select">${ic('tag')}<select id="lCredit">${REVENUE_ACCOUNTS.map((a) => `<option ${l.credit === a ? 'selected' : ''}>${a}</option>`).join('')}</select>${ic('chevD', 'caret')}</span></label>
+        <label class="fld"><span class="lb">入金先</span><span class="select">${ic('card')}<select id="lDebit">${[['売掛金', '売掛金（請求済み・まだ入金されていない）'], ['普通預金', '普通預金（振り込まれた）'], ['現金', '現金で受け取った']].concat(bk().mode === 'sole' ? [['事業主貸', '個人の口座に入った（事業主貸）']] : []).map(([a, t]) => `<option value="${a}" ${l.debit === a ? 'selected' : ''}>${t}</option>`).join('')}</select>${ic('chevD', 'caret')}</span></label>
+      </div>` : `
+      <div class="row2">
+        <label class="fld"><span class="lb">借方（増えた資産・費用／減った負債）</span><span class="select">${ic('tag')}<select id="lDebit">${accountOptions(l.debit)}</select>${ic('chevD', 'caret')}</span></label>
+        <label class="fld"><span class="lb">貸方（減った資産／増えた負債・収益）</span><span class="select">${ic('tag')}<select id="lCredit">${accountOptions(l.credit)}</select>${ic('chevD', 'caret')}</span></label>
+      </div>
+      <label class="fld"><span class="lb">摘要</span><input id="lMemo" value="${esc(l.memo || '')}" placeholder="例: ○○工務店から入金"></label>`}
+    <p class="form-err" id="lErr" hidden></p>
+  </div>`;
+}
+
+async function editLedger(l) {
+  const cur = { ...l };
+  const r = await modal({
+    title: cur.type === 'income' ? (l.id ? '売上・収入を直す' : '売上・収入を入れる') : (l.id ? '振替を直す' : '振替を入れる'), width: 560,
+    body: ledgerForm(cur),
+    actions: [...(l.id ? [{ label: '削除', value: 'del', kind: 'ghost danger' }] : []), { label: 'やめる', value: 'no' }, { label: '保存', value: 'ok', kind: 'primary' }],
+    onMount: (el, layer) => {
+      const read = () => {
+        cur.date = $('#lDate', el).value; cur.amount = st.num($('#lAmt', el).value);
+        cur.debit = $('#lDebit', el).value; cur.credit = $('#lCredit', el).value;
+        cur.memo = $('#lMemo', el).value.trim(); if ($('#lPartner', el)) cur.partner = $('#lPartner', el).value.trim();
+      };
+      el.addEventListener('click', (ev) => {
+        const p = ev.target.closest('[data-preset]');
+        if (p) { const [d, c, n] = p.dataset.preset.split('|'); $('#lDebit', el).value = d; $('#lCredit', el).value = c; if (!$('#lMemo', el).value) $('#lMemo', el).value = n; $('#lAmt', el).focus(); }
+      });
+      const ok = $('[data-m="ok"]', el);
+      ok.addEventListener('click', (ev) => {
+        read();
+        const err = !cur.date ? '日付を入れてください' : !cur.amount || cur.amount <= 0 ? '金額を入れてください' : cur.debit === cur.credit ? '借方と貸方が同じ科目です' : '';
+        if (err) { ev.stopPropagation(); const e = $('#lErr', el); e.textContent = err; e.hidden = false; }
+      }, true);
+      $('#lAmt', el).addEventListener('change', (ev) => { const n = st.num(ev.target.value); ev.target.value = n ? n.toLocaleString('ja-JP') : ''; });
+      el.addEventListener('keydown', (ev) => { if ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter') { ev.preventDefault(); ok.click(); } });
+      void layer;
+    },
+  });
+  if (r === 'ok') {
+    await st.saveLedger(cur);
+    toast(cur.type === 'income' ? `売上・収入を保存しました ${yen(cur.amount)}` : `振替を保存しました ${cur.debit} ／ ${cur.credit} ${yen(cur.amount)}`, { kind: 'ok' });
+  } else if (r === 'del') deleteLedger(l.id);
+}
+async function deleteLedger(id) {
+  const old = await st.removeLedger(id);
+  if (old) toast('削除しました', { action: { label: '元に戻す', run: () => st.saveLedger(old) } });
+}
+async function recordPayment(incomeId) {
+  const inc = S.ledger.find((l) => l.id === incomeId); if (!inc) return;
+  let date = today(); let acc = '普通預金';
+  const r = await modal({ title: '入金を記録する', width: 420,
+    body: `<p class="muted">${esc(inc.partner || '')} ${yen(inc.amount)} の売掛金が入金されたことを記録します（借方 入金先 ／ 貸方 売掛金）。</p>
+      <div class="row2"><label class="fld"><span class="lb">入金日</span><input type="date" id="pDate" value="${today()}"></label>
+      <label class="fld"><span class="lb">入金先</span><span class="select">${ic('card')}<select id="pAcc"><option>普通預金</option><option>現金</option></select>${ic('chevD', 'caret')}</span></label></div>`,
+    actions: [{ label: 'やめる', value: 'no' }, { label: '入金を記録', value: 'ok', kind: 'primary' }],
+    onMount: (el) => { el.addEventListener('change', (ev) => { if (ev.target.id === 'pDate') date = ev.target.value; if (ev.target.id === 'pAcc') acc = ev.target.value; }); } });
+  if (r !== 'ok') return;
+  await st.saveLedger({ type: 'journal', date, amount: inc.amount, debit: acc, credit: '売掛金', memo: '入金', partner: inc.partner || '', ref: inc.id });
+  toast(`入金を記録しました ${yen(inc.amount)}`, { kind: 'ok' });
+}
+
+// ===========================================================================
+// 決算書（損益計算書・貸借対照表をボタンひとつで）
+// ===========================================================================
+function finRange() {
+  const F = P.fin; const cur = fyOf(today());
+  if (F.mode === 'last') return fyOf(st.addDays(cur.from, -1));
+  if (F.mode === 'custom') return { from: F.from || cur.from, to: F.to || cur.to };
+  return cur;
+}
+function finCompute() { const { from, to } = finRange(); return buildStatements({ journals: allJournals(), settings: S.settings, from, to }); }
+const finName = () => { const { from, to } = finRange(); const b = bk(); return `決算書_${b.tradeName || S.settings.company || S.settings.name || 'ラク経費'}_${from}_${to}`; };
+
+function viewStatements() {
+  const F = P.fin; const b = bk(); const { from, to } = finRange();
+  const s = finCompute();
+  const dr = S.expenses.filter((e) => e.status === 'draft' && (!e.date || (e.date >= from && e.date <= to))).length;
+  const corp = s.mode === 'corp';
+  const notes = [...s.notes];
+  if (dr) notes.unshift({ level: 'warn', msg: `確認待ちの経費 ${dr}件は入っていません`, go: 'review' });
+  const hasRev = s.pl.revenue !== 0;
+  if (!hasRev) notes.push({ level: 'info', msg: '売上・収入がまだありません（帳簿 → 売上・収入 で入れられます）', go: 'books' });
+  const icon = { info: 'spark', warn: 'warn', error: 'warn' };
+  return `<div class="report fin">
+    <aside class="rep-side">
+      <section class="card">
+        <h2>期間</h2>
+        <div class="seg wrap">${[['this', '今期'], ['last', '前期'], ['custom', '期間を指定']].map(([k, v]) => `<button class="${F.mode === k ? 'on' : ''}" data-fmode="${k}">${v}</button>`).join('')}</div>
+        ${F.mode === 'custom' ? `<div class="date-range"><input type="date" id="fFrom" value="${esc(from)}"><span>〜</span><input type="date" id="fTo" value="${esc(to)}"></div>` : `<p class="period-text">${ic('calendar')}${ymd(from)} 〜 ${ymd(to)}</p>`}
+        <p class="mode-line">${ic(corp ? 'box' : 'pen')}${MODES[b.mode]} ・ 決算月 ${b.closeMonth}月 <button class="link sm" data-act="booksSetup">帳簿の設定</button></p>
+      </section>
+      <section class="card totals fin-totals">
+        <div><span>${corp ? '売上高' : '売上（収入）'}</span><b>${yen(s.pl.revenue)}</b></div>
+        <div><span>経費・費用</span><b>${yen(s.pl.expense)}</b></div>
+        <div class="net"><span>${corp ? '当期純利益' : '所得金額（控除前）'}</span><b class="${s.pl.netIncome < 0 ? 'neg' : ''}">${s.pl.netIncome < 0 ? '△' : ''}${yen(Math.abs(s.pl.netIncome))}</b></div>
+        <div class="bs-mini">
+          <div><span>資産合計</span><b>${yen(s.bs.totalAssets.close)}</b></div>
+          <div><span>負債合計</span><b>${yen(s.bs.totalLiabs.close)}</b></div>
+          <div><span>${corp ? '純資産' : '資本'}合計</span><b>${yen(s.bs.totalEquity.close)}</b></div>
+        </div>
+        <p class="balance ${s.bs.balanced ? 'ok' : 'ng'}">${ic(s.bs.balanced ? 'checkCircle' : 'warn')}${s.bs.balanced ? '貸借が一致しています' : '貸借が一致しません'}</p>
+      </section>
+      <div class="rep-acts">
+        <button class="btn primary lg one" data-act="finPdf">${ic('doc')}<span>損益計算書・貸借対照表を作る<small>PDF ・ 月別推移つき</small></span></button>
+        <div class="row2">
+          <button class="btn" data-act="finPrint">${ic('print')}印刷</button>
+          <button class="btn" data-act="finCsvMenu">${ic('table')}CSV${ic('chevD', 'caret')}</button>
+        </div>
+      </div>
+      ${notes.length ? `<section class="card checks"><h2>チェック</h2><ul>${notes.map((n) => `<li class="${n.level}">${ic(icon[n.level])}<span>${esc(n.msg)}</span>${n.go ? `<button class="link sm" data-view-go="${n.go}">開く</button>` : ''}</li>`).join('')}</ul></section>` : ''}
+      <p class="muted small">記録から作る参考資料です（税込経理）。減価償却・棚卸・法人税等は振替伝票で入れてください。申告の前には税理士・会計ソフトで確かめてください。</p>
+    </aside>
+    <section class="rep-preview" aria-label="決算書の仕上がり">
+      <div class="paper-tools"><span id="finStatus" class="muted"></span><span class="grow"></span>
+        <button class="icon-btn sm" data-act="finZoomOut" title="縮小">${ic('zoomOut')}</button><span class="zoom-pct">${Math.round(P.fin.zoom * 100)}%</span><button class="icon-btn sm" data-act="finZoomIn" title="拡大">${ic('zoomIn')}</button></div>
+      <div class="paper-area" id="finArea"></div>
+    </section>
+  </div>`;
+}
+function finSig() { const { from, to } = finRange(); return JSON.stringify([from, to, S.settings.books, S.settings.company, S.settings.name, S.settings.categories, allJournals().length, S.expenses.reduce((m, e) => Math.max(m, e.updated || 0), 0), S.ledger.reduce((m, l) => Math.max(m, l.updated || 0), 0), S.reports.length]); }
+function finPages() {
+  const sig = finSig();
+  if (P.fin.pages && P.fin.sig === sig) return P.fin.pages;
+  P.fin.pages = renderStatements(finCompute(), S.settings, bk()); P.fin.sig = sig;
+  return P.fin.pages;
+}
+function placeFin() {
+  const area = $('#finArea'); if (!area) return;
+  const pages = finPages();
+  area.innerHTML = '';
+  const names = ['損益計算書', '貸借対照表', '月別推移'];
+  pages.forEach((c, i) => {
+    const w = document.createElement('div'); w.className = 'paper';
+    c.style.width = `${Math.round(794 * P.fin.zoom)}px`; c.style.height = 'auto';
+    w.appendChild(c);
+    const n = document.createElement('span'); n.className = 'paper-no'; n.textContent = `${names[i]}（${i + 1} / ${pages.length}）`; w.appendChild(n);
+    area.appendChild(w);
+  });
+  const s = $('#finStatus'); if (s) s.textContent = `A4 ・ ${pages.length}ページ（損益計算書・貸借対照表・月別推移）`;
+}
+async function finPdf() {
+  const pages = finPages();
+  const name = finName();
+  download(await pagesToPdf(pages, name), `${name}.pdf`);
+  toast(`${name}.pdf を保存しました`, { kind: 'ok' });
 }
 
 // ===========================================================================
@@ -644,7 +925,7 @@ function viewSettings() {
 }
 function shortcutsHTML() {
   const rows = [
-    ['全体', [[[MOD, 'K'], '検索・操作'], [[MOD, 'O'], '画像・PDF を取り込む'], [['N'], '手で入力'], [['1〜6'], '画面を切り替える'], [['?'], 'この一覧']]],
+    ['全体', [[[MOD, 'K'], '検索・操作'], [[MOD, 'O'], '画像・PDF を取り込む'], [['N'], '手で入力'], [['1〜8'], '画面を切り替える'], [['?'], 'この一覧']]],
     ['経費一覧', [[['↑', '↓'], '行を移動'], [['Enter'], '詳細を開く'], [['Space'], '選ぶ / はずす'], [['Shift', 'クリック'], '範囲を選ぶ'], [[MOD, 'A'], 'すべて選ぶ'], [['Delete'], '選んだ経費を削除'], [['/'], '検索']]],
     ['詳細・確認', [[[MOD, 'Enter'], '保存（確認待ちでは確定して次へ）'], [['Alt', '↑ ↓'], '前 / 次の経費'], [['Enter'], '次の欄へ'], [['Esc'], '閉じる']]],
   ];
@@ -664,7 +945,8 @@ function render() {
   // 入力中の欄を描き直しのあとも保つ
   const a = document.activeElement; let keep = null;
   if (a && v.contains(a) && /INPUT|SELECT|TEXTAREA/.test(a.tagName)) {
-    const sel = a.id ? `#${a.id}` : a.dataset.s ? `[data-s="${a.dataset.s}"]` : null;
+    const ds = a.dataset;
+    const sel = a.id ? `#${a.id}` : ds.s ? `[data-s="${ds.s}"]` : ds.b ? `[data-b="${ds.b}"]` : ds.pay ? `[data-pay="${ds.pay}"]` : ds.open ? `[data-open="${ds.open}"]` : null;
     if (sel) { let caret = null; try { caret = a.selectionStart; } catch (_) { /* 日付など */ } keep = { sel, caret }; }
   }
   if (P.view === 'review') {
@@ -676,11 +958,12 @@ function render() {
     destroyReview();
     const y = v.scrollTop;
     v.className = `view v-${P.view}`;
-    v.innerHTML = P.view === 'home' ? viewHome() : P.view === 'list' ? viewList() : P.view === 'report' ? viewReport() : P.view === 'templates' ? viewTemplates() : viewSettings();
+    v.innerHTML = P.view === 'home' ? viewHome() : P.view === 'list' ? viewList() : P.view === 'report' ? viewReport() : P.view === 'books' ? viewBooks() : P.view === 'statements' ? viewStatements() : P.view === 'templates' ? viewTemplates() : viewSettings();
     v.scrollTop = y;
     if (P.view === 'home') afterHome();
     if (P.view === 'list') afterList();
     if (P.view === 'report') buildPreview();
+    if (P.view === 'statements') placeFin();
     if (P.view === 'settings') usage().then((u) => { const el = $('#usage'); if (u && el) el.textContent = `データはこのパソコンのブラウザの中だけに保存しています（サーバーには送りません）。使用量 約${(u.usage / 1024 / 1024).toFixed(1)}MB ・ 経費 ${S.expenses.length}件。`; });
   }
   if (P.view === 'review') v.className = 'view v-review';
@@ -849,7 +1132,8 @@ if ('launchQueue' in window) {
 const COMMANDS = [
   ['取り込む（画像・PDF）', 'upload', 'import', `${MOD}+O`], ['フォルダから取り込む', 'folder', 'importFolder', ''], ['スマホのデータを取り込む', 'phone', 'importBackup', ''],
   ['手で入力', 'pen', 'newManual', 'N'], ['電車・バスを入力', 'train', 'newTransit', ''], ['車（距離）を入力', 'car', 'newCar', ''],
-  ['ホーム', 'home', 'v:home', '1'], ['確認待ち', 'inbox', 'v:review', '2'], ['経費一覧', 'list', 'v:list', '3'], ['精算書を作る', 'doc', 'v:report', '4'], ['よく使う', 'star', 'v:templates', '5'], ['設定', 'sliders', 'v:settings', '6'],
+  ['損益計算書・貸借対照表を作る（PDF）', 'doc', 'finNow', ''], ['売上・収入を入れる', 'arrowR', 'newIncome', ''], ['振替伝票を入れる', 'layers', 'newJournal', ''],
+  ['ホーム', 'home', 'v:home', '1'], ['確認待ち', 'inbox', 'v:review', '2'], ['経費一覧', 'list', 'v:list', '3'], ['精算書を作る', 'doc', 'v:report', '4'], ['帳簿', 'layers', 'v:books', '5'], ['決算書', 'doc', 'v:statements', '6'], ['よく使う', 'star', 'v:templates', '7'], ['設定', 'sliders', 'v:settings', '8'],
   ['今月の経費を見る', 'calendar', 'listThis', ''], ['先月の経費を見る', 'calendar', 'listLast', ''], ['未精算の経費を見る', 'doc', 'listUnsettled', ''],
   ['バックアップを保存', 'download', 'backup', ''], ['表示の明るさを切り替える', 'sun', 'theme', ''], ['キーボードの操作', 'keyboard', 'shortcuts', '?'],
 ];
@@ -950,6 +1234,23 @@ function setTheme(t) {
 function showShortcuts() { modal({ title: 'キーボードの操作', body: shortcutsHTML(), width: 720 }); }
 
 const ACTIONS = {
+  newIncome: () => { if (P.view !== 'books') { P.books.tab = 'income'; go('books'); } editLedger({ type: 'income', date: today(), debit: '売掛金', credit: '売上高' }); },
+  newJournal: () => { if (P.view !== 'books') { P.books.tab = 'journal'; go('books'); } editLedger({ type: 'journal', date: today(), debit: '普通預金', credit: '売掛金' }); },
+  fyPrev: () => { const r = shiftFY(booksRange(), -1); Object.assign(P.books, r); render(); },
+  fyNext: () => { const r = shiftFY(booksRange(), 1); Object.assign(P.books, r); render(); },
+  booksSetup: () => { P.books.tab = 'setup'; go('books'); },
+  csvJournalBook: () => { const r = booksRange(); const s = buildStatements({ journals: allJournals(), settings: S.settings, from: r.from, to: r.to }); download(new Blob([toJournalBookCSV(s)], { type: 'text/csv' }), `仕訳帳_${r.from}_${r.to}.csv`); },
+  finPdf: async (b) => { b.disabled = true; try { await finPdf(); } finally { b.disabled = false; } },
+  finNow: async () => { await finPdf(); },
+  finPrint: () => printPages(finPages(), finName()),
+  finCsvMenu: async (b) => {
+    const v = await menu(b, [{ label: '試算表 CSV', icon: 'table', value: 'trial' }, { label: '仕訳帳 CSV', icon: 'list', value: 'book' }], { width: 220 });
+    const s = finCompute(); const { from, to } = finRange();
+    if (v === 'trial') download(new Blob([toTrialCSV(s)], { type: 'text/csv' }), `試算表_${from}_${to}.csv`);
+    if (v === 'book') download(new Blob([toJournalBookCSV(s)], { type: 'text/csv' }), `仕訳帳_${from}_${to}.csv`);
+  },
+  finZoomIn: () => { P.fin.zoom = Math.min(1.2, +(P.fin.zoom + 0.1).toFixed(2)); pset('finZoom', P.fin.zoom); placeFin(); $('.zoom-pct').textContent = `${Math.round(P.fin.zoom * 100)}%`; },
+  finZoomOut: () => { P.fin.zoom = Math.max(0.3, +(P.fin.zoom - 0.1).toFixed(2)); pset('finZoom', P.fin.zoom); placeFin(); $('.zoom-pct').textContent = `${Math.round(P.fin.zoom * 100)}%`; },
   import: () => $('#fileIn').click(),
   importFolder: () => $('#folderIn').click(),
   importBackup: () => $('#backupIn').click(),
@@ -1131,6 +1432,16 @@ document.addEventListener('click', async (ev) => {
   if (jump) { ev.preventDefault(); const el = $(`#set-${jump.dataset.jump}`); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
   const dc = t.closest('[data-delcat]');
   if (dc) { S.settings.categories = st.cats().filter((k) => k !== dc.dataset.delcat); st.saveSettings(); render(); return; }
+  const bt = t.closest('[data-btab]');
+  if (bt) { P.books.tab = bt.dataset.btab; render(); return; }
+  const fm = t.closest('[data-fmode]');
+  if (fm) { P.fin.mode = fm.dataset.fmode; render(); return; }
+  const pd = t.closest('[data-paid]');
+  if (pd) { recordPayment(pd.dataset.paid); return; }
+  const ld = t.closest('[data-led-del]');
+  if (ld) { deleteLedger(ld.dataset.ledDel); return; }
+  const le = t.closest('[data-led]');
+  if (le) { const l = S.ledger.find((x) => x.id === le.dataset.led); if (l) editLedger(l); return; }
   const rm = t.closest('[data-rmode]');
   if (rm) { P.rep.mode = rm.dataset.rmode; render(); return; }
   const rp = t.closest('[data-reppdf]');
@@ -1167,6 +1478,21 @@ document.addEventListener('dblclick', (ev) => { if (ev.target.closest('#tableWra
 
 // ---- 入力 ------------------------------------------------------------------
 const searchRender = debounce(() => { P.list.sel.clear(); render(); }, 120);
+function updateOpenSums() {
+  const b = bk();
+  const sumA = ASSET_ACCOUNTS.reduce((t, [a]) => t + (+b.opening[a] || 0), 0);
+  const sumL = LIABILITY_ACCOUNTS.reduce((t, a) => t + (+b.opening[a] || 0), 0);
+  const [ea, el2] = $$('.open-sum b'); if (ea) ea.textContent = yen(sumA); if (el2) el2.textContent = yen(sumL);
+  const eq = $('.open-eq b'); if (eq) eq.textContent = yen(sumA - sumL - (b.mode === 'corp' ? (+b.capital || 0) : 0));
+}
+function setBooks(el) {
+  const b = { ...(S.settings.books || {}) };
+  if (el.dataset.b) { const k = el.dataset.b; b[k] = k === 'closeMonth' ? +el.value : k === 'capital' ? (st.num(el.value) || 0) : el.value; }
+  if (el.dataset.open) { b.opening = { ...(b.opening || {}) }; const n = st.num(el.value); if (n) b.opening[el.dataset.open] = n; else delete b.opening[el.dataset.open]; }
+  if (el.dataset.pay) { b.payMap = { ...(b.payMap || {}), [el.dataset.pay]: el.value }; }
+  S.settings.books = b; st.saveSettings();
+  P.fin.pages = null;
+}
 document.addEventListener('input', (ev) => {
   const el = ev.target;
   if (el.closest('#drawer, #rvEd, .modal, .palette')) return;
@@ -1178,6 +1504,7 @@ document.addEventListener('input', (ev) => {
     if (['name', 'company', 'dept'].includes(k)) renderChrome();
     return;
   }
+  if (el.dataset.b || el.dataset.open || el.dataset.pay) { setBooks(el); return; }
   if (el.id === 'q') { P.list.q = el.value; searchRender(); return; }
   if (el.id === 'rAdv') { P.rep.advance = el.value; debounceRep(); }
 });
@@ -1187,6 +1514,9 @@ document.addEventListener('change', async (ev) => {
   if (el.closest('#drawer, #rvEd, .modal, .palette')) return;
   if (el.dataset.s) { S.settings[el.dataset.s] = el.dataset.s === 'carRate' ? (st.dec(el.value) ?? st.DEF_SETTINGS.carRate) : el.value; st.saveSettings(); if (el.tagName === 'SELECT') render(); return; }
   if (el.name === 'ocr') { S.settings.ocrMode = el.value; st.saveSettings(); render(); return; }
+  if (el.name === 'bmode') { S.settings.books = { ...(S.settings.books || {}), mode: el.value, payMap: {} }; st.saveSettings(); render(); return; }
+  if (el.dataset.b || el.dataset.open || el.dataset.pay) { setBooks(el); if (el.tagName === 'SELECT' || el.type === 'date') render(); else if (el.inputMode === 'numeric') { const n = st.num(el.value); el.value = n ? n.toLocaleString('ja-JP') : ''; updateOpenSums(); } return; }
+  if (el.id === 'fFrom' || el.id === 'fTo') { P.fin[el.id === 'fFrom' ? 'from' : 'to'] = el.value; render(); return; }
   if (el.id === 'themeSel') { setTheme(el.value); return; }
   if (el.id === 'fCat') { P.list.cat = el.value; P.list.sel.clear(); render(); return; }
   if (el.id === 'fSite') { P.list.site = el.value; P.list.sel.clear(); render(); return; }
@@ -1218,7 +1548,7 @@ document.addEventListener('keydown', (ev) => {
   if (typing) return;
   if (document.activeElement && document.activeElement.closest && document.activeElement.closest('#drawer, #rvEd')) return;
   if (ev.key === '?' || (ev.shiftKey && ev.key === '/')) { ev.preventDefault(); showShortcuts(); return; }
-  if (!mod && !ev.altKey && /^[1-6]$/.test(ev.key)) { ev.preventDefault(); go(['home', 'review', 'list', 'report', 'templates', 'settings'][+ev.key - 1]); return; }
+  if (!mod && !ev.altKey && /^[1-8]$/.test(ev.key)) { ev.preventDefault(); go(['home', 'review', 'list', 'report', 'books', 'statements', 'templates', 'settings'][+ev.key - 1]); return; }
   if (!mod && ev.key.toLowerCase() === 'n') { ev.preventDefault(); newOf('receipt'); return; }
   if (P.view === 'list') {
     const ids = listItems().slice(0, P.list.limit).map((e) => e.id);

@@ -1,6 +1,6 @@
 // 端末内の保存（IndexedDB）。経費・領収書の画像・精算書の履歴
 const DB_NAME = 'rakukeihi';
-const DB_VER = 1;
+const DB_VER = 2;
 let dbp = null;
 
 function open() {
@@ -12,8 +12,9 @@ function open() {
       if (!db.objectStoreNames.contains('expenses')) db.createObjectStore('expenses', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('images')) db.createObjectStore('images', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('reports')) db.createObjectStore('reports', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('ledger')) db.createObjectStore('ledger', { keyPath: 'id' }); // 売上・収入・振替伝票
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => { const d = req.result; d.onversionchange = () => { d.close(); dbp = null; }; resolve(d); }; // 新しい版を開いたタブに道をゆずる
     req.onerror = () => reject(req.error);
   });
   return dbp;
