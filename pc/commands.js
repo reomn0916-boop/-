@@ -1096,7 +1096,7 @@ export function commandDefs(K) {
       prompt() {
         const how = c.o.how;
         if (how === 'coord') {
-          if (c.pending) return `図面上の点 ${c.pairs.length + 1} の正しい座標を入力（点名 または X,Y）して Enter`;
+          if (c.pending) return `点 ${c.pairs.length + 1} の正しい座標：基準点（SIMA の点）をクリック、または点名・X,Y を入力して Enter`;
           return c.pairs.length >= 2 ? `次の点を指示するか、［確定］で合わせる（${c.pairs.length} 組）` : `座標が分かっている図面上の点 ${c.pairs.length + 1} を指示（2組以上）`;
         }
         if (how === 'dim' && !c.pts.length) return c.src ? '文字が表す長さの始点を指示' : '寸法線・線、または寸法値の文字をクリック';
@@ -1124,7 +1124,14 @@ export function commandDefs(K) {
         setTimeout(() => document.getElementById('mbInput')?.focus(), 0);
       },
       onPoint(p) {
-        if (c.o.how === 'coord') { c.pending = p; return; }
+        if (c.o.how === 'coord') {
+          if (c.pending) {
+            // 2回目のクリックが基準点（SIMA の点）の上なら、それを正しい座標にする
+            const pe = K.doc.entities.find((e) => e.type === 'point' && K.grpOf(e) === '基準点' && G.dist(e.p, p) < 1e-6);
+            if (pe) { c.pairs.push({ src: c.pending, dst: { ...pe.p }, label: pe.name }); c.pending = null; return; }
+          }
+          c.pending = p; return;
+        }
         if (c.pts.length >= 2) c.pts = [];
         if (c.pts.length === 1 && G.dist(c.pts[0], p) < 1e-9) return;
         c.pts.push(p);
@@ -1198,7 +1205,7 @@ export function commandDefs(K) {
       },
       info() {
         if (c.o.how === 'coord') {
-          let h = '<p>図面上の点をクリック → その点の正しい座標（点名か X,Y）を入力、を2組以上。3組以上あると、ずれ（残差）で確かめられます。</p>';
+          let h = '<p>図面上の点をクリック → 対応する基準点（読み込んだ SIMA の点）をクリック、を2組以上。座標は点名か X,Y の入力でも指定できます。3組以上あると、ずれ（残差）で確かめられます。</p>';
           if (c.pairs.length >= 2) {
             const t = c.coordTf();
             h += `<div class="mb-result">倍率 <b>${t.k.toFixed(6)}</b>${c.o.rot ? `<br>回転 ${toDMS(Math.abs(t.rot))} ${t.rot >= 0 ? '右回り' : '左回り'}` : ''}</div>`;

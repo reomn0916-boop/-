@@ -1825,8 +1825,8 @@ function importDxfText(text, name, undoable = true) {
   return entities.length;
 }
 function importPointsText(text, name) {
-  const pts = /\.sim$/i.test(name) || /^A01,/m.test(text) ? parseSIMA(text) : parseCSV(text);
-  if (!pts.length) { toast('座標が見つかりませんでした'); return 0; }
+  const pts = /\.sim$/i.test(name) || /^\s*A01\s*,/m.test(text) ? parseSIMA(text) : parseCSV(text);
+  if (!pts.length) { toast('座標が見つかりませんでした（SIMA の A01 の行か「点名,X,Y」の CSV か確かめてください）'); return 0; }
   begin();
   let upd = 0;
   for (const q of pts) {
@@ -1834,7 +1834,8 @@ function importPointsText(text, name) {
     if (ex && G.dist(ex.p, q) < 5e-4) { upd++; continue; }
     addEnt({ type: 'point', p: { x: q.x, y: q.y }, z: q.z || 0, name: q.name ? uniqueName(q.name) : nextPointName(), grp: '基準点' });
   }
-  commit(`${pts.length - upd} 点を「基準点」として読み込みました` + (upd ? `（同じ点 ${upd} 点は省略）` : ''));
+  const hasDrawing = doc.entities.some((e) => e.type !== 'point');
+  commit(`${pts.length - upd} 点を「基準点」として読み込みました` + (upd ? `（同じ点 ${upd} 点は省略）` : '') + (hasDrawing ? '。図面をこの座標に合わせるときは［縮尺合わせ］の方法「座標」' : ''));
   return pts.length;
 }
 K.importDxfText = importDxfText; K.importPointsText = importPointsText;

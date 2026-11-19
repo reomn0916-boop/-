@@ -1538,6 +1538,7 @@ $('#fileDxf').addEventListener('change', async (ev) => {
   } catch (err) { toast('DXF を読み込めませんでした: ' + err.message); }
 });
 
+let scAfterSima = false;
 $('#filePts').addEventListener('change', async (ev) => {
   const f = await readFile(ev.target); if (!f) return;
   const isSima = /\.sim$/i.test(f.name) || /^\s*A01\s*,/m.test(f.text);
@@ -1551,7 +1552,9 @@ $('#filePts').addEventListener('change', async (ev) => {
   snapshot();
   for (const q of pts) addEntity({ type: 'point', p: { x: q.x, y: q.y }, z: q.z, name: q.name || nextPointName(), grp: '基準点' }, { snap: false });
   changed(); fitAll();
-  toast(`${pts.length} 点を「基準点」として読み込みました（座標一覧で種別を変更できます）`);
+  if (scAfterSima) { scAfterSima = false; openScaleCoord(); toast(`${pts.length} 点を読み込みました。図面上の点と対応させてください`); return; }
+  const hasDrawing = doc.entities.some((e) => e.type !== 'point');
+  toast(`${pts.length} 点を「基準点」として読み込みました` + (hasDrawing ? '。図面を合わせるときは ☰ →「縮尺合わせ」→「座標（SIMA）で」' : '（座標一覧で種別を変更できます）'));
 });
 
 /** プロジェクト（.gcad / .json）で今の図面を置き換える */
@@ -2118,7 +2121,8 @@ $('#fitApply').addEventListener('click', () => {
 $('#fitToScale').addEventListener('click', (ev) => { ev.preventDefault(); $('#fitDialog').close(); openScale(); });
 
 // ---------- 縮尺合わせ（寸法で） ----------
-const scState = { mode: 'pts', a: '', b: '', ent: null, real: '', unit: '' };
+const scState = { mode: 'pts', a: '', b: '', ent: null, real: '', unit: '', pairs: [{ src: '', dst: '' }, { src: '', dst: '' }] };
+const simaPts = () => doc.entities.filter((e) => e.type === 'point' && grpOf(e) === '基準点');
 /** 文字の数値と単位（小数点がなければ mm とみなす: 5,000 → 5000 mm、5.000 → 5 m） */
 function lengthFromText(t) {
   const m = String(t ?? '').replace(/[,，\s]/g, '').match(/\d+(?:\.\d+)?/);
@@ -2130,6 +2134,9 @@ function renderScale() {
   document.querySelectorAll('#scMode [data-scmode]').forEach((b) => b.classList.toggle('active', b.dataset.scmode === scState.mode));
   $('#scPts').hidden = scState.mode !== 'pts';
   $('#scDim').hidden = scState.mode !== 'dim';
+  $('#scCoord').hidden = scState.mode !== 'coord';
+  $('#scRealRow').hidden = scState.mode === 'coord';
+  if (scState.mode === 'coord') renderScPairs();
   $('#scPts').innerHTML = [['a', '1点目（動かない基準点）'], ['b', '2点目']].map(([k, l]) => `
     <label class="field"><span>${l}</span><div class="in"><input data-sc="${k}" value="${esc(scState[k])}" list="ptNames" autocomplete="off" autocapitalize="off" placeholder="点名 / X,Y"><button class="pick" data-scpick="${k}">📍</button></div></label>`).join('');
   const e = scState.ent != null ? getEnt(scState.ent) : null;
@@ -2137,7 +2144,55 @@ function renderScale() {
   $('#scReal').value = scState.real;
   $('#scUnit').value = scState.unit || (settings.dimUnit === 'mm' ? 'mm' : 'm');
 }
+function renderScPairs() {
+  const sp = simaPts();
+  if (!sp.length) {
+    $('#scPairs').innerHTML = '<p class="small err">「基準点」の点がありません。先に ☰ →「座標を読み込む（SIMA）」で SIMA を読み込んでください。</p><button class="btn wide" id="scLoadSima">SIMA を読み込む</button>';
+    $('#scAddPair').hidden = true;
+    return;
+  }
+  $('#scAddPair').hidden = scState.pairs.length >= 8;
+  const opts = (v) => '<option value="">― 選ぶ ―</option>' + sp.map((e) => `<option value="${esc(e.name)}" ${e.name === v ? 'selected' : ''}>${esc(e.name)}（${fmt(e.p.x)}, ${fmt(e.p.y)}）</option>`).join('');
+  $('#scPairs').innerHTML = scState.pairs.map((q, i) => `
+    <div class="fit-pair"><h4>${i + 1}組目${i > 1 ? ` <button class="link-btn" data-scdel="${i}">削除</button>` : ''}</h4>
+      <label class="field"><span>図面上の点</span><div class="in"><input data-scp="${i}" value="${esc(q.src)}" list="ptNames" autocomplete="off" autocapitalize="off" placeholder="📍で図面をタップ"><button class="pick" data-scppick="${i}">📍</button></div></label>
+      <label class="field"><span>SIMA の点（正しい座標）</span><div class="in"><select data-scd="${i}" class="sc-sel">${opts(q.dst)}</select><button class="pick" data-scdpick="${i}">📍</button></div></label>
+    </div>`).join('');
+}
+function scCoordCompute() {
+  const pairs = [];
+  scState.pairs.forEach((q, i) => {
+    if (!q.src.trim() && !q.dst) return;
+    if (!q.src.trim() || !q.dst) throw new Error(`${i + 1}組目：図面上の点と SIMA の点を両方指定してください`);
+    pairs.push({ src: resolvePt(q.src).p, dst: resolvePt(q.dst).p, dl: q.dst });
+  });
+  if (pairs.length < 2) throw new Error('縮尺を求めるには2組以上必要です');
+  if (dist(pairs[0].src, pairs[1].src) < 1e-9) throw new Error('図面上の点が同じ位置です');
+  let tf;
+  if ($('#scRot').checked) tf = fitTransform(pairs, 'helmert');
+  else {
+    // 回転しない: 縮尺と移動だけ（最小二乗）
+    const n = pairs.length, sc = { x: 0, y: 0 }, dc = { x: 0, y: 0 };
+    for (const q of pairs) { sc.x += q.src.x / n; sc.y += q.src.y / n; dc.x += q.dst.x / n; dc.y += q.dst.y / n; }
+    let num = 0, den = 0;
+    for (const q of pairs) { const sx = q.src.x - sc.x, sy = q.src.y - sc.y; num += sx * (q.dst.x - dc.x) + sy * (q.dst.y - dc.y); den += sx * sx + sy * sy; }
+    const k = num / den;
+    tf = { a: k, b: 0, tx: dc.x - k * sc.x, ty: dc.y - k * sc.y, scale: k, rot: 0 };
+    tf.residuals = pairs.map((q) => { const p = applyTransform(tf, q.src); return { d: dist(p, q.dst) }; });
+  }
+  const dS = dist(pairs[0].src, pairs[1].src), dD = dist(pairs[0].dst, pairs[1].dst);
+  const html = `1組目〜2組目の距離：図面 ${fmt(dS)} m → SIMA ${fmt(dD)} m<br>倍率 <b>${tf.scale.toFixed(6)}</b>` +
+    (Math.abs(tf.scale - 0.001) < 1e-5 ? '（mm で描かれた図面を m に直します）' : '') +
+    ($('#scRot').checked ? `・回転 ${toDMS(Math.abs(tf.rot), 1)} ${tf.rot >= 0 ? '右回り' : '左回り'}` : '') +
+    `<br>合わせた後のずれ：${tf.residuals.map((r, i) => `${i + 1}組目 ${fmt(Math.round(r.d * 1000) || 0, 0)} mm`).join('・')}` +
+    `<br>${doc.entities.filter(scTarget).length} 個の図形が対象（基準点は動きません）`;
+  const worst = Math.max(...tf.residuals.map((r) => r.d));
+  const warn = worst > Math.max(0.05, dD * 0.01)
+    ? `<br><span class="err">ずれが大きすぎます（最大 ${fmt(worst)} m）。${$('#scRot').checked ? '組の対応（図面の点と SIMA の点）が合っているか確かめてください' : '図面の向きが違うようです。「向きと位置も合わせる」をオンにしてください'}</span>` : '';
+  return { tf, html: html + warn };
+}
 function scaleCompute() {
+  if (scState.mode === 'coord') return scCoordCompute();
   let base, L;
   if (scState.mode === 'pts') {
     if (!scState.a.trim() || !scState.b.trim()) throw new Error('長さの両端の2点を入力してください');
@@ -2164,7 +2219,7 @@ function openScale() {
   if (!scState.unit) scState.unit = settings.dimUnit === 'mm' ? 'mm' : 'm';
   // 選択中の寸法線・線があれば使う
   const sel = getEnt(selected);
-  if (sel && (sel.type === 'dim' || sel.type === 'line')) { scState.mode = 'dim'; scState.ent = sel.id; const t = lengthFromText(sel.txt); if (t) { scState.real = t.v; scState.unit = t.unit; } }
+  if (scState.mode !== 'coord' && sel && (sel.type === 'dim' || sel.type === 'line')) { scState.mode = 'dim'; scState.ent = sel.id; const t = lengthFromText(sel.txt); if (t) { scState.real = t.v; scState.unit = t.unit; } }
   renderScale();
   $('#scResult').innerHTML = '';
   $('#scaleDialog').showModal();
@@ -2210,15 +2265,38 @@ $('#scApply').addEventListener('click', () => {
   let r;
   try { r = scaleCompute(); } catch (err) { $('#scResult').innerHTML = `<span class="err">${esc(err.message)}</span>`; return; }
   snapshot();
-  const tf = { a: r.k, b: 0, tx: r.base.x * (1 - r.k), ty: r.base.y * (1 - r.k), scale: r.k };
+  const tf = r.tf || { a: r.k, b: 0, tx: r.base.x * (1 - r.k), ty: r.base.y * (1 - r.k), scale: r.k };
   let n = 0;
   for (const e of doc.entities) { if (!scTarget(e)) continue; transformEntity(e, tf); n++; }
   doc.entities = doc.entities.map((e) => (e.type === 'align' ? { ...e } : e)); // 路線の形状を作り直す
-  Object.assign(scState, { a: '', b: '', ent: null, real: '' });
+  Object.assign(scState, { a: '', b: '', ent: null, real: '', pairs: [{ src: '', dst: '' }, { src: '', dst: '' }] });
   $('#scaleDialog').close();
   changed(); fitAll();
-  toast(`倍率 ${r.k.toFixed(6)} で縮尺を合わせました（${n} 個の図形・元に戻す可）`);
+  toast(`倍率 ${tf.scale.toFixed(6)} で縮尺を合わせました（${n} 個の図形・元に戻す可）`);
 });
+$('#scCoord').addEventListener('input', (ev) => { const i = ev.target.dataset.scp; if (i != null) scState.pairs[Number(i)].src = ev.target.value; });
+$('#scCoord').addEventListener('change', (ev) => { const i = ev.target.dataset.scd; if (i != null) scState.pairs[Number(i)].dst = ev.target.value; });
+$('#scCoord').addEventListener('click', (ev) => {
+  const t = ev.target.closest('[data-scppick],[data-scdpick],[data-scdel],#scLoadSima,#scAddPair'); if (!t) return;
+  ev.preventDefault();
+  if (t.id === 'scLoadSima') { $('#scaleDialog').close(); scAfterSima = true; $('#filePts').click(); return; }
+  if (t.id === 'scAddPair') { scState.pairs.push({ src: '', dst: '' }); renderScPairs(); return; }
+  if (t.dataset.scdel != null) { scState.pairs.splice(Number(t.dataset.scdel), 1); renderScPairs(); return; }
+  const back = () => { renderScale(); $('#scaleDialog').showModal(); };
+  $('#scaleDialog').close();
+  if (t.dataset.scppick != null) {
+    const i = Number(t.dataset.scppick);
+    pick((v) => { scState.pairs[i].src = v; }, false, back, { msg: `${i + 1}組目：図面上の点（建物の角・杭など）をタップ` });
+  } else {
+    const i = Number(t.dataset.scdpick);
+    pick((e) => { scState.pairs[i].dst = e.name; }, false, back, {
+      ent: true, msg: `${i + 1}組目：対応する SIMA の点（基準点）をタップ`, miss: '基準点が見つかりません',
+      filter: (e) => e.type === 'point' && grpOf(e) === '基準点',
+    });
+  }
+});
+/** 座標で縮尺合わせ（SIMA 取り込み直後の案内からも使う） */
+function openScaleCoord() { scState.mode = 'coord'; openScale(); }
 $('#scToFit').addEventListener('click', (ev) => { ev.preventDefault(); $('#scaleDialog').close(); $('#fitScale').checked = true; openFit(); });
 
 // ---------- 施工図 ----------
@@ -2423,7 +2501,7 @@ $('#emptyState').addEventListener('click', (ev) => {
 });
 updateEmpty();
 
-const APP_VERSION = 'v12（SIMA 選択の修正済み）';
+const APP_VERSION = 'v13（SIMA で縮尺合わせ）';
 $('#appVer').textContent = APP_VERSION;
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});
