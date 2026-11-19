@@ -4,6 +4,7 @@ import { db, newId, persist } from './db.js';
 import { prepareImage, readReceipt, canvasToBlob, rotateBlob } from './ocr.js';
 import { DEFAULT_CATEGORIES, payeeKey, toISODate, parseReceipt } from './parse.js';
 import { isPdf, readPdf } from './pdfin.js';
+import { parseEml } from './eml.js';
 
 // ---- 小さな道具 --------------------------------------------------------------
 
@@ -45,6 +46,7 @@ export const S = {
   settings: { ...DEF_SETTINGS, ...lsGet('settings', {}) },
   learned: lsGet('learned', { payeeCat: {}, tnoPayee: {} }),
   templates: lsGet('templates', []),
+  recurring: lsGet('recurring', []),
   thumbs: new Map(),
   ocr: new Map(),
 };
@@ -54,6 +56,7 @@ if (!S.learned.tnoPayee) S.learned.tnoPayee = {};
 export const saveSettings = () => lsSet('settings', S.settings);
 export const saveLearned = () => lsSet('learned', S.learned);
 export const saveTemplates = () => lsSet('templates', S.templates);
+export const saveRecurring = () => lsSet('recurring', S.recurring);
 export const byId = (id) => S.expenses.find((e) => e.id === id);
 export const cats = () => (S.settings.categories && S.settings.categories.length ? S.settings.categories : DEFAULT_CATEGORIES);
 export const isCompanyPaid = (e) => e.method === '会社カード' || e.method === '請求書払い';
@@ -67,7 +70,24 @@ export async function loadAll() {
   emit('change');
 }
 
+// ---- 訂正・削除の履歴（電子帳簿保存法の「訂正削除の履歴」） --------------------------------
+const TRACK = ['date', 'amount', 'payee', 'category', 'method', 'invoiceNo', 'tax10', 'tax8', 'memo', 'site', 'status', 'debit', 'credit', 'partner', 'gross', 'wh'];
+function diff(a, b) { const d = {}; for (const k of TRACK) { const x = a ? a[k] : undefined; const y = b ? b[k] : undefined; if ((x ?? '') !== (y ?? '')) d[k] = [x ?? null, y ?? null]; } return d; }
+async function logHistory(kind, before, after) {
+  const ch = diff(before, after);
+  if (!Object.keys(ch).length) return;
+  const action = !before ? 'create' : !after ? 'delete' : 'update';
+  const ref = (after || before).id;
+  try { await db.put('history', { id: newId('h'), at: Date.now(), kind, ref, action, ch, summary: { payee: (after || before).payee || (after || before).partner || '', amount: (after || before).amount || (after || before).gross || 0, date: (after || before).date || '' } }); } catch (_) { /* 古い保存場所 */ }
+}
+export async function historyOf(ref) { return ((await db.all('history')) || []).filter((h) => h.ref === ref).sort((a, b) => b.at - a.at); }
+export async function allHistory() { return ((await db.all('history')) || []).sort((a, b) => b.at - a.at); }
+const snapshot = (id) => { const e = S.expenses.find((x) => x.id === id); return e ? JSON.parse(JSON.stringify(e)) : null; };
+
 export async function saveExpense(e, { quiet = false } = {}) {
+  const prev = S.expenses.find((x) => x.id === e.id);
+  if (!prev && e.status !== 'draft') logHistory('expense', null, e); // 新しく確定した経費
+  else if (prev && prev !== e && prev.status !== 'draft') logHistory('expense', snapshot(e.id), e); // 確定した経費を直した
   e.updated = Date.now();
   await db.put('expenses', e);
   const i = S.expenses.findIndex((x) => x.id === e.id);
@@ -80,6 +100,7 @@ export async function saveExpense(e, { quiet = false } = {}) {
 export async function saveMany(list) {
   const t = Date.now();
   list.forEach((e) => { e.updated = t; });
+  for (const e of list) if (e.__orig) { logHistory('expense', e.__orig, e); delete e.__orig; }
   await db.putMany('expenses', list);
   for (const e of list) { const i = S.expenses.findIndex((x) => x.id === e.id); if (i >= 0) S.expenses[i] = e; else S.expenses.push(e); }
   persist();
@@ -154,6 +175,7 @@ export async function bulkUpdate(ids, patch) {
   for (const id of ids) {
     const e = byId(id); if (!e) continue;
     before.push(JSON.parse(JSON.stringify(e)));
+    e.__orig = JSON.parse(JSON.stringify(e));
     Object.assign(e, typeof patch === 'function' ? patch(e) : patch);
     e.auto = (e.auto || []).filter((k) => !(k in (typeof patch === 'function' ? {} : patch)));
     list.push(e);
@@ -168,10 +190,34 @@ export async function restoreVersions(before) {
   emit('change');
 }
 
-export const isImportable = (f) => isPdf(f) || /^image\//.test(f.type) || /\.(jpe?g|png|webp|heic|heif|gif|bmp)$/i.test(f.name || '');
+export const isEml = (f) => /\.eml$/i.test(f.name || '') || f.type === 'message/rfc822';
+// メール本文を、白い紙に書いた画像にする（領収書の台紙にのせるため）
+function textImage(text) {
+  const lines = String(text).split('\n').flatMap((l) => (l.length > 46 ? l.match(/.{1,46}/g) : [l])).slice(0, 90);
+  const c = document.createElement('canvas'); c.width = 900; c.height = Math.max(500, 60 + lines.length * 30);
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.fillStyle = '#222';
+  g.font = '20px "Hiragino Sans","Yu Gothic","Meiryo",sans-serif';
+  lines.forEach((l, i) => g.fillText(l, 30, 50 + i * 30));
+  return c;
+}
+export const isImportable = (f) => isPdf(f) || isEml(f) || /^image\//.test(f.type) || /\.(jpe?g|png|webp|heic|heif|gif|bmp)$/i.test(f.name || '');
 
 // 画像・PDF を取り込んで「確認待ち」の経費にし、読み取りの順番に並べる
 export async function importFiles(files, { onProgress } = {}) {
+  // メール（.eml）は添付をとり出す。添付がなければ本文を領収書の画像にする
+  const expanded = []; const mails = [];
+  for (const f of files) {
+    if (isEml(f)) {
+      try {
+        const u8 = new Uint8Array(await f.arrayBuffer()); let s = ''; for (let k = 0; k < u8.length; k += 8192) s += String.fromCharCode.apply(null, u8.subarray(k, k + 8192));
+        const m = parseEml(s);
+        const att = m.attachments.filter((a) => /pdf|image/.test(a.type) || /\.(pdf|jpe?g|png)$/i.test(a.name));
+        if (att.length) att.forEach((a) => expanded.push(new File([a.bytes], a.name, { type: a.type })));
+        else mails.push({ f, m });
+      } catch (err) { expanded.push(f); }
+    } else expanded.push(f);
+  }
+  files = expanded;
   const list = [...files].filter(isImportable);
   const made = []; const failed = [];
   let i = 0;
@@ -196,6 +242,18 @@ export async function importFiles(files, { onProgress } = {}) {
     } catch (err) {
       failed.push({ name: f.name || '', error: err.message || String(err) });
     }
+  }
+  for (const { f, m } of mails) {
+    try {
+      const imageId = newId('i');
+      const text = [m.subject, m.from, m.date ? m.date.toLocaleDateString('ja-JP') : '', '', m.text].join('\n');
+      const img = await prepareImage(await canvasToBlob(textImage(text), 'image/jpeg', 0.9));
+      await db.put('images', { id: imageId, blob: img.blob, thumb: img.thumb, w: img.width, h: img.height, orig: f, origName: f.name || 'mail.eml', origType: 'message/rfc822', text });
+      const e = newExpense({ imageId, kind: 'receipt', source: 'mail', fileName: f.name || '', memo: m.subject.slice(0, 40) });
+      if (m.date && !isNaN(m.date)) { e.date = toISODate(m.date); }
+      await saveExpense(e, { quiet: true });
+      made.push(e); enqueue(e.id);
+    } catch (err) { failed.push({ name: f.name || '', error: err.message || String(err) }); }
   }
   onProgress && onProgress(list.length, list.length, '');
   emit('change');
@@ -250,7 +308,7 @@ async function pump() {
   running = false;
 }
 
-export const OCR_FIELDS = ['amount', 'date', 'payee', 'category', 'memo', 'invoiceNo', 'tax10', 'tax8', 'method'];
+export const OCR_FIELDS = ['amount', 'date', 'payee', 'category', 'memo', 'invoiceNo', 'tax10', 'tax8', 'method', 'liters'];
 
 // 読み取った値を入れる。空の欄と「初期値のままの欄（auto）」だけ。touched（自分で触った欄）は変えない
 export function fillFromOcr(target, f, engine, touched = null) {
@@ -314,12 +372,40 @@ export function validate(c) {
 
 // 確定して保存（確認待ち → 未精算）
 export async function commit(c) {
+  const prev = S.expenses.find((x) => x.id === c.id);
+  if (prev && prev.status === 'draft') logHistory('expense', null, { ...c, status: 'ok' }); // 確認待ち → 確定（新しく帳簿に入った）
   if (c.status === 'draft') c.status = 'ok';
   c.auto = [];
   await saveExpense(c);
   learn(c);
   return c;
 }
+
+// ---- 定期的な経費・売上（毎月○日に自動で登録） ---------------------------------------------
+// rule = { id, label, kind: 'expense' | 'income', day, start: 'YYYY-MM', last: 'YYYY-MM', data: {...} }
+export function addRecurring(rule) { S.recurring.push({ id: newId('rc'), start: todayISO().slice(0, 7), last: '', day: 1, ...rule }); saveRecurring(); emit('change'); }
+export function updateRecurring(id, patch) { const r = S.recurring.find((x) => x.id === id); if (r) Object.assign(r, patch); saveRecurring(); emit('change'); }
+export function removeRecurring(id) { S.recurring = S.recurring.filter((x) => x.id !== id); saveRecurring(); emit('change'); }
+export async function runRecurring(today = todayISO()) {
+  const made = [];
+  for (const r of S.recurring) {
+    if (r.paused) continue;
+    let ym = r.last ? addMonth(r.last, 1) : r.start;
+    while (ym <= today.slice(0, 7)) {
+      const last = +monthEnd(ym).slice(8);
+      const date = `${ym}-${String(Math.min(+r.day || 1, last)).padStart(2, '0')}`;
+      if (date > today) break;
+      if (r.kind === 'income') { const l = { ...r.data, type: 'income', date, recurring: r.id }; delete l.id; await saveLedger(l); made.push(l); } else { const e = newExpense({ ...r.data, date, status: 'ok', auto: [], recurring: r.id }); await saveExpense(e, { quiet: true }); made.push(e); }
+      r.last = ym; ym = addMonth(ym, 1);
+    }
+  }
+  if (made.length) { saveRecurring(); emit('change'); }
+  return made;
+}
+
+// ---- kv（同期フォルダの場所など） -------------------------------------------------
+export const kvGet = async (k) => { try { const r = await db.get('kv', k); return r ? r.v : undefined; } catch (_) { return undefined; } };
+export const kvSet = (k, v) => db.put('kv', { k, v });
 
 // ---- 削除・取り消し ------------------------------------------------------------
 
@@ -328,6 +414,7 @@ export async function removeExpenses(ids) {
   for (const id of ids) {
     const e = byId(id); if (!e) continue;
     const img = e.imageId ? await db.get('images', e.imageId) : null;
+    if (e.status !== 'draft') logHistory('expense', e, null);
     await db.del('expenses', id);
     if (img) await db.del('images', img.id);
     S.expenses = S.expenses.filter((x) => x.id !== id);
@@ -395,6 +482,7 @@ export async function undoReport(id) {
 export async function saveLedger(l) {
   if (!l.id) l.id = newId(l.type === 'income' ? 'n' : 'j');
   if (!l.created) l.created = Date.now();
+  logHistory('ledger', S.ledger.find((x) => x.id === l.id) || null, l);
   l.updated = Date.now();
   await db.put('ledger', l);
   const i = S.ledger.findIndex((x) => x.id === l.id);
@@ -405,6 +493,7 @@ export async function saveLedger(l) {
 }
 export async function removeLedger(id) {
   const l = S.ledger.find((x) => x.id === id); if (!l) return null;
+  logHistory('ledger', l, null);
   await db.del('ledger', id);
   S.ledger = S.ledger.filter((x) => x.id !== id);
   emit('change');

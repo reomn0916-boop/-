@@ -21,6 +21,8 @@ const LIAB_SET = new Set(LIABILITY_ACCOUNTS);
 const REV_SET = new Set(REVENUE_ACCOUNTS);
 const EQUITY_SET = new Set(['元入金', '事業主借', '資本金', '繰越利益剰余金']);
 
+import { depreciationSchedule } from './assets.js';
+
 export const MODES = { sole: '個人事業主（青色申告）', corp: '法人' };
 
 // 支払方法 → 貸方の科目（初期値）。個人のお金で払った経費は、個人事業主なら「事業主借」、法人なら立て替えた人への「未払金」
@@ -31,6 +33,7 @@ const PAY_MAP = {
 
 export const DEFAULT_BOOKS = {
   mode: 'sole', closeMonth: 12, openDate: '', opening: {}, capital: 0, payMap: {}, reimbAccount: '普通預金', tradeName: '',
+  fixedAssets: [], allocation: {}, taxMethod: 'general', simpleRate: 70, taxable: true,
 };
 
 export function booksOf(settings) {
@@ -75,20 +78,43 @@ function isoOf(t) { const d = new Date(t); return `${d.getFullYear()}-${String(d
 
 // ---- 仕訳を作る ---------------------------------------------------------------
 // 1 行 = { date, debit, credit, amount, memo, src: 'expense' | 'income' | 'journal' | 'settle', ref }
-export function journalsFrom({ expenses = [], ledger = [], reports = [], settings = {} }) {
+export function journalsFrom({ expenses = [], ledger = [], reports = [], settings = {}, asOf = '' }) {
   const b = booksOf(settings);
   const out = [];
+  const today = asOf || isoOf(Date.now());
   for (const e of expenses) {
     if (e.status === 'draft' || !e.amount || !e.date) continue;
     const route = e.route && (e.route.from || e.route.to) ? `${e.route.from || ''}→${e.route.to || ''}` : '';
     out.push({
       date: e.date, debit: e.category || '雑費', credit: b.payMap[e.method] || '未払金', amount: Math.round(e.amount),
-      memo: [e.payee, route, e.memo].filter(Boolean).join(' '), src: 'expense', ref: e.id,
+      memo: [e.payee, route, e.memo].filter(Boolean).join(' '), src: 'expense', ref: e.id, site: e.site || '', invoice: !!e.invoiceNo, tax10: e.tax10, tax8: e.tax8,
     });
   }
   for (const l of ledger) {
+    if (l.type === 'payout') {
+      // 外注費の支払い: 借方 外注費（総額）／ 貸方 支払元（差引額）・預り金（源泉）
+      if (!l.gross || !l.date) continue;
+      const memo = [l.partner, l.memo].filter(Boolean).join(' ');
+      const wh = Math.round(l.wh || 0);
+      if (l.gross - wh > 0) out.push({ date: l.date, debit: l.debit || '外注費', credit: l.payFrom || '普通預金', amount: Math.round(l.gross - wh), memo, src: 'payout', ref: l.id, site: l.site || '', invoice: !!l.invoiceNo });
+      if (wh > 0) out.push({ date: l.date, debit: l.debit || '外注費', credit: '預り金', amount: wh, memo: `${memo} 源泉所得税`.trim(), src: 'payout', ref: l.id, site: l.site || '', invoice: !!l.invoiceNo });
+      continue;
+    }
     if (!l.amount || !l.date || !l.debit || !l.credit) continue;
-    out.push({ date: l.date, debit: l.debit, credit: l.credit, amount: Math.round(l.amount), memo: [l.partner, l.memo].filter(Boolean).join(' '), src: l.type === 'income' ? 'income' : 'journal', ref: l.id });
+    out.push({ date: l.date, debit: l.debit, credit: l.credit, amount: Math.round(l.amount), memo: [l.partner, l.memo].filter(Boolean).join(' '), src: l.type === 'income' ? 'income' : l.src === 'bank' ? 'bank' : 'journal', ref: l.id, site: l.site || '', taxRate: l.taxRate, invoice: l.noInvoice ? false : true, split: l.invoice && l.invoice.totals ? { 10: l.invoice.totals.base10 + l.invoice.totals.tax10, 8: l.invoice.totals.base8 + l.invoice.totals.tax8 } : null });
+  }
+  // 固定資産: 買ったときの仕訳と、期末ごとの減価償却（事業で使う割合を超える分は事業主貸）
+  for (const a of b.fixedAssets || []) {
+    if (!a.cost || !a.acquired) continue;
+    const acc = a.account || '工具器具備品';
+    if (a.paidFrom) out.push({ date: a.acquired, debit: acc, credit: a.paidFrom, amount: Math.round(a.cost), memo: `${a.name || '固定資産'} 取得`, src: 'asset', ref: a.id, invoice: true });
+    const ratio = b.mode === 'sole' ? Math.min(100, Math.max(0, a.ratio == null ? 100 : +a.ratio)) : 100;
+    for (const r of depreciationSchedule(a, { closeMonth: b.closeMonth, upto: today })) {
+      if (!r.amount) continue;
+      const biz = Math.round((r.amount * ratio) / 100);
+      if (biz) out.push({ date: r.fyEnd, debit: '減価償却費', credit: acc, amount: biz, memo: `${a.name || '固定資産'} 減価償却`, src: 'dep', ref: a.id });
+      if (r.amount - biz) out.push({ date: r.fyEnd, debit: '事業主貸', credit: acc, amount: r.amount - biz, memo: `${a.name || '固定資産'} 減価償却（家事分）`, src: 'dep', ref: a.id });
+    }
   }
   if (b.mode === 'corp') {
     // 精算（立て替えた人に払った）: 未払金を減らす。仮払金があれば相殺
@@ -98,6 +124,26 @@ export function journalsFrom({ expenses = [], ledger = [], reports = [], setting
       const adv = Math.min(r.advance || 0, r.reimb);
       if (adv) out.push({ date, debit: '未払金', credit: '仮払金', amount: adv, memo: '経費精算（仮払金と相殺）', src: 'settle', ref: r.id });
       if (r.reimb - adv > 0) out.push({ date, debit: '未払金', credit: b.reimbAccount || '普通預金', amount: r.reimb - adv, memo: '経費精算の支払い', src: 'settle', ref: r.id });
+    }
+  }
+  // 家事按分（個人事業主）: 期末に、事業で使っていない割合を事業主貸へ
+  if (b.mode === 'sole') {
+    const alloc = Object.entries(b.allocation || {}).filter(([, v]) => v != null && +v < 100);
+    if (alloc.length) {
+      const sums = new Map();
+      for (const j of out) {
+        const r = alloc.find(([cat]) => cat === j.debit);
+        if (!r || j.src === 'dep' || j.src === 'alloc') continue;
+        const end = fiscalRange(j.date, b.closeMonth).to;
+        const k = `${end}|${j.debit}`;
+        sums.set(k, (sums.get(k) || 0) + j.amount);
+      }
+      for (const [k, v] of sums) {
+        const [end, cat] = k.split('|');
+        const ratio = +alloc.find(([c]) => c === cat)[1];
+        const priv = Math.round((v * (100 - ratio)) / 100);
+        if (priv > 0) out.push({ date: end, debit: '事業主貸', credit: cat, amount: priv, memo: `家事按分（事業 ${ratio}%）`, src: 'alloc', ref: cat });
+      }
     }
   }
   return out.sort((a, c) => a.date.localeCompare(c.date));

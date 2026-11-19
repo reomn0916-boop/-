@@ -334,6 +334,7 @@ export function parseReceipt(raw, { today = new Date(), learned = {}, categories
     tax10, tax8,
     category,
     memo: findMemo(lines),
+    liters: (() => { const m = text.match(/(\d{1,3}\.\d{1,2})\s*[Lℓl](?![a-z])/); return m && /レギュラー|ハイオク|軽油|給油|ガソリン|SS/.test(text) ? +m[1] : null; })(),
     payment: findPayment(lines),
     sure: { amount: !!(total && total.sure), date: !!date, payee: !!(payee && payee.sure) },
     text,

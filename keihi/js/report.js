@@ -544,3 +544,124 @@ export function toJournalBookCSV(st) {
   return csv([['日付', '借方勘定科目', '借方金額', '貸方勘定科目', '貸方金額', '摘要', '元の記録'],
     ...st.journals.map((j) => [j.date.replace(/-/g, '/'), j.debit, j.amount, j.credit, j.amount, j.memo, KIND_SRC[j.src] || ''])]);
 }
+
+// ---- 請求書（適格請求書） ------------------------------------------------------------
+// inv = { no, date, due, to, toSuffix, subject, items, note }, totals = invoiceTotals(items), me = { name, address, tel, regNo, bank }
+export function renderInvoice(inv, totals, me) {
+  const { c, g } = page();
+  text(g, '請 求 書', 105, 24, { size: 8, weight: 700, align: 'center' });
+  hline(g, 78, 132, 29.4, INK, 2);
+  text(g, `請求日　${jpDate(inv.date)}`, 195, 40, { size: 3, align: 'right' });
+  text(g, `請求番号　${inv.no || ''}`, 195, 46, { size: 3, align: 'right' });
+  text(g, `${inv.to || ''}　${inv.toSuffix || '御中'}`, 15, 44, { size: 5, weight: 700, maxMm: 110 });
+  hline(g, 15, 112, 48.5, INK, 1);
+  if (inv.subject) text(g, `件名：${inv.subject}`, 15, 56, { size: 3.3, maxMm: 110 });
+  text(g, '下記のとおりご請求申し上げます。', 15, 63, { size: 3.1, color: SUB });
+  // 発行者
+  let y = 56;
+  text(g, me.name || '', 195, y, { size: 4, weight: 700, align: 'right', maxMm: 80 }); y += 6;
+  for (const l of [me.address, me.tel ? `TEL ${me.tel}` : '', me.regNo ? `登録番号 ${me.regNo}` : '']) if (l) { text(g, l, 195, y, { size: 2.8, align: 'right', color: SUB, maxMm: 80 }); y += 5; }
+  // 合計
+  rect(g, 15, 72, 100, 15, { fill: '#dff1e8', stroke: INK, lw: 2 });
+  text(g, 'ご請求金額（税込）', 19, 79.5, { size: 3.4, weight: 700 });
+  text(g, yen(totals.total), 111, 79.5, { size: 6.4, weight: 800, align: 'right' });
+  text(g, `お支払期限　${inv.due ? jpDate(inv.due) : '—'}`, 15, 93, { size: 3.2, weight: 600 });
+  // 明細
+  const cols = [['品目', 15, 'left', 92], ['数量', 122, 'right'], ['単位', 131, 'center'], ['単価', 158, 'right'], ['金額（税抜）', 193, 'right']];
+  y = 100;
+  rect(g, 15, y, 180, 8, { fill: HEAD, stroke: INK });
+  cols.forEach(([l, x, a]) => text(g, l, a === 'left' ? x + 2 : x, y + 4.2, { size: 2.9, weight: 700, align: a }));
+  y += 8;
+  const rh = 7.4;
+  const rows = totals.lines.length ? totals.lines : [];
+  for (const it of rows.slice(0, 22)) {
+    const cy = y + rh / 2 + 0.2;
+    text(g, `${it.name || ''}${it.rate === 8 ? ' ※' : ''}`, 17, cy, { size: 3, maxMm: 98 });
+    text(g, String(it.qty), 122, cy, { size: 3, align: 'right' });
+    text(g, it.unit || '', 131, cy, { size: 2.9, align: 'center' });
+    text(g, it.price.toLocaleString('ja-JP'), 158, cy, { size: 3, align: 'right' });
+    text(g, it.amount.toLocaleString('ja-JP'), 193, cy, { size: 3.1, align: 'right', weight: 600 });
+    hline(g, 15, 195, y + rh, '#d5dbe0');
+    y += rh;
+  }
+  for (let k = rows.length; k < 8; k++) { hline(g, 15, 195, y + rh, '#e8ecef'); y += rh; }
+  g.strokeStyle = INK; g.lineWidth = 1; g.strokeRect(15 * MM + 0.5, 100 * MM + 0.5, 180 * MM, (y - 100) * MM);
+  // 税率ごとの合計（適格請求書の記載事項）
+  y += 5;
+  const sumRows = [['小計（税抜）', totals.subtotal]];
+  if (totals.base10) sumRows.push(['10%対象（税抜）', totals.base10], ['　消費税（10%）', totals.tax10]);
+  if (totals.base8) sumRows.push(['8%対象（税抜）※軽減税率', totals.base8], ['　消費税（8%）', totals.tax8]);
+  if (totals.base0) sumRows.push(['非課税・対象外', totals.base0]);
+  sumRows.push(['合計（税込）', totals.total]);
+  for (const [l, v] of sumRows) {
+    const strong = l.startsWith('合計');
+    if (strong) rect(g, 120, y, 75, 8, { fill: '#dff1e8', stroke: null });
+    text(g, l, 122, y + 4.2, { size: 3, weight: strong ? 800 : 500 });
+    text(g, yen(v), 193, y + 4.2, { size: strong ? 3.8 : 3.1, align: 'right', weight: strong ? 800 : 600 });
+    hline(g, 120, 195, y + 8, '#d5dbe0');
+    y += 8;
+  }
+  // 振込先・備考
+  let ny = y - sumRows.length * 8;
+  if (me.bank) { rect(g, 15, ny, 98, 22, { stroke: LINE }); text(g, 'お振込先', 18, ny + 5, { size: 2.9, weight: 700 }); String(me.bank).split('\n').slice(0, 3).forEach((l, i) => text(g, l, 18, ny + 11 + i * 4.6, { size: 2.9, maxMm: 92 })); ny += 26; }
+  if (inv.note) { text(g, '備考', 15, ny + 4, { size: 2.9, weight: 700 }); String(inv.note).split('\n').slice(0, 4).forEach((l, i) => text(g, l, 15, ny + 9.5 + i * 4.6, { size: 2.9, maxMm: 98 })); }
+  if (totals.base8) text(g, '※は軽減税率（8%）の対象です', 15, 280, { size: 2.6, color: SUB });
+  return c;
+}
+
+// ---- 決算書の追加ページ: 消費税の概算・青色申告決算書の内訳 ----------------------------------
+export function taxPage(tax, st, settings, books) {
+  const { c, g } = page();
+  stHead(g, '消 費 税 の 概 算', `自 ${jpDate(st.from)}　至 ${jpDate(st.to)}`, settings, books);
+  const L = 25; let y = 56;
+  const row = (l, v, o = {}) => { text(g, l, L + 2, y, { size: 3.2, weight: o.b ? 700 : 400, color: o.sub ? SUB : INK }); text(g, typeof v === 'number' ? amt(v) : v, 183, y, { size: 3.3, align: 'right', weight: o.b ? 800 : 500 }); hline(g, L, 185, y + 3.6, '#e1e6e9'); y += 8; };
+  row('課税売上（税込・10%）', tax.sales10); row('課税売上（税込・8%）', tax.sales8); row('売上に含まれる消費税', tax.salesTax, { b: true });
+  y += 4;
+  row('課税仕入・経費（税込）', tax.buyBase); row('仕入れに含まれる消費税（控除できる分）', tax.buyTax, { b: true });
+  if (tax.noInvCount) row(`うち登録番号なし ${tax.noInvCount}件で控除が減った分`, tax.noInvoiceCut, { sub: true });
+  y += 6;
+  const names = { general: '一般課税（原則）', simple: `簡易課税（みなし仕入率 ${books.simpleRate || 70}%）`, twoTenths: '2割特例' };
+  rect(g, L, y - 4, 160, 8, { fill: HEAD, stroke: null }); text(g, '計算方法ごとの納める税額（国税＋地方税・100円未満切り捨て）', L + 2, y, { size: 3.1, weight: 700 }); y += 8;
+  for (const k of ['general', 'simple', 'twoTenths']) row(`${names[k]}${k === tax.method ? '　← 設定中' : ''}${k === tax.best ? '　★ いちばん少ない' : ''}`, tax.byMethod[k], { b: k === tax.method });
+  y += 6;
+  ['税込の記録から逆算した目安です（税込経理）。端数の計算や、簡易課税・2割特例を使えるかどうか（届出・基準期間の売上）は税務署・税理士に確かめてください。',
+    '登録番号のない仕入れは、2026年9月までは8割、2029年9月までは5割を控除できる経過措置で計算しています。'].forEach((t) => { text(g, t, L, y, { size: 2.6, color: SUB, maxMm: 160 }); y += 5.5; });
+  return c;
+}
+
+export function bluePage(st, extra, settings, books) {
+  // extra = { assets: [{ name, acquired, cost, life, rate, months, amount, ratio, biz, bookClose }], rents: [[payee, amount]], wages, monthlyCogs }
+  const { c, g } = page();
+  stHead(g, '決 算 書 の 内 訳', `自 ${jpDate(st.from)}　至 ${jpDate(st.to)}`, settings, books);
+  const L = 15; const R = 195; let y = 54;
+  const head = (t) => { rect(g, L, y, R - L, 7.5, { fill: HEAD, stroke: INK }); text(g, t, L + 2, y + 3.9, { size: 3.1, weight: 700 }); y += 7.5; };
+  head('減価償却費の計算');
+  const cols = [['資産の名前', L + 2, 'left'], ['取得', 70, 'center'], ['取得価額', 98, 'right'], ['耐用', 109, 'right'], ['償却率', 122, 'right'], ['月数', 131, 'right'], ['本年分', 152, 'right'], ['事業割合', 166, 'right'], ['必要経費', 181, 'right'], ['期末残高', 194, 'right']];
+  cols.forEach(([l, x, a]) => text(g, l, x, y + 3.5, { size: 2.4, weight: 700, align: a, color: SUB })); y += 6.5;
+  if (!extra.assets.length) { text(g, '（固定資産の登録はありません）', L + 2, y + 3, { size: 2.8, color: SUB }); y += 7; }
+  for (const a of extra.assets.slice(0, 10)) {
+    const cy = y + 3.2;
+    text(g, a.name, L + 2, cy, { size: 2.7, maxMm: 40 }); text(g, a.acquired.slice(0, 7).replace('-', '/'), 70, cy, { size: 2.6, align: 'center' });
+    text(g, amt(a.cost), 98, cy, { size: 2.7, align: 'right' }); text(g, `${a.life}年`, 109, cy, { size: 2.6, align: 'right' }); text(g, a.rate, 122, cy, { size: 2.6, align: 'right' });
+    text(g, `${a.months}`, 131, cy, { size: 2.6, align: 'right' }); text(g, amt(a.amount), 152, cy, { size: 2.7, align: 'right' }); text(g, `${a.ratio}%`, 166, cy, { size: 2.6, align: 'right' });
+    text(g, amt(a.biz), 181, cy, { size: 2.7, align: 'right', weight: 700 }); text(g, amt(a.bookClose), 194, cy, { size: 2.7, align: 'right' });
+    hline(g, L, R, y + 6.4, '#e1e6e9'); y += 6.4;
+  }
+  y += 8; head('地代家賃の内訳');
+  if (!extra.rents.length) { text(g, '（ありません）', L + 2, y + 3, { size: 2.8, color: SUB }); y += 7; }
+  for (const [p, v] of extra.rents.slice(0, 8)) { text(g, p, L + 2, y + 3.2, { size: 2.9, maxMm: 120 }); text(g, amt(v), 194, y + 3.2, { size: 2.9, align: 'right' }); hline(g, L, R, y + 6.4, '#e1e6e9'); y += 6.4; }
+  y += 8; head('月別の売上（収入）金額と仕入金額');
+  const mcols = [['月', L + 2, 'left'], ['売上（収入）金額', 110, 'right'], ['仕入金額', 160, 'right']];
+  mcols.forEach(([l, x, a]) => text(g, l, x, y + 3.5, { size: 2.5, weight: 700, align: a, color: SUB })); y += 6.5;
+  for (const m of st.monthly.slice(0, 12)) {
+    text(g, `${+m.ym.slice(5)}月`, L + 2, y + 3, { size: 2.8 }); text(g, amt(m.rev), 110, y + 3, { size: 2.8, align: 'right' }); text(g, amt((extra.monthlyCogs || {})[m.ym] || 0), 160, y + 3, { size: 2.8, align: 'right' });
+    hline(g, L, R, y + 5.8, '#eef1f3'); y += 5.8;
+  }
+  text(g, `給料賃金 ${amt(extra.wages || 0)}円 ・ この内訳は青色申告決算書の記入の参考です。`, L, y + 7, { size: 2.6, color: SUB });
+  return c;
+}
+
+// ---- 支払調書の一覧（外注先への支払と源泉徴収） ------------------------------------------
+export function toPayoutCSV(rows, from, to) {
+  return csv([['支払先', '住所', '件数', '支払金額', '源泉徴収税額', '差引支払額', '期間'], ...rows.map((r) => [r.partner, r.address, r.count, r.gross, r.wh, r.net, `${from}〜${to}`])]);
+}
