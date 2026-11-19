@@ -1540,8 +1540,14 @@ $('#fileDxf').addEventListener('change', async (ev) => {
 
 $('#filePts').addEventListener('change', async (ev) => {
   const f = await readFile(ev.target); if (!f) return;
-  const pts = /\.sim$/i.test(f.name) || /^A01,/m.test(f.text) ? parseSIMA(f.text) : parseCSV(f.text);
-  if (!pts.length) { toast('座標が見つかりませんでした'); return; }
+  const isSima = /\.sim$/i.test(f.name) || /^\s*A01\s*,/m.test(f.text);
+  const pts = isSima ? parseSIMA(f.text) : parseCSV(f.text);
+  if (!pts.length) {
+    toast(isSima ? 'SIMA の座標（A01 の行）が見つかりませんでした。座標データの SIMA か確かめてください'
+      : /^\s*0\s*$/m.test(f.text) && /SECTION/.test(f.text) ? 'これは DXF（図面）です。「図面を読み込む」から入れてください'
+        : '座標が見つかりませんでした。SIMA（.sim）か「点名,X,Y」の CSV を選んでください');
+    return;
+  }
   snapshot();
   for (const q of pts) addEntity({ type: 'point', p: { x: q.x, y: q.y }, z: q.z, name: q.name || nextPointName(), grp: '基準点' }, { snap: false });
   changed(); fitAll();

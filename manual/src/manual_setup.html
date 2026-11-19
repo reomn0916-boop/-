@@ -108,11 +108,12 @@ footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line);
 
 <h2 id="publish"><span class="st">段階 1</span>アプリを公開する <span class="who">管理する人</span></h2>
 <p>アプリはインターネットのページとして公開します。GPS（位置情報）は https のページでしか使えないため、GitHub Pages を使います。一度設定すれば、あとは何もしなくて構いません。</p>
+<div class="note"><b>リポジトリが「Private（非公開）」のとき</b>GitHub の無料プランでは、非公開のリポジトリでは Pages を使えません。先に Settings → いちばん下の Danger Zone → <span class="btn">Change visibility</span> → <span class="btn">Change to public</span> で公開にするか、有料プラン（Pro など）にしてください。リポジトリの名前の横に「Private」と出ていれば非公開です。</div>
 <ol class="steps">
-  <li>GitHub でアプリのリポジトリを開き、上の <span class="btn">Settings</span> を押す。</li>
+  <li>GitHub でアプリのリポジトリを開き、上の <span class="btn">Settings</span> を押す。<small>スマホでは GitHub アプリに設定画面がないので、Safari で github.com を開き、上の <span class="btn">More ▾</span> → <span class="btn">Settings</span>。</small></li>
   <li>左の一覧から <span class="btn">Pages</span> を選ぶ。</li>
   <li>「Build and deployment」の Source を <span class="btn">Deploy from a branch</span> にする。</li>
-  <li>Branch でアプリが入っているブランチ（今は <code>claude/mobile-cad-app-kns1zg</code>）を選び、フォルダは <span class="btn">/ (root)</span> のまま <span class="btn">Save</span>。<small>あとで main ブランチにまとめたら、ここを main に変えます。</small></li>
+  <li>Branch で <span class="btn">main</span> を選び、フォルダは <span class="btn">/ (root)</span> のまま <span class="btn">Save</span>。</li>
   <li>1〜2 分待って画面を更新すると、上に「Your site is live at …」とアドレスが出ます。これが<b>スマホ版のアドレス</b>です。</li>
 </ol>
 <p>アドレスは次の形です。このリポジトリなら、次のようになるはずです（表示されたものを正としてください）。</p>
