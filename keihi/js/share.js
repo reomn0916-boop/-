@@ -5,6 +5,7 @@ import { S, on, makeBackup, readBackup, mergeBackup, saveMany, kvGet, kvSet, tod
 import * as gd from '../../lib/gdrive.js';
 import { summarize } from './report.js';
 import { policyIssues } from './policy.js';
+import * as vault from './vault.js';
 
 function blobToB64(blob) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = () => rej(r.error); r.readAsDataURL(blob); }); }
 function b64ToBlob(b64, type) { const bin = atob(b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return new Blob([u], { type }); }
@@ -44,8 +45,12 @@ export async function makeSubmission(rep) {
 
 // 承認者: 届いた提出ファイルを保存
 export async function receiveSubmission(j) {
+  if (vault.enabled() && !vault.unlocked()) throw new Error('総務の合言葉で開いてから取り込んでください');
   const { images = [], ...rest } = j;
-  const rec = { id: j.id, received: Date.now(), updated: Date.now(), status: 'pending', comment: '', itemComments: {}, sub: { ...rest, images: [] } };
+  // 振込先は名簿（金庫）にだけ置き、受け取り箱には下 4 けただけ残す
+  const ap = rest.applicant || {};
+  const masked = { ...ap, bank: ap.bank && ap.bank.number ? { last4: String(ap.bank.number).slice(-4) } : null };
+  const rec = { id: j.id, received: Date.now(), updated: Date.now(), status: 'pending', comment: '', itemComments: {}, sub: { ...rest, applicant: masked, images: [] } };
   const old = await db.get('approvals', j.id);
   if (old) { rec.status = old.status; rec.comment = old.comment; rec.itemComments = old.itemComments; rec.paid = old.paid || null; rec.received = old.received; }
   await db.put('apvimgs', { id: j.id, images });

@@ -57,7 +57,11 @@ if (!S.learned.payeeCat) S.learned.payeeCat = {};
 if (!S.learned.tnoPayee) S.learned.tnoPayee = {};
 
 // 設定は「最後に変えた時刻」を付けて保存する（同期で新しい方を使う）
-export const saveSettings = ({ stamp = true } = {}) => { if (stamp) S.settings.__at = Date.now(); return lsSet('settings', S.settings); };
+// 総務の金庫（vault.js）とつなぐところ: 金庫があるとき、振込先などはふつうの形で書かない
+const HOOKS = { omit: () => [], after: () => {}, merged: async () => {} };
+export const setSettingsHooks = (h) => Object.assign(HOOKS, h);
+const plainSettings = () => { const o = { ...S.settings }; for (const k of HOOKS.omit()) delete o[k]; return o; };
+export const saveSettings = ({ stamp = true } = {}) => { if (stamp) S.settings.__at = Date.now(); const ok = lsSet('settings', plainSettings()); HOOKS.after(); return ok; };
 export const saveLearned = () => lsSet('learned', S.learned);
 export const saveTemplates = () => lsSet('templates', S.templates);
 export const saveRecurring = () => lsSet('recurring', S.recurring);
@@ -75,7 +79,49 @@ export const isCompanyPaid = (e) => e.method === '会社カード' || e.method =
 
 // ---- 経費 ----------------------------------------------------------------
 
+// ---- 帳簿の締め: 締めた日までの仕訳を固定し、その期間の記録は直せない --------------------------------
+// S.closed = { until: 'YYYY-MM-DD', journals: [...], at, by, log: [{ until, at, by, action }] }
+export class LockedError extends Error { constructor(msg) { super(msg); this.name = 'LockedError'; } }
+export const isLocked = (date) => !!(S.closed && S.closed.until && date && date <= S.closed.until);
+const lockMsg = (what) => `${S.closed.until.slice(0, 7).replace('-', '年')}月${+S.closed.until.slice(8)}日まで締めてあるので、${what}は直せません（締めを戻すと直せます）`;
+const ACC_FIELDS = ['date', 'amount', 'category', 'method', 'tax10', 'tax8', 'invoiceNo', 'kind', 'fare', 'km', 'rate', 'site', 'payee'];
+const accChanged = (a, b) => ACC_FIELDS.some((k) => JSON.stringify(a[k] ?? null) !== JSON.stringify(b[k] ?? null));
+function guardExpense(e) {
+  if (!S.closed) return;
+  const prev = S.expenses.find((x) => x.id === e.id);
+  const wasBook = prev && prev.status !== 'draft';
+  if (wasBook && (isLocked(prev.date) || isLocked(e.date)) && accChanged(prev, e)) throw new LockedError(lockMsg('この経費'));
+  if (!wasBook && e.status !== 'draft' && isLocked(e.date)) throw new LockedError(lockMsg('この日付の経費'));
+}
+function guardLedger(l) {
+  if (!S.closed) return;
+  const prev = S.ledger.find((x) => x.id === l.id);
+  if ((prev && isLocked(prev.date)) || isLocked(l.date) || (l.type === 'payout' && isLocked(l.date))) throw new LockedError(lockMsg('この日付の帳簿の記録'));
+}
+export async function loadClosed() { S.closed = (await kvGet('closed')) || null; }
+// 締める: until までの仕訳（いまの記録から作ったもの）を保存して固定する
+export async function closeBooks(until, journals, by = '') {
+  const prev = S.closed;
+  const keep = prev ? prev.journals : [];
+  const add = journals.filter((j) => j.date <= until && (!prev || j.date > prev.until));
+  S.closed = { until, journals: [...keep, ...add].sort((a, b) => a.date.localeCompare(b.date)), at: Date.now(), by, log: [...((prev && prev.log) || []), { until, at: Date.now(), by, action: 'close' }] };
+  await kvSet('closed', S.closed); emit('change');
+  logEvent(`${until} まで帳簿を締めた（仕訳 ${add.length} 行を固定）`);
+}
+export async function reopenBooks(by = '', reason = '') {
+  if (!S.closed) return;
+  const log = [...(S.closed.log || []), { until: S.closed.until, at: Date.now(), by, action: 'reopen', reason }];
+  logEvent(`帳簿の締め（${S.closed.until} まで）を戻した${reason ? `: ${reason}` : ''}`);
+  S.closed = { until: '', journals: [], at: Date.now(), by, log };
+  await kvSet('closed', S.closed); emit('change');
+}
+// 総務・経理の操作の記録（変更の履歴に入る）
+export function logEvent(text, extra = {}) {
+  try { db.put('history', { id: newId('h'), at: Date.now(), kind: 'soumu', ref: 'soumu', action: 'event', ch: {}, summary: { payee: text, amount: extra.amount || 0, date: extra.date || '' }, by: S.settings.name || '' }); } catch (_) { /* 古い保存場所 */ }
+}
+
 export async function loadAll() {
+  if (S.closed === undefined) await loadClosed();
   S.expenses = (await db.all('expenses')) || [];
   S.reports = (await db.all('reports')) || [];
   S.ledger = (await db.all('ledger')) || [];
@@ -97,6 +143,7 @@ export async function allHistory() { return ((await db.all('history')) || []).so
 const snapshot = (id) => { const e = S.expenses.find((x) => x.id === id); return e ? JSON.parse(JSON.stringify(e)) : null; };
 
 export async function saveExpense(e, { quiet = false } = {}) {
+  guardExpense(e);
   const prev = S.expenses.find((x) => x.id === e.id);
   if (!prev && e.status !== 'draft') logHistory('expense', null, e); // 新しく確定した経費
   else if (prev && prev !== e && prev.status !== 'draft') logHistory('expense', snapshot(e.id), e); // 確定した経費を直した
@@ -110,6 +157,7 @@ export async function saveExpense(e, { quiet = false } = {}) {
 }
 
 export async function saveMany(list) {
+  list.forEach(guardExpense);
   const t = Date.now();
   list.forEach((e) => { e.updated = t; });
   for (const e of list) if (e.__orig) { logHistory('expense', e.__orig, e); delete e.__orig; }
@@ -384,6 +432,7 @@ export function validate(c) {
 
 // 確定して保存（確認待ち → 未精算）
 export async function commit(c) {
+  guardExpense({ ...c, status: c.status === 'draft' ? 'ok' : c.status });
   const prev = S.expenses.find((x) => x.id === c.id);
   if (prev && prev.status === 'draft') logHistory('expense', null, { ...c, status: 'ok' }); // 確認待ち → 確定（新しく帳簿に入った）
   if (c.status === 'draft') c.status = 'ok';
@@ -410,7 +459,7 @@ export async function runRecurring(today = todayISO()) {
       // 記録の id を「ルール + 月」で決める: 2 台のパソコンが同じ月を登録しても、同期で 1 件にまとまる
       const rid = `${r.id}_${ym}`;
       const exists = r.kind === 'income' ? S.ledger.some((x) => x.id === rid) : S.expenses.some((x) => x.id === rid);
-      if (!exists && !S.tombs[rid]) {
+      if (!exists && !S.tombs[rid] && !isLocked(date)) {
         if (r.kind === 'income') { const l = { ...r.data, id: rid, type: 'income', date, recurring: r.id }; await saveLedger(l); made.push(l); } else { const e = newExpense({ ...r.data, id: rid, date, status: 'ok', auto: [], recurring: r.id }); await saveExpense(e, { quiet: true }); made.push(e); }
       }
       r.last = ym; r.updated = Date.now(); ym = addMonth(ym, 1);
@@ -427,6 +476,7 @@ export const kvSet = (k, v) => db.put('kv', { k, v });
 // ---- 削除・取り消し ------------------------------------------------------------
 
 export async function removeExpenses(ids) {
+  if (S.closed) for (const id of ids) { const e = byId(id); if (e && e.status !== 'draft' && isLocked(e.date)) throw new LockedError(lockMsg('この経費')); }
   const snap = [];
   for (const id of ids) {
     const e = byId(id); if (!e) continue;
@@ -487,6 +537,7 @@ export async function createReport(items, { from, to, advance = 0, sum }) {
 
 export async function undoReport(id) {
   const rep = S.reports.find((r) => r.id === id); if (!rep) return;
+  if (isLocked(toISODate(new Date(rep.created)))) throw new LockedError(lockMsg('この精算'));
   const changed = [];
   for (const eid of rep.ids) { const x = byId(eid); if (x && x.reportId === id) { x.status = 'ok'; x.reportId = null; changed.push(x); } }
   if (changed.length) await saveMany(changed);
@@ -499,6 +550,7 @@ export async function undoReport(id) {
 // ---- 帳簿（売上・収入・振替伝票） ----------------------------------------------------
 
 export async function saveLedger(l) {
+  guardLedger(l);
   if (!l.id) l.id = newId(l.type === 'income' ? 'n' : 'j');
   if (!l.created) l.created = Date.now();
   logHistory('ledger', S.ledger.find((x) => x.id === l.id) || null, l);
@@ -513,6 +565,7 @@ export async function saveLedger(l) {
 }
 export async function removeLedger(id) {
   const l = S.ledger.find((x) => x.id === id); if (!l) return null;
+  if (isLocked(l.date)) throw new LockedError(lockMsg('この帳簿の記録'));
   logHistory('ledger', l, null);
   await db.del('ledger', id);
   tomb('ledger', id);
@@ -545,12 +598,12 @@ export async function putBackupImage(im) {
 }
 export async function makeBackup({ images: withImages = true } = {}) {
   const images = withImages ? await db.all('images') : [];
-  const { apiKey, ...settings } = S.settings; void apiKey;
+  const { apiKey, ...settings } = plainSettings(); void apiKey;
   const history = (await db.all('history')) || [];
   // 総務の受け取り箱（承認・支払済み）。画像はファイルのバックアップのときだけ入れる（Google ドライブには 1 件ずつ送る）
   const approvals = (await db.all('approvals')) || [];
   const apvImgs = withImages ? (await db.all('apvimgs')) || [] : [];
-  const parts = [`{"app":"rakukeihi","version":5,"approvals":${JSON.stringify(approvals)},"approvalImages":${JSON.stringify(apvImgs)},"tombs":${JSON.stringify(S.tombs)},"recurring":${JSON.stringify(S.recurring)},"history":${JSON.stringify(history)},"exportedAt":${JSON.stringify(new Date().toISOString())},"settings":${JSON.stringify(settings)},"learned":${JSON.stringify(S.learned)},"templates":${JSON.stringify(S.templates)},"expenses":${JSON.stringify(S.expenses)},"reports":${JSON.stringify(S.reports)},"ledger":${JSON.stringify(S.ledger)},"images":[`];
+  const parts = [`{"app":"rakukeihi","version":5,"closed":${JSON.stringify(S.closed || null)},"approvals":${JSON.stringify(approvals)},"approvalImages":${JSON.stringify(apvImgs)},"tombs":${JSON.stringify(S.tombs)},"recurring":${JSON.stringify(S.recurring)},"history":${JSON.stringify(history)},"exportedAt":${JSON.stringify(new Date().toISOString())},"settings":${JSON.stringify(settings)},"learned":${JSON.stringify(S.learned)},"templates":${JSON.stringify(S.templates)},"expenses":${JSON.stringify(S.expenses)},"reports":${JSON.stringify(S.reports)},"ledger":${JSON.stringify(S.ledger)},"images":[`];
   for (let i = 0; i < images.length; i++) {
     const im = images[i];
     const o = { id: im.id, w: im.w, h: im.h, blob: await blobToB64(im.blob), thumb: im.thumb ? await blobToB64(im.thumb) : '' };
@@ -586,6 +639,8 @@ export async function mergeBackup(j, { takeSettings = true, sync = false } = {})
   }
   for (const l of S.ledger.filter((x) => isDead(x.id, x.updated))) { await db.del('ledger', l.id); changed++; }
   for (const r of S.reports.filter((x) => isDead(x.id, x.updated || x.created))) { await db.del('reports', r.id); changed++; }
+  // 帳簿の締め: あとで締めた（戻した）方
+  if (j.closed && (!S.closed || (j.closed.at || 0) > (S.closed.at || 0))) { S.closed = j.closed; await kvSet('closed', S.closed); changed++; }
   // 総務の受け取り箱: 新しく直した方（承認・支払済み）を残す
   {
     const local = new Map(((await db.all('approvals')) || []).map((r) => [r.id, r]));
@@ -644,6 +699,7 @@ export async function mergeBackup(j, { takeSettings = true, sync = false } = {})
     if (!cur || (r.updated || 0) > (cur.updated || 0)) { rec.set(r.id, { ...r, last: [r.last, cur && cur.last].filter(Boolean).sort().pop() || '' }); changed++; } else if ((r.last || '') > (cur.last || '')) cur.last = r.last;
   }
   S.recurring = [...rec.values()]; saveRecurring();
+  await HOOKS.merged();
   await loadAll();
   return changed;
 }

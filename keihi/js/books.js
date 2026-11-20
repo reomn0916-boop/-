@@ -78,7 +78,7 @@ function isoOf(t) { const d = new Date(t); return `${d.getFullYear()}-${String(d
 
 // ---- 仕訳を作る ---------------------------------------------------------------
 // 1 行 = { date, debit, credit, amount, memo, src: 'expense' | 'income' | 'journal' | 'settle', ref }
-export function journalsFrom({ expenses = [], ledger = [], reports = [], settings = {}, asOf = '' }) {
+export function journalsFrom({ expenses = [], ledger = [], reports = [], settings = {}, asOf = '', closed = null }) {
   const b = booksOf(settings);
   const out = [];
   const today = asOf || isoOf(Date.now());
@@ -146,7 +146,10 @@ export function journalsFrom({ expenses = [], ledger = [], reports = [], setting
       }
     }
   }
-  return out.sort((a, c) => a.date.localeCompare(c.date));
+  out.sort((a, c) => a.date.localeCompare(c.date));
+  // 締めた期間は、締めたときに固定した仕訳を使う（あとで記録や設定を変えても、決算書の数字は変わらない）
+  if (closed && closed.until) return [...closed.journals.map((j) => ({ ...j, closed: true })), ...out.filter((j) => j.date > closed.until)];
+  return out;
 }
 
 // ---- 決算書を作る ---------------------------------------------------------------

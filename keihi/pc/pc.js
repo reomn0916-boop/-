@@ -569,7 +569,9 @@ const SRC_LABEL = { expense: ['経費', 'ok'], income: ['売上・収入', 'done
 const bk = () => booksOf(S.settings);
 const fyOf = (iso) => fiscalRange(iso, bk().closeMonth);
 const fyLabel = (r) => `${ymd(r.from)} 〜 ${ymd(r.to)}`;
-function allJournals() { return journalsFrom({ expenses: S.expenses, ledger: S.ledger, reports: S.reports, settings: S.settings }); }
+function allJournals() { return journalsFrom({ expenses: S.expenses, ledger: S.ledger, reports: S.reports, settings: S.settings, closed: S.closed }); }
+// 締めるときに固定する仕訳（いまの記録から作る）
+function rawJournals() { return journalsFrom({ expenses: S.expenses, ledger: S.ledger, reports: S.reports, settings: S.settings }); }
 function booksRange() { return P.books.from ? { from: P.books.from, to: P.books.to } : fyOf(today()); }
 function shiftFY(r, k) { const [y, m] = r.from.split('-').map(Number); return fyOf(`${y + k}-${String(m).padStart(2, '0')}-15`); }
 
@@ -779,6 +781,7 @@ function viewStatements() {
   const dr = S.expenses.filter((e) => e.status === 'draft' && (!e.date || (e.date >= from && e.date <= to))).length;
   const corp = s.mode === 'corp';
   const notes = [...s.notes];
+  if (S.closed && S.closed.until) notes.unshift({ level: 'info', msg: `${ymd(S.closed.until)} まで締めてあります（その期間の数字は固定）`, go: 'books' });
   if (dr) notes.unshift({ level: 'warn', msg: `確認待ちの経費 ${dr}件は入っていません`, go: 'review' });
   const hasRev = s.pl.revenue !== 0;
   if (!hasRev) notes.push({ level: 'info', msg: '売上・収入がまだありません（帳簿 → 売上・収入 で入れられます）', go: 'books' });
@@ -1061,6 +1064,8 @@ st.on('ocr', (id, o) => {
   if (!o || o.state === 'done' || o.state === 'error') queueRender(); else renderChrome();
 });
 st.on('error', (m) => toast(m, { kind: 'error' }));
+// 締めた期間の記録を直そうとしたとき・総務の合言葉がいるとき
+window.addEventListener('unhandledrejection', (ev) => { const r = ev.reason; if (r && (r.name === 'LockedError' || /合言葉/.test(r.message || ''))) { ev.preventDefault(); toast(r.message, { kind: 'error', ms: 7000 }); } });
 
 // ===========================================================================
 // 右のパネル（経費の詳細）
@@ -1627,7 +1632,7 @@ async function start() {
   paint(document);
   $('#paletteKey').innerHTML = `<kbd>${MOD}</kbd><kbd>K</kbd>`;
   await st.loadAll();
-  FX.init({ P, render, renderChrome, go, openExpense, allJournals, fyOf, shiftFY, fyLabel, booksRange, accountOptions, emptyState, editLedger, printPages });
+  FX.init({ P, render, renderChrome, go, openExpense, allJournals, rawJournals, fyOf, shiftFY, fyLabel, booksRange, accountOptions, emptyState, editLedger, printPages });
   st.resumePending();
   P.view = VIEWS[location.hash.slice(1)] ? location.hash.slice(1) : 'home';
   render();

@@ -1,7 +1,7 @@
 // 経費の詳細（右のパネル・確認画面で使う）と、領収書の画像ビューア
 import {
   S, METHODS, cats, byId, validate, commit, computeAmount, findDup, recentSites, isReading,
-  removeExpenses, restoreSnapshot, templateFrom, addTemplate, rotateImage, reread, imageRecord, newExpense, todayISO, addDays, num, dec, fillFromOcr, on, historyOf,
+  removeExpenses, restoreSnapshot, templateFrom, addTemplate, rotateImage, reread, imageRecord, newExpense, todayISO, addDays, num, dec, fillFromOcr, on, historyOf, isLocked,
 } from '../js/store.js';
 import { modal } from './ui.js';
 import { policyIssues } from '../js/policy.js';
@@ -175,6 +175,7 @@ export class Editor {
       <div class="ocr-line" data-ocr></div>
       ${c.ocr && c.ocr.notReceipt ? `<div class="note warn">${ic('warn')}レシート・領収書ではないかもしれません</div>` : ''}
       ${c.reviewComment ? `<div class="note warn">${ic('warn')}<span><b>承認者からのコメント</b>${esc(c.reviewComment)}</span></div>` : ''}
+      ${c.status !== 'draft' && isLocked(c.date) ? `<div class="note warn">${ic('shield')}<span><b>締めた期間の経費です</b>${S.closed.until} まで帳簿を締めてあるので、金額・日付・科目などは直せません（経理に頼んで締めを戻してもらうと直せます）。</span></div>` : ''}
       ${c.status === 'done' ? `<div class="note">${ic('checkCircle')}精算済みです。直すと提出した精算書と合わなくなります</div>` : ''}
       <div class="seg kinds" role="radiogroup" aria-label="種類">
         ${KINDS.map(([k, l, icn]) => `<button role="radio" aria-checked="${c.kind === k}" class="${c.kind === k ? 'on' : ''}" data-kind="${k}">${ic(icn)}${l}</button>`).join('')}

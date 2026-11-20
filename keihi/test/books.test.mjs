@@ -134,3 +134,14 @@ test('会計期間', () => {
   assert.deepEqual(fiscalRange('2026-02-10', 3), { from: '2025-04-01', to: '2026-03-31' });
   assert.deepEqual(fiscalRange('2026-09-30', 9), { from: '2025-10-01', to: '2026-09-30' });
 });
+
+test('締めた期間は固定した仕訳を使う', () => {
+  const settings = { books: { mode: 'sole', closeMonth: 12 } };
+  const e1 = { id: 'a', status: 'ok', date: '2026-10-05', amount: 1000, category: '消耗品費', method: '現金' };
+  const e2 = { id: 'b', status: 'ok', date: '2026-11-05', amount: 2000, category: '消耗品費', method: '現金' };
+  const all = journalsFrom({ expenses: [e1, e2], settings, asOf: '2026-11-20' });
+  const closed = { until: '2026-10-31', journals: all.filter((j) => j.date <= '2026-10-31') };
+  // 締めたあとに 10 月の経費を（もし）直しても、10 月の仕訳は変わらない
+  const after = journalsFrom({ expenses: [{ ...e1, amount: 9999 }, e2], settings, asOf: '2026-11-20', closed });
+  assert.deepEqual(after.map((j) => [j.date, j.amount, !!j.closed]), [['2026-10-05', 1000, true], ['2026-11-05', 2000, false]]);
+});

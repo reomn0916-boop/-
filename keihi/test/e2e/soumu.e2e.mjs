@@ -13,8 +13,12 @@ test('総務: 集める・確かめる・振り込む', { timeout: 240000 }, asy
     const G = await openPage(browser, `${srv.base}/keihi/pc/`);
     await G.evaluate(async () => { const st = await import('/keihi/js/store.js'); Object.assign(st.S.settings, { name: '総務 花子', company: '山田工業' }); st.saveSettings(); });
     await G.reload(); await G.waitForSelector('#app');
+    // 総務の合言葉を決める（決めるまで総務の画面は開けない）
+    await G.keyboard.press('8');
+    assert.ok(await G.$('#vp1'));
+    await G.fill('#vp1', 'souko-2026'); await G.fill('#vp2', 'souko-2026'); await G.click('[data-act="vaultSetup"]'); await G.waitForSelector('.lock-chip');
     // ルール
-    await G.keyboard.press('8'); await G.click('[data-act="apvTab"][data-id="rules"]');
+    await G.click('[data-act="apvTab"][data-id="rules"]');
     for (const [sel, v] of [['[data-pol="name"]', '経費規程 2026年版'], ['[data-pol="deadlineDay"]', '5'], ['[data-limit="消耗品費"]', '30000']]) { await G.fill(sel, v); await G.dispatchEvent(sel, 'input'); }
     await G.check('[data-pol="requireSite"]');
     const pf = await download(G, () => G.click('[data-act="policyMake"]'));
@@ -95,6 +99,24 @@ test('総務: 集める・確かめる・振り込む', { timeout: 240000 }, asy
     const bk = await download(G, () => G.evaluate(async () => { const st = await import('/keihi/js/store.js'); const ui = await import('/keihi/pc/ui.js'); ui.download(await st.makeBackup(), 'backup.json'); }));
     const bj = JSON.parse(fs.readFileSync(await bk.path()));
     assert.equal(bj.approvals.length, 2); assert.ok(bj.approvals.some((r) => r.paid)); assert.equal(bj.approvalImages.length, 2);
+    // 振込先は暗号化して保存（ふつうの形では残らない）
+    const raw = await G.evaluate(() => localStorage.getItem('rakukeihi.settings'));
+    assert.ok(!raw.includes('7654321') && !raw.includes('1234567890') && raw.includes('"vault"'));
+    assert.ok(!JSON.stringify(bj.settings).includes('7654321'));
+    assert.ok(!JSON.stringify(bj.approvals).includes('7654321')); // 受け取り箱には下 4 けただけ
+    // 閉じると総務の画面に入れない・まちがった合言葉では開かない
+    await G.click('[data-act="vaultLock"]'); await G.waitForSelector('#vpIn');
+    await G.fill('#vpIn', 'wrong-pass'); await G.click('[data-act="vaultUnlock"]'); await G.waitForTimeout(800);
+    assert.ok(await G.$('#vpIn'));
+    await G.fill('#vpIn', 'souko-2026'); await G.click('[data-act="vaultUnlock"]'); await G.waitForSelector('.lock-chip');
+    await G.click('[data-act="apvTab"][data-id="people"]');
+    assert.match(await G.textContent('.apv-page'), /ユウチヨ/);
+    assert.match(await G.textContent('.evt-log'), /承認|振込データ/);
+    // 合言葉を変える → 新しい合言葉で開き、振込先も残る
+    await G.click('[data-act="vaultChange"]'); await G.fill('#vcA', 'souko-2026'); await G.fill('#vcB', 'new-pass-77'); await G.fill('#vcC', 'new-pass-77'); await G.click('.modal [data-m="ok"]'); await G.waitForTimeout(1500);
+    await G.click('[data-act="vaultLock"]'); await G.fill('#vpIn', 'souko-2026'); await G.click('[data-act="vaultUnlock"]'); await G.waitForTimeout(800); assert.ok(await G.$('#vpIn'));
+    await G.fill('#vpIn', 'new-pass-77'); await G.click('[data-act="vaultUnlock"]'); await G.waitForSelector('.lock-chip');
+    await G.click('[data-act="apvTab"][data-id="people"]'); assert.match(await G.textContent('.apv-page'), /ユウチヨ/);
     assert.deepEqual(G.errors, []);
   } finally { await browser.close(); srv.close(); }
 });

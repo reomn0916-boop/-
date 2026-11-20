@@ -6,7 +6,7 @@ import { renderReport, pagesToPdf, toCSV, summarize, yen, isCompanyPaid } from '
 import {
   S, on, METHODS, saveSettings, saveTemplates, byId, cats, loadAll, saveExpense, newExpense,
   recentSites, recentPayees, recentPlaces, thumbURL, importFiles as storeImport, enqueue, isReading, readingCount,
-  fillFromOcr, reread, learn, findDup, computeAmount, validate, commit, removeExpenses, restoreSnapshot,
+  fillFromOcr, reread, learn, findDup, computeAmount, validate, commit, removeExpenses, restoreSnapshot, isLocked,
   templateFrom, addTemplate, removeTemplate, expenseFromTemplate, createReport, undoReport as storeUndoReport,
   makeBackup, readBackup, mergeBackup, wipeAll, resumePending, DEF_SETTINGS,
 } from './store.js';
@@ -262,6 +262,7 @@ function renderEditor() {
       </div>
       ${dup ? `<div class="note warn" id="edDup">${ic('warn')}<span>同じ日・同じ金額の経費があります: ${esc(dup.payee || '（支払先なし）')} ${yen(dup.amount)}</span><button class="chip" data-act="edDupOpen" data-id="${dup.id}">見る</button></div>` : '<div id="edDup"></div>'}
       <div id="edPol">${polHTML(c)}</div>
+      ${c.status !== 'draft' && isLocked(c.date) ? `<div class="note warn">${ic('warn')}<span>${S.closed.until} まで帳簿を締めてあるので、この経費は直せません（経理に頼んで締めを戻してもらうと直せます）。</span></div>` : ''}
       <label class="f${chk('payee')}"><span class="lb">支払先</span><input data-f="payee" list="dlPayee" placeholder="${c.kind === 'car' ? '自家用車' : c.kind === 'transit' ? '例: JR東日本' : '店名・会社名'}" value="${esc(c.payee)}" autocomplete="off"></label>
       <div class="f${chk('category')}"><span class="lb">勘定科目</span>
         <div class="chips" id="edCat">${cats().map((k) => `<button class="chip ${c.category === k ? 'on' : ''}" data-cat="${esc(k)}">${esc(k)}</button>`).join('')}</div>
@@ -1051,6 +1052,9 @@ async function takeShared() {
 }
 
 // ---- はじめ ------------------------------------------------------------------
+
+// 締めた期間の記録を直そうとしたとき
+window.addEventListener('unhandledrejection', (ev) => { const r = ev.reason; if (r && r.name === 'LockedError') { ev.preventDefault(); toast(r.message); } });
 
 async function start() {
   paintIcons();

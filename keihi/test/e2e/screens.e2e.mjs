@@ -70,6 +70,7 @@ test('まとめて承認: 結果を 1 つのファイルにし、社員はそれ
     await G.keyboard.press('8');
     await G.evaluate(async (subs) => { const sh = await import('/keihi/js/share.js'); for (const s of subs) await sh.receiveSubmission(JSON.parse(s)); }, [A.sub, B.sub]);
     await G.reload(); await G.waitForSelector('#app'); await G.keyboard.press('8');
+    await G.fill('#vp1', 'souko-2026'); await G.fill('#vp2', 'souko-2026'); await G.click('[data-act="vaultSetup"]'); await G.waitForSelector('.lock-chip');
     await G.waitForSelector('[data-act="apvBulkApprove"]');
     const d = await download(G, async () => { await G.click('[data-act="apvBulkApprove"]'); await G.click('.modal .btn.primary'); });
     const j = JSON.parse(fs.readFileSync(await d.path()));

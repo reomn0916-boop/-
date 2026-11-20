@@ -10,6 +10,7 @@ import { depreciationSchedule, DEP_METHODS, LIFE_HINTS, withholding, SMALL_LIMIT
 import { encodeSJIS, toYayoi, toMF } from '../js/exports.js';
 import { ruleJournal, aiJournal } from '../js/aijournal.js';
 import * as sh from '../js/share.js';
+import * as vault from '../js/vault.js';
 import { policyIssues, deadlineInfo, asPolicy, policyFile } from '../js/policy.js';
 import { toZenginKana, badKana, zenginTransfer, checkAccount } from '../js/zengin.js';
 import { renderInvoice, pagesToPdf, taxPage, bluePage, toPayoutCSV } from '../js/report.js';
@@ -210,7 +211,8 @@ export async function bankImportFile(file) {
   const guessCard = /カード|card|ご利用/i.test(file.name) || rows.every((x) => !x.in);
   let kind = guessCard ? 'card' : 'bank';
   let acc = '普通預金';
-  let sug = suggestRows(rows, { kind, expenses: S.expenses, ledger: S.ledger, learned: S.learned, categories: st.cats() });
+  const lockRows = (list) => list.map((x) => (st.isLocked(x.date) ? { ...x, action: 'skip', include: false, note: '締めた期間' } : x));
+  let sug = lockRows(suggestRows(rows, { kind, expenses: S.expenses, ledger: S.ledger, learned: S.learned, categories: st.cats() }));
   const accounts = (a) => {
     if (a === 'expense' || a === 'refund') return accountGroups(bk().mode, st.cats()).filter(([g]) => /費用|経費/.test(g)).flatMap(([, l]) => l);
     if (a === 'income') return [...REVENUE_ACCOUNTS, ...(bk().mode === 'sole' ? ['事業主借'] : []), '借入金', '前受金'];
@@ -243,7 +245,7 @@ export async function bankImportFile(file) {
       };
       el.addEventListener('change', (ev) => {
         const t = ev.target;
-        if (t.id === 'bKind') { kind = t.value; $('#bAccWrap', el).hidden = kind === 'card'; sug = suggestRows(rows, { kind, expenses: S.expenses, ledger: S.ledger, learned: S.learned, categories: st.cats() }); draw(); return; }
+        if (t.id === 'bKind') { kind = t.value; $('#bAccWrap', el).hidden = kind === 'card'; sug = lockRows(suggestRows(rows, { kind, expenses: S.expenses, ledger: S.ledger, learned: S.learned, categories: st.cats() })); draw(); return; }
         if (t.id === 'bAcc') { acc = t.value; return; }
         const tr = t.closest('[data-i]'); if (!tr) return;
         const x = sug[+tr.dataset.i];
@@ -293,6 +295,7 @@ function assetsTab(r) {
 }
 async function editAsset(a0) {
   const b = bk(); const sole = b.mode === 'sole';
+  if (a0 && st.isLocked(a0.acquired)) { toast(`締めた期間（${ymd(S.closed.until)} まで）に買った固定資産は直せません。締めを戻してから直してください`, { kind: 'error', ms: 7000 }); return; }
   const a = a0 ? { ...a0 } : { id: newId('fa'), name: '', account: '工具器具備品', acquired: today(), cost: null, method: b.mode === 'corp' ? 'declining' : 'straight', life: 5, ratio: 100, paidFrom: '普通預金' };
   const payFrom = [['', '支払の仕訳を作らない（期首残高に入れた）'], ['普通預金', '普通預金から払った'], ['現金', '現金で払った'], ['未払金', 'カード・後払い（未払金）'], ['借入金', 'ローン（借入金）'], ...(sole ? [['事業主借', '個人のお金で払った（事業主借）']] : [])];
   const r = await modal({
@@ -335,7 +338,7 @@ async function editAsset(a0) {
       };
       el.addEventListener('input', upd); el.addEventListener('change', upd); moneyBlur(el);
       el.addEventListener('click', (ev) => { const l = ev.target.closest('[data-life]'); if (l) { $('#aLife', el).value = l.dataset.life; if (!$('#aName', el).value) $('#aName', el).value = l.textContent.replace(/ \d+年$/, ''); upd(); } });
-      guard(el, ['ok'], () => { read(); const fy = X.fyOf(a.acquired || today()); return !a.name ? '名前を入れてください' : !a.acquired ? '取得日を入れてください' : !a.cost ? '取得価額を入れてください' : a.method === 'small' && a.cost >= 300000 ? '少額減価償却資産の特例は 30万円未満の物だけです' : a.method === 'small' && smallAssetTotal(bk().fixedAssets || [], fy, a.id) + a.cost > SMALL_LIMIT ? '少額減価償却資産の特例は 1 年 300万円までです。ほかの方法を選んでください' : ''; });
+      guard(el, ['ok'], () => { read(); const fy = X.fyOf(a.acquired || today()); if (st.isLocked(a.acquired)) return `締めた期間（${ymd(S.closed.until)} まで）の日付では登録できません`; return !a.name ? '名前を入れてください' : !a.acquired ? '取得日を入れてください' : !a.cost ? '取得価額を入れてください' : a.method === 'small' && a.cost >= 300000 ? '少額減価償却資産の特例は 30万円未満の物だけです' : a.method === 'small' && smallAssetTotal(bk().fixedAssets || [], fy, a.id) + a.cost > SMALL_LIMIT ? '少額減価償却資産の特例は 1 年 300万円までです。ほかの方法を選んでください' : ''; });
       upd();
     },
   });
@@ -443,12 +446,30 @@ async function textJournal() {
 
 // ---- 帳簿の設定に足すところ ---------------------------------------------------------
 const ALLOC_CATS = ['地代家賃', '水道光熱費', '通信費', '車両費', '旅費交通費', '保険料', '修繕費', '消耗品費'];
+function closeCard() {
+  const c = S.closed && S.closed.until ? S.closed : null;
+  const lastMonthEnd = st.monthEnd(st.addMonth(today().slice(0, 7), -1));
+  const ends = [];
+  for (let k = 1; k <= 24; k++) { const e = st.monthEnd(st.addMonth(today().slice(0, 7), -k)); if (!c || e > c.until) ends.push(e); }
+  const log = ((S.closed && S.closed.log) || []).slice(-5).reverse();
+  return `<section class="card close-card"><h2>${ic('shield')}帳簿の締め</h2>
+    <p class="muted">締めた日までの仕訳を固定します。あとで経費や設定を変えても、その期間の損益計算書・貸借対照表の数字は変わりません。その期間の経費・売上・振替は<b>直せなくなります</b>（締めを戻すと直せます。戻した記録は残ります）。</p>
+    ${c ? `<p class="closed-now">${ic('checkCircle')}<b>${ymd(c.until)} まで締めてあります</b><span class="muted">${new Date(c.at).toLocaleString('ja-JP')}${c.by ? `・${esc(c.by)}` : ''}</span></p>` : '<p class="muted">まだ締めていません。</p>'}
+    <div class="row-inline">${ends.length ? `<label class="select sm">${ic('calendar')}<select id="closeUntil">${ends.map((e) => `<option value="${e}" ${e === lastMonthEnd ? 'selected' : ''}>${ymd(e)}${e.slice(5, 7) === String(b2().closeMonth).padStart(2, '0') ? '（期末）' : ''} まで</option>`).join('')}</select>${ic('chevD', 'caret')}</label>
+      <button class="btn primary" data-act="booksClose">${ic('shield')}締める</button>` : ''}
+      ${c ? `<button class="btn ghost danger" data-act="booksReopen">${ic('undo')}締めを戻す</button>` : ''}</div>
+    ${log.length ? `<ul class="close-log">${log.map((x) => `<li>${new Date(x.at).toLocaleString('ja-JP')} ・ ${x.action === 'close' ? `${ymd(x.until)} まで締めた` : `締め（${ymd(x.until)} まで）を戻した${x.reason ? `：${esc(x.reason)}` : ''}`}${x.by ? `（${esc(x.by)}）` : ''}</li>`).join('')}</ul>` : ''}
+    ${vault.enabled() ? '<p class="hint">締める・戻すには、総務の合言葉がいります。</p>' : ''}
+  </section>`;
+}
+const b2 = () => bk();
 export function setupExtra() {
   const b = bk(); const sole = b.mode === 'sole';
   const iss = S.settings.issuer || {};
   const alloc = b.allocation || {};
   const cats = [...new Set([...ALLOC_CATS.filter((c) => st.cats().includes(c) || ['地代家賃', '水道光熱費', '通信費'].includes(c))])];
   return `
+    ${closeCard()}
     ${sole ? `<section class="card"><h2>家事按分</h2><p class="muted">家と事務所が同じ・車を私用にも使うなど、私用の分がある科目は「事業で使う割合」を入れてください。期末に、残りの割合を「事業主貸」に振り分けます（決算書の経費が減ります）。空欄は 100%（全部が事業）です。</p>
       <div class="alloc-grid">${cats.map((c, i) => `<label class="open-row"><span>${esc(c)}</span><span class="amt-in sm"><input id="al-${i}" data-alloc="${esc(c)}" inputmode="numeric" data-raw="1" value="${alloc[c] ?? ''}" placeholder="100"><em>%</em></span></label>`).join('')}</div>
       <p class="hint">固定資産（車など）の割合は［固定資産］で 1 つずつ決めます。</p></section>` : ''}
@@ -637,8 +658,10 @@ function anYear() {
 // ===========================================================================
 // 承認・総務（受け取り箱・振込・社員と振込先・会社のルール・自分の精算）
 // ===========================================================================
-let apvCache = null;
-async function loadApprovals() { apvCache = await sh.listApprovals(); }
+let apvCache = null; let evtCache = [];
+async function loadApprovals() { apvCache = await sh.listApprovals(); evtCache = ((await st.allHistory()) || []).filter((h) => h.kind === 'soumu').slice(0, 40); }
+const evtHTML = () => (evtCache.length ? `<details class="evt-log"><summary>${ic('clock')}総務・経理の操作の記録（${evtCache.length}件）</summary><ul>${evtCache.map((h) => `<li><span>${new Date(h.at).toLocaleString('ja-JP')}</span><b>${esc(h.by || '')}</b>${esc(h.summary.payee)}</li>`).join('')}</ul></details>` : '');
+const logE = async (t, x) => { st.logEvent(t, x); evtCache = ((await st.allHistory()) || []).filter((h) => h.kind === 'soumu').slice(0, 40); };
 const APV = { submitted: ['提出済み', 'draft', 'clock'], approved: ['承認', 'done', 'checkCircle'], rejected: ['差し戻し', 'over', 'undo'], pending: ['未決', 'draft', 'clock'] };
 export const apvBadge = (r) => { const a = r.approval; if (!a) return ''; const [l, c, i] = APV[a.status] || APV.submitted; return `<span class="badge ${c} xs" title="${esc(a.comment || '')}">${ic(i)}${l}</span>`; };
 export const pendingApprovals = () => (apvCache || []).filter((a) => a.status === 'pending').length;
@@ -659,15 +682,34 @@ export function viewApprovals() {
   if (!apvCache) { loadApprovals().then(() => X.render()); return '<div class="empty"><span class="spin"></span></div>'; }
   if (!X.P.apv) X.P.apv = { tab: 'inbox', month: '', status: 'all', who: '', q: '', sel: new Set(), paySel: null, payDate: '' };
   const A = X.P.apv;
-  const body = A.tab === 'inbox' ? apvInbox() : A.tab === 'pay' ? apvPay() : A.tab === 'people' ? apvPeople() : A.tab === 'rules' ? apvRules() : apvMine();
+  const needLock = A.tab !== 'mine';
+  const gate = needLock && !vault.unlocked() ? vaultScreen() : '';
+  const body = gate || (A.tab === 'inbox' ? apvInbox() : A.tab === 'pay' ? apvPay() : A.tab === 'people' ? apvPeople() : A.tab === 'rules' ? apvRules() : apvMine());
   return `<div class="apv-page">
     <div class="toolbar"><div class="tb-row">
       <div class="seg">${APV_TABS.map(([k, v, i]) => `<button class="${A.tab === k ? 'on' : ''}" data-act="apvTab" data-id="${k}">${ic(i)}${v}${k === 'inbox' && pendingApprovals() ? `<em>${pendingApprovals()}</em>` : ''}</button>`).join('')}</div>
       <span class="grow"></span>
-      ${A.tab === 'inbox' || A.tab === 'mine' ? `<button class="btn primary" data-act="apvImport">${ic('upload')}提出・結果ファイルを取り込む</button>` : ''}
+      ${vault.unlocked() && needLock ? `<span class="lock-chip">${ic('shield')}総務の画面を開いています<button class="link sm" data-act="vaultChange">合言葉を変える</button><button class="link sm" data-act="vaultLock">閉じる</button></span>` : ''}
+      ${(A.tab === 'inbox' && !gate) || A.tab === 'mine' ? `<button class="btn primary" data-act="apvImport">${ic('upload')}提出・結果ファイルを取り込む</button>` : ''}
     </div></div>
     ${body}
   </div>`;
+}
+
+// ---- 総務の合言葉 ----
+function vaultScreen() {
+  if (!vault.enabled()) {
+    return `<section class="card vault-card"><div class="vc-ic">${ic('shield')}</div><h2>総務の合言葉を決めてください</h2>
+      <p>受け取り箱・振込・社員の振込先は、<b>総務の合言葉を知っている人だけ</b>が開けるようにします。社員の振込先と会社の口座は、合言葉から作った鍵で<b>暗号化して保存</b>します（合言葉そのものは保存しません）。</p>
+      <div class="row2"><label class="fld"><span class="lb">合言葉（6 文字以上）</span><input id="vp1" type="password" autocomplete="new-password"></label><label class="fld"><span class="lb">もう一度</span><input id="vp2" type="password" autocomplete="new-password"></label></div>
+      <p class="hint warn-text">${ic('warn')}合言葉を忘れると、保存した振込先・振込元は戻せません（もう一度入れ直すことになります）。紙に書いて金庫に入れるなど、総務の中で決めて保管してください。</p>
+      <button class="btn primary" data-act="vaultSetup">${ic('key')}合言葉を決める</button>
+      <p class="muted small">15 分さわらないと自動で閉じます。合言葉を知らない人は、パソコン版を開けても総務の画面には入れません（ただし、パソコンを自由に使える人が開発者ツールでプログラムを書き換えることまでは防げません。完全に分けるにはサーバー版が必要です）。</p></section>`;
+  }
+  return `<section class="card vault-card"><div class="vc-ic">${ic('shield')}</div><h2>総務の画面</h2>
+    <p>合言葉を入れて開いてください。</p>
+    <div class="row-inline"><input id="vpIn" type="password" autocomplete="current-password" placeholder="合言葉" autofocus><button class="btn primary" data-act="vaultUnlock">${ic('key')}開く</button></div>
+    <p class="muted small"><button class="link sm" data-act="vaultReset">合言葉を忘れた</button></p></section>`;
 }
 
 // ---- 受け取り箱 ----
@@ -816,6 +858,7 @@ function apvPeople() {
         <td class="c-check"><input type="checkbox" data-pactive="${esc(sh.personKey(p))}" ${p.active === false ? '' : 'checked'}></td>
         <td class="c-act"><button class="icon-btn sm" data-act="personEdit" data-id="${esc(sh.personKey(p))}" title="振込先を直す">${ic('pen')}</button></td></tr>`; }).join('')}</tbody></table>`
       : '<p class="muted">まだいません。提出ファイルを取り込むと自動で増えます。先に全員を入れておくと、「未提出」の人が分かります。</p>'}
+    ${evtHTML()}
     <p class="hint">在籍のチェックを外した人は「未提出」に数えません（退職・休職など）。提出ファイルで振込先が変わっても、そのままは使いません。<b>総務が本人に確かめて「認める」まで、前の振込先のまま止めます</b>（なりすまし・書き換え対策）。</p></section>`;
 }
 
@@ -918,6 +961,7 @@ async function apvOpen(id) {
   if (r === 'del') { if (await confirmDialog('この提出を受け取り箱から消しますか？（社員の端末のデータは消えません）', '消す', { danger: true })) { await sh.removeApproval(rec.id); await loadApprovals(); X.render(); } return; }
   if (r !== 'approved' && r !== 'rejected') return;
   const blob = await sh.decide(rec, { status: r, comment, itemComments: Object.fromEntries(Object.entries(ic2).filter(([, v]) => v)), by: S.settings.name || '' });
+  logE(`${a.name || ''} さんの精算（${md(s.from)}〜${md(s.to)}・${yen(payable(s))}）を${r === 'approved' ? '承認' : '差し戻し'}`, { amount: payable(s) });
   download(blob, `精算の結果_${safe(a.name)}_${s.from}_${s.to}.json`);
   toast(`${r === 'approved' ? '承認しました' : '差し戻しました'}。結果ファイルを申請した人に送ってください`, { kind: 'ok', ms: 7000 });
   await loadApprovals(); X.render();
@@ -928,6 +972,7 @@ export async function importJson(file, { batch = false } = {}) {
   try { j = JSON.parse(await file.text()); } catch (_) { return false; }
   if (!j || j.app !== 'rakukeihi') return false;
   if (j.kind === 'submission') {
+    if (!vault.unlocked()) { toast(vault.enabled() ? '総務の合言葉で開いてから、提出ファイルを取り込んでください' : '先に総務の合言葉を決めてください（振込先を守るため）', { kind: 'error', ms: 7000 }); if (X.P.apv) X.P.apv.tab = 'inbox'; X.go('approvals'); return 'locked'; }
     await sh.receiveSubmission(j); await loadApprovals();
     if (!batch) {
       toast(`${j.applicant && j.applicant.name ? `${j.applicant.name} さんの` : ''}精算の提出を受け取りました`, { kind: 'ok' });
@@ -975,6 +1020,7 @@ export const apvActions = {
     const out = [];
     for (const r of list) { await sh.decide(r, { status: 'approved', comment: '', itemComments: {}, by: S.settings.name || '' }); out.push({ submissionId: r.id, reportId: r.sub.reportId, status: 'approved', comment: '', itemComments: {}, by: S.settings.name || '', at: r.decided }); }
     download(new Blob([JSON.stringify({ app: 'rakukeihi', kind: 'decisions', at: Date.now(), list: out })], { type: 'application/json' }), `精算の結果_まとめて_${today()}.json`);
+    logE(`${list.length}件をまとめて承認（${yen(list.reduce((s2, r) => s2 + payable(r.sub), 0))}）`);
     await loadApprovals(); X.render(); toast(`${list.length}件を承認しました。結果ファイル（まとめて）を全員に送ってください`, { kind: 'ok', ms: 7000 });
   },
   apvRemind: async () => {
@@ -993,7 +1039,7 @@ export const apvActions = {
     csvOut(rows.map((r) => r.map(q).join(',')).join('\r\n'), `経費精算_全員_${X.P.apv.month || '全期間'}.csv`);
   },
   myBankEdit: async () => { const a = await editAccount('自分の振込先（精算のお金を受け取る口座）', S.settings.myBank || { holder: '' }); if (!a) return; S.settings.myBank = a; st.saveSettings(); X.render(); toast('振込先を保存しました。次に総務に提出するときに一緒に届きます', { kind: 'ok' }); },
-  payerEdit: async () => { const a = await editAccount('振込元（会社の口座）', S.settings.payer || {}, { sender: true }); if (!a) return; S.settings.payer = a; st.saveSettings(); X.render(); },
+  payerEdit: async () => { const a = await editAccount('振込元（会社の口座）', S.settings.payer || {}, { sender: true }); if (!a) return; S.settings.payer = a; st.saveSettings(); logE('振込元（会社の口座）を直した'); X.render(); },
   personAdd: async () => {
     const n = await promptText('社員を足す', '氏名', '例: 鈴木 花子'); if (!n) return;
     sh.upsertRoster({ name: n }); X.render();
@@ -1002,12 +1048,51 @@ export const apvActions = {
     const list = [...(S.settings.roster || [])]; const i = list.findIndex((p) => sh.personKey(p) === b.dataset.id); if (i < 0) return;
     const a = await editAccount(`${list[i].name} さんの振込先`, list[i].bank || { holder: '' }); if (!a) return;
     const { pendingBank, ...rest } = list[i]; void pendingBank;
-    list[i] = { ...rest, bank: a, bankOk: true }; S.settings.roster = list; st.saveSettings(); X.P.apv.paySel = null; X.render();
+    list[i] = { ...rest, bank: a, bankOk: true }; S.settings.roster = list; st.saveSettings(); logE(`${list[i].name} さんの振込先を総務が直した`); X.P.apv.paySel = null; X.render();
     toast('振込先を保存しました（提出ファイルで変わっても、総務が認めるまでこの振込先を使います）', { kind: 'ok' });
   },
-  bankOk: (b) => { sh.resolveBank(b.dataset.id, 'ok'); X.P.apv.paySel = null; X.render(); },
-  bankAccept: async (b) => { if (!(await confirmDialog('本人に確かめましたか？ 振込先を新しい口座に変えます。', '変える'))) return; sh.resolveBank(b.dataset.id, 'accept'); X.P.apv.paySel = null; X.render(); toast('振込先を変えました', { kind: 'ok' }); },
-  bankReject: (b) => { sh.resolveBank(b.dataset.id, 'reject'); X.P.apv.paySel = null; X.render(); toast('変更の申し出を取り消しました（前の振込先のまま）'); },
+  bankOk: (b) => { sh.resolveBank(b.dataset.id, 'ok'); logE(`振込先を確かめた（${b.dataset.id.replace(/^\w+:/, '')}）`); X.P.apv.paySel = null; X.render(); },
+  bankAccept: async (b) => { if (!(await confirmDialog('本人に確かめましたか？ 振込先を新しい口座に変えます。', '変える'))) return; sh.resolveBank(b.dataset.id, 'accept'); logE(`振込先の変更を認めた（${b.dataset.id.replace(/^\w+:/, '')}）`); X.P.apv.paySel = null; X.render(); toast('振込先を変えました', { kind: 'ok' }); },
+  bankReject: (b) => { sh.resolveBank(b.dataset.id, 'reject'); logE(`振込先の変更を認めなかった（${b.dataset.id.replace(/^\w+:/, '')}）`); X.P.apv.paySel = null; X.render(); toast('変更の申し出を取り消しました（前の振込先のまま）'); },
+  booksClose: async () => {
+    const until = $('#closeUntil').value;
+    if (vault.enabled() && !vault.unlocked()) { const ok = await askPass(); if (!ok) return; }
+    const dr = S.expenses.filter((e) => e.status === 'draft' && e.date && e.date <= until).length;
+    if (!(await confirmDialog(`${ymd(until)} までの帳簿を締めます。`, '締める', { title: '帳簿の締め', detail: `その日までの経費・売上・振替・外注費は直せなくなります。${dr ? `\n確認待ちの経費が ${dr}件あります。締めたあとは、この期間の日付では確定できません。` : ''}` }))) return;
+    await st.closeBooks(until, X.rawJournals(), S.settings.name || '');
+    X.render(); toast(`${ymd(until)} まで締めました`, { kind: 'ok' });
+  },
+  booksReopen: async () => {
+    if (vault.enabled() && !vault.unlocked()) { const ok = await askPass(); if (!ok) return; }
+    const reason = await promptText('締めを戻す', '戻す理由（記録に残ります）', '例: 10 月分の請求書の入れ忘れ');
+    if (!reason) { toast('理由を入れてください'); return; }
+    await st.reopenBooks(S.settings.name || '', reason); X.render(); toast('締めを戻しました。直したら、もう一度締めてください');
+  },
+  vaultSetup: async () => {
+    const a = $('#vp1').value; const b2 = $('#vp2').value;
+    if (a !== b2) { toast('2 回の合言葉がちがいます', { kind: 'error' }); return; }
+    try { await vault.setup(a); } catch (e) { toast(e.message, { kind: 'error' }); return; }
+    toast('総務の合言葉を決めました。振込先・振込元は暗号化して保存します', { kind: 'ok', ms: 7000 }); await loadApprovals(); X.render();
+  },
+  vaultUnlock: async () => {
+    const ok = await vault.unlock($('#vpIn').value).catch((e) => { toast(e.message, { kind: 'error', ms: 8000 }); return null; });
+    if (ok === false) { toast('合言葉がちがいます', { kind: 'error' }); $('#vpIn').select(); return; }
+    if (ok) { await loadApprovals(); X.render(); }
+  },
+  vaultChange: async () => {
+    const v = { a: '', b: '', c: '' };
+    const r = await modal({ title: '合言葉を変える', width: 420, body: `<label class="fld"><span class="lb">いまの合言葉</span><input id="vcA" type="password" autofocus></label><label class="fld"><span class="lb">新しい合言葉（6 文字以上）</span><input id="vcB" type="password"></label><label class="fld"><span class="lb">新しい合言葉（もう一度）</span><input id="vcC" type="password"></label>`, actions: [{ label: 'やめる', value: 'no' }, { label: '変える', value: 'ok', kind: 'primary' }],
+      onMount: (el) => { for (const k of ['a', 'b', 'c']) { const i = $(`#vc${k.toUpperCase()}`, el); i.addEventListener('input', () => { v[k] = i.value; }); } } });
+    if (r !== 'ok') return;
+    if (v.b !== v.c) { toast('新しい合言葉が 2 回でちがいます', { kind: 'error' }); return; }
+    try { await vault.change(v.a, v.b); } catch (e) { toast(e.message, { kind: 'error' }); return; }
+    X.render(); toast('合言葉を変えました。ほかのパソコンでも新しい合言葉で開きます', { kind: 'ok', ms: 6000 });
+  },
+  vaultLock: () => { vault.lock(); X.render(); toast('総務の画面を閉じました'); },
+  vaultReset: async () => {
+    if (!(await confirmDialog('合言葉を消して、はじめから決め直しますか？ 暗号化して保存した社員の振込先と振込元（会社の口座）も消えます。受け取り箱の精算は残ります。', '消して決め直す', { danger: true, title: '合言葉を忘れたとき' }))) return;
+    vault.reset(); X.render();
+  },
   payCsv: () => {
     const g = selectedPay(); const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const rows = [['氏名', '社員番号', '銀行コード', '銀行名', '支店コード', '支店名', '種類', '口座番号', '口座名義', '金額']];
@@ -1023,9 +1108,10 @@ export const apvActions = {
     if (errs.length) { toast(`振込先を確かめてください: ${errs.join('・')}`, { kind: 'error', ms: 8000 }); return; }
     const txt = zenginTransfer({ sender: S.settings.payer, date: d, items: g.map((x) => ({ ...x.bank, amount: x.amount, custCode: x.empNo })) });
     download(new Blob([encodeSJIS(txt)], { type: 'text/plain' }), `総合振込_${d.replace(/-/g, '')}.txt`);
+    logE(`振込データを作った（${d}・${g.length}人・${yen(g.reduce((s2, x) => s2 + x.amount, 0))}）`);
     askPaid(g, d);
   },
-  payUndo: async (b) => { if (!(await confirmDialog('この振込の「支払済み」を取り消して、承認済み・未払いに戻しますか？', '取り消す'))) return; await sh.setPaid(b.dataset.id.split(','), null); await loadApprovals(); X.render(); },
+  payUndo: async (b) => { if (!(await confirmDialog('この振込の「支払済み」を取り消して、承認済み・未払いに戻しますか？', '取り消す'))) return; await sh.setPaid(b.dataset.id.split(','), null); logE('支払済みを取り消した'); await loadApprovals(); X.render(); },
   policyMake: () => {
     const pol = asPolicy(S.settings.companyPolicy || {});
     const f = policyFile({ policy: pol, categories: st.cats().filter((c) => !pol.allowedCats.length || pol.allowedCats.includes(c)), company: S.settings.company || bk().tradeName, from: S.settings.name });
@@ -1038,6 +1124,7 @@ async function askPaid(groups, date) {
   const total = groups.reduce((s, x) => s + x.amount, 0);
   if (!(await confirmDialog(`${groups.length}人・${yen(total)} を振り込んだら「支払済み」にします。`, '支払済みにする', { detail: '銀行の手続きが終わってから押してください。あとから［これまでの振込］で取り消せます。' }))) return;
   await sh.setPaid(groups.flatMap((x) => x.ids), { at: date, batch: `${date} ${Date.now().toString(36)}` });
+  logE(`支払済みにした（${date}・${groups.map((x) => x.name).join('・')}・${yen(total)}）`);
   X.P.apv.paySel = null; await loadApprovals(); X.render();
   toast(`${groups.length}人を支払済みにしました`, { kind: 'ok' });
 }
@@ -1288,6 +1375,15 @@ export function onChange(el) {
   return false;
 }
 
+async function askPass() {
+  let v = '';
+  const r = await modal({ title: '総務の合言葉', width: 400, body: `<label class="fld"><span class="lb">合言葉</span><input id="apIn" type="password" autofocus></label>`, actions: [{ label: 'やめる', value: 'no' }, { label: '開く', value: 'ok', kind: 'primary' }],
+    onMount: (el) => { const i = $('#apIn', el); i.addEventListener('input', () => { v = i.value; }); i.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); $('[data-m="ok"]', el).click(); } }); } });
+  if (r !== 'ok') return false;
+  const ok = await vault.unlock(v).catch(() => false);
+  if (!ok) toast('合言葉がちがいます', { kind: 'error' });
+  return ok;
+}
 async function promptText(title, label, ph = '') {
   let v = '';
   const r = await modal({ title, width: 420, body: `<label class="fld"><span class="lb">${esc(label)}</span><input id="ptIn" placeholder="${esc(ph)}" autofocus></label>`, actions: [{ label: 'やめる', value: 'no' }, { label: 'OK', value: 'ok', kind: 'primary' }],
@@ -1360,6 +1456,9 @@ Object.assign(actions, apvActions);
 
 // ---- はじめ ------------------------------------------------------------------
 export async function startExtras() {
+  document.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && ev.target && ev.target.id === 'vpIn') { ev.preventDefault(); actions.vaultUnlock(); } });
+  for (const ev of ['keydown', 'pointerdown', 'wheel']) document.addEventListener(ev, () => vault.touch(), { passive: true, capture: true });
+  setInterval(() => { if (vault.unlocked() && vault.idleMinutes() >= 15) { vault.lock(); if (X.P.view === 'approvals') X.render(); toast('15 分さわらなかったので、総務の画面を閉じました'); } }, 30000);
   try { const made = await st.runRecurring(); if (made.length) toast(`毎月の自動登録で ${made.length}件を入れました`, { kind: 'ok', ms: 6000 }); } catch (_) { /* なし */ }
   loadApprovals().then(() => X.renderChrome());
   try { await sh.loadSyncFolder(); } catch (_) { /* 使えない */ }

@@ -970,3 +970,22 @@ textarea#tjText:focus { border-color: var(--accent); outline: none; box-shadow: 
 .bank-ask span { flex: 1; min-width: 200px; } .bank-ask b { margin-right: 6px; }
 .bank-ask .ic { width: 15px; height: 15px; }
 .apv-detail .note.warn { margin-bottom: 10px; }
+
+/* 総務の合言葉・帳簿の締め */
+.vault-card { max-width: 640px; margin: 24px auto; text-align: left; }
+.vault-card .vc-ic { width: 52px; height: 52px; border-radius: 14px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; margin-bottom: 8px; }
+.vault-card .vc-ic .ic { width: 28px; height: 28px; }
+.vault-card input[type=password] { height: 40px; border: 1px solid var(--line-2); border-radius: var(--r-sm); padding: 0 12px; background: var(--raised); min-width: 260px; }
+.vault-card .row-inline { margin: 10px 0; }
+.vault-card .hint.warn-text { display: flex; gap: 6px; align-items: flex-start; }
+.lock-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--accent); background: var(--accent-soft); padding: 4px 10px; border-radius: 99px; font-weight: 650; }
+.lock-chip .ic { width: 15px; height: 15px; }
+.evt-log { margin-top: 14px; font-size: 13px; }
+.evt-log summary { cursor: pointer; font-weight: 650; color: var(--ink-2); display: flex; gap: 6px; align-items: center; }
+.evt-log ul { list-style: none; margin: 8px 0 0; padding: 0; max-height: 260px; overflow: auto; }
+.evt-log li { display: flex; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+.evt-log li span { color: var(--ink-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.evt-log li b { white-space: nowrap; }
+.close-card h2 { display: flex; align-items: center; gap: 6px; }
+.closed-now { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 10px 0; color: var(--accent); }
+.close-log { margin: 10px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--ink-2); }
