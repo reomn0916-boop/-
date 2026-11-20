@@ -360,3 +360,19 @@ body.modal .toast { bottom: calc(env(safe-area-inset-bottom) + 84px); }
 .tabs [data-tab] { position: relative; }
 .tab-badge { position: absolute; top: 4px; right: calc(50% - 22px); min-width: 16px; height: 16px; border-radius: 99px; background: var(--warn); color: #fff; font: 700 11px/16px system-ui; font-style: normal; text-align: center; }
 .help .guide-link { display: flex; width: 100%; margin: 8px 0 4px; text-decoration: none; }
+
+/* 会社のルール・総務への提出 */
+.pol-issues { list-style: none; margin: 8px 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.pol-issues li { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: 10px; font-size: 13.5px; background: var(--warn-bg); color: var(--warn); }
+.pol-issues li.error { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
+.pol-issues .ic { width: 16px; height: 16px; flex: none; margin-top: 2px; }
+.mybank { margin: 10px 0 4px; border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; }
+.mybank summary { cursor: pointer; font-weight: 700; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.mybank summary small { font-weight: 500; color: var(--sub); }
+.mybank select { width: 100%; }
+ul.rules { margin: 4px 0 10px; padding-left: 20px; font-size: 14px; }
+.note.banner.warn { background: var(--warn-bg); }
+.note.banner.warn .ic:first-child { color: var(--warn); }
+.rep-item .a small.apv { display: block; font-size: 11px; font-weight: 700; }
+.rep-item .a small.apv.approved { color: var(--accent); }
+.rep-item .a small.apv.rejected { color: var(--danger); }

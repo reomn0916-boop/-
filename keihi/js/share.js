@@ -1,9 +1,10 @@
 // 承認（ファイルで提出 → 承認者が承認・差し戻し → 結果を戻す）と、同期フォルダ（自動バックアップ・ほかの端末と同期）
 // サーバーを使わないので、ファイルのやりとりと、Google ドライブ・OneDrive などの同期フォルダを使う
 import { db, newId } from './db.js';
-import { S, on, makeBackup, readBackup, mergeBackup, saveMany, kvGet, kvSet, todayISO, imageToBackup, putBackupImage, loadAll } from './store.js';
+import { S, on, makeBackup, readBackup, mergeBackup, saveMany, kvGet, kvSet, todayISO, imageToBackup, putBackupImage, loadAll, saveSettings } from './store.js';
 import * as gd from '../../lib/gdrive.js';
 import { summarize } from './report.js';
+import { policyIssues } from './policy.js';
 
 function blobToB64(blob) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = () => rej(r.error); r.readAsDataURL(blob); }); }
 function b64ToBlob(b64, type) { const bin = atob(b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return new Blob([u], { type }); }
@@ -16,8 +17,11 @@ export async function makeSubmission(rep) {
   const images = [];
   for (const e of items) if (e.imageId) { const r = await db.get('images', e.imageId); if (r) images.push({ id: r.id, blob: await blobToB64(r.blob) }); }
   const sum = summarize(items);
+  const pol = S.settings.policy || null;
+  const withIssues = items.map((e) => ({ ...e, issues: policyIssues(e, pol, todayISO()) }));
   const sub = { app: 'rakukeihi', kind: 'submission', id: newId('s'), reportId: rep.id, at: Date.now(), from: rep.from, to: rep.to, advance: rep.advance || 0,
-    applicant: { name: S.settings.name, dept: S.settings.dept, company: S.settings.company }, sum: { reimb: sum.reimb, company: sum.company, count: sum.count }, items, images };
+    applicant: { name: S.settings.name, dept: S.settings.dept, company: S.settings.company, empNo: S.settings.empNo || '', bank: S.settings.myBank || null },
+    policyName: (pol && pol.name) || '', sum: { reimb: sum.reimb, company: sum.company, count: sum.count }, items: withIssues, images };
   rep.approval = { status: 'submitted', at: Date.now(), submissionId: sub.id }; rep.updated = Date.now();
   await db.put('reports', rep);
   return new Blob([JSON.stringify(sub)], { type: 'application/json' });
@@ -27,9 +31,35 @@ export async function makeSubmission(rep) {
 export async function receiveSubmission(j) {
   const rec = { id: j.id, received: Date.now(), status: 'pending', comment: '', itemComments: {}, sub: j };
   const old = await db.get('approvals', j.id);
-  if (old) { rec.status = old.status; rec.comment = old.comment; rec.itemComments = old.itemComments; }
+  if (old) { rec.status = old.status; rec.comment = old.comment; rec.itemComments = old.itemComments; rec.paid = old.paid || null; rec.received = old.received; }
   await db.put('approvals', rec);
+  upsertRoster(j.applicant);
   return rec;
+}
+// ---- 総務: 社員の名簿（提出ファイルの名前・社員番号・振込先で自動で増える。総務が直せる） ----------------
+export const personKey = (a) => (a && a.empNo ? `no:${String(a.empNo).trim()}` : `name:${String((a && a.name) || '').replace(/\s/g, '')}`);
+export function upsertRoster(a) {
+  if (!a || !(a.name || a.empNo)) return;
+  const list = [...(S.settings.roster || [])];
+  const k = personKey(a);
+  const i = list.findIndex((p) => personKey(p) === k);
+  const cur = i >= 0 ? list[i] : { name: '', dept: '', empNo: '', bank: null, active: true };
+  const next = { ...cur, name: a.name || cur.name, dept: a.dept || cur.dept, empNo: a.empNo || cur.empNo, bank: cur.bankLocked ? cur.bank : (a.bank && a.bank.number ? a.bank : cur.bank), active: cur.active !== false };
+  if (i >= 0) list[i] = next; else list.push(next);
+  S.settings.roster = list; saveSettings();
+}
+export async function setPaid(ids, paid) {
+  for (const id of ids) { const r = await db.get('approvals', id); if (!r) continue; r.paid = paid; await db.put('approvals', r); }
+}
+export async function removeApproval(id) { await db.del('approvals', id); }
+// 社員をまたいだ二重申請: 同じ日・同じ金額・同じ支払先の経費が、ちがう提出に入っている
+const pk = (s) => String(s || '').normalize('NFKC').replace(/\s|株式会社|\(株\)|㈱/g, '').toLowerCase();
+export function duplicateIndex(recs) {
+  const m = new Map();
+  for (const r of recs) for (const e of r.sub.items || []) { const k = `${e.date}|${e.amount}|${pk(e.payee)}`; if (!e.amount) continue; if (!m.has(k)) m.set(k, []); m.get(k).push({ rec: r.id, item: e.id, who: r.sub.applicant.name }); }
+  const dup = new Map();
+  for (const list of m.values()) if (new Set(list.map((x) => x.rec)).size > 1) for (const x of list) dup.set(`${x.rec}|${x.item}`, list.filter((y) => y.rec !== x.rec).map((y) => y.who));
+  return dup;
 }
 export const listApprovals = async () => ((await db.all('approvals')) || []).sort((a, b) => b.received - a.received);
 export const approvalImage = (rec, imageId) => { const im = rec.sub.images.find((x) => x.id === imageId); return im ? b64ToBlob(im.blob, 'image/jpeg') : null; };

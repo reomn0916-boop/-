@@ -29,7 +29,7 @@ function lsGet(k, def) { try { const v = localStorage.getItem(LS + k); return v 
 function lsSet(k, v) { try { localStorage.setItem(LS + k, JSON.stringify(v)); return true; } catch (_) { emit('error', '設定を保存できませんでした（容量不足？）'); return false; } }
 
 export const DEF_SETTINGS = {
-  company: '', dept: '', name: '',
+  company: '', dept: '', name: '', empNo: '', myBank: null,
   ocrMode: 'device', apiKey: '', aiModel: 'claude-opus-5-5',
   defaultMethod: '現金', cardMethod: '個人カード',
   carRate: 15, carCategory: '旅費交通費',
@@ -37,6 +37,8 @@ export const DEF_SETTINGS = {
   creditAccount: '未払金',
   advance: 0,
 };
+// 申請者ごとの情報（同期で上書きしない）
+export const PROFILE_KEYS = ['name', 'dept', 'empNo', 'myBank'];
 export const METHODS = ['現金', '個人カード', '電子マネー', '会社カード', '請求書払い'];
 
 export const S = {
@@ -611,7 +613,9 @@ export async function mergeBackup(j, { takeSettings = true, sync = false } = {})
   if ((j.history || []).length) { const hs = new Set(((await db.all('history')) || []).map((h) => h.id)); const nh = j.history.filter((h) => !hs.has(h.id)); if (nh.length) await db.putMany('history', nh); }
   // 6) 設定: 同期のときは、あとで変えた方の設定を使う（API キー・読み取り方はこの端末のまま）
   if (sync && j.settings && (j.settings.__at || 0) > (S.settings.__at || 0)) {
-    S.settings = { ...DEF_SETTINGS, ...j.settings, apiKey: S.settings.apiKey, ocrMode: S.settings.ocrMode, aiModel: S.settings.aiModel };
+    // 申請者の情報（名前・所属・社員番号・振込先）は、この端末で入れてあればそのまま（ほかの人の名前で上書きしない）
+    const mine = Object.fromEntries(PROFILE_KEYS.filter((k) => S.settings[k] && (typeof S.settings[k] !== 'object' || Object.values(S.settings[k]).some(Boolean))).map((k) => [k, S.settings[k]]));
+    S.settings = { ...DEF_SETTINGS, ...j.settings, ...mine, apiKey: S.settings.apiKey, ocrMode: S.settings.ocrMode, aiModel: S.settings.aiModel };
     saveSettings({ stamp: false }); changed++;
   } else if (!sync && takeSettings && j.settings) { S.settings = { ...DEF_SETTINGS, ...j.settings, ...pickFilled(S.settings), apiKey: S.settings.apiKey }; saveSettings(); }
   S.learned = { payeeCat: { ...(j.learned?.payeeCat || {}), ...S.learned.payeeCat }, tnoPayee: { ...(j.learned?.tnoPayee || {}), ...S.learned.tnoPayee } }; saveLearned();

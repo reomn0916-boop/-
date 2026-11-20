@@ -4,6 +4,7 @@ import {
   removeExpenses, restoreSnapshot, templateFrom, addTemplate, rotateImage, reread, imageRecord, newExpense, todayISO, addDays, num, dec, fillFromOcr, on, historyOf,
 } from '../js/store.js';
 import { modal } from './ui.js';
+import { policyIssues } from '../js/policy.js';
 import { checkInvoiceNo, guessCategory } from '../js/parse.js';
 import { $, $$, esc, ic, yen, kbd, MOD, toast, confirmDialog, mdw } from './ui.js';
 
@@ -199,6 +200,7 @@ export class Editor {
           <span class="select">${ic(METHOD_ICON[c.method] || 'cash')}<select data-f="method">${METHODS.map((m) => `<option ${c.method === m ? 'selected' : ''}>${m}</option>`).join('')}</select>${ic('chevD', 'caret')}</span></label>
       </div>
       <div data-dup>${dup ? this.dupHTML(dup) : ''}</div>
+      <div data-pol>${this.polHTML()}</div>
       <label class="fld${chk('payee')}"><span class="lb">支払先</span><input data-f="payee" list="dlPayee" autocomplete="off" placeholder="${c.kind === 'car' ? '自家用車' : c.kind === 'transit' ? '例: JR東日本' : '店名・会社名'}" value="${esc(c.payee)}"></label>
       <div class="fld${chk('category')}"><span class="lb">勘定科目</span>
         <div class="chips" role="radiogroup" aria-label="勘定科目">${cats().map((k) => `<button role="radio" aria-checked="${c.category === k}" class="chip ${c.category === k ? 'on' : ''}" data-cat="${esc(k)}">${esc(k)}</button>`).join('')}</div></div>
@@ -245,6 +247,13 @@ export class Editor {
       body: list.length ? `<ol class="hist-list">${list.map((h) => `<li><span class="hl-when">${new Date(h.at).toLocaleString('ja-JP')}</span><b>${LABEL[h.action] || esc(h.action)}</b>${h.action === 'update' ? `<ul>${Object.entries(h.ch || {}).map(([f, [a, b]]) => `<li><span>${esc(FIELD_LABEL[f] || f)}</span><s>${esc(v(a))}</s>${ic('arrowR')}<em>${esc(v(b))}</em></li>`).join('')}</ul>` : ''}</li>`).join('')}</ol>`
         : '<p class="muted">まだ履歴はありません（確定したあとの変更・削除を記録します）。</p>',
       actions: [{ label: '閉じる', value: 'ok', kind: 'primary' }] });
+  }
+
+  // 会社のルールに合わないところ
+  polHTML() {
+    if (!S.settings.policy) return '';
+    const iss = policyIssues({ ...this.cur, amount: computeAmount(this.cur) }, S.settings.policy, todayISO());
+    return iss.length ? `<ul class="pol-issues">${iss.map((x) => `<li class="${x.level}">${ic('warn')}<span>${esc(x.msg)}</span></li>`).join('')}</ul>` : '';
   }
 
   dupHTML(dup) {
@@ -302,6 +311,7 @@ export class Editor {
       const dup = findDup({ ...c, amount: computeAmount(c) });
       $('[data-dup]', this.form).innerHTML = dup ? this.dupHTML(dup) : '';
     }
+    const pol = $('[data-pol]', this.form); if (pol) pol.innerHTML = this.polHTML();
   }
 
   change(el) {

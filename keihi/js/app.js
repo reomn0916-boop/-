@@ -11,6 +11,7 @@ import {
   makeBackup, readBackup, mergeBackup, wipeAll, resumePending, DEF_SETTINGS,
 } from './store.js';
 import * as sh from './share.js';
+import { policyIssues, deadlineInfo, asPolicy, ruleLines } from './policy.js';
 
 // ---- 小さな道具 --------------------------------------------------------------
 
@@ -260,6 +261,7 @@ function renderEditor() {
         <button class="chip" data-act="edDate" data-d="0">今日</button><button class="chip" data-act="edDate" data-d="-1">昨日</button></div>
       </div>
       ${dup ? `<div class="note warn" id="edDup">${ic('warn')}<span>同じ日・同じ金額の経費があります: ${esc(dup.payee || '（支払先なし）')} ${yen(dup.amount)}</span><button class="chip" data-act="edDupOpen" data-id="${dup.id}">見る</button></div>` : '<div id="edDup"></div>'}
+      <div id="edPol">${polHTML(c)}</div>
       <label class="f${chk('payee')}"><span class="lb">支払先</span><input data-f="payee" list="dlPayee" placeholder="${c.kind === 'car' ? '自家用車' : c.kind === 'transit' ? '例: JR東日本' : '店名・会社名'}" value="${esc(c.payee)}" autocomplete="off"></label>
       <div class="f${chk('category')}"><span class="lb">勘定科目</span>
         <div class="chips" id="edCat">${cats().map((k) => `<button class="chip ${c.category === k ? 'on' : ''}" data-cat="${esc(k)}">${esc(k)}</button>`).join('')}</div>
@@ -355,10 +357,16 @@ function edInput(el) {
   if (k === 'amount' || k === 'date' || k === 'fare' || k === 'km' || k.startsWith('route')) {
     const dup = findDup({ ...c, amount: computeAmount(c) });
     const box = $('#edDup');
+    const pb = $('#edPol'); if (pb) pb.innerHTML = polHTML(c);
     if (box) box.outerHTML = dup ? `<div class="note warn" id="edDup">${ic('warn')}<span>同じ日・同じ金額の経費があります: ${esc(dup.payee || '（支払先なし）')} ${yen(dup.amount)}</span><button class="chip" data-act="edDupOpen" data-id="${dup.id}">見る</button></div>` : '<div id="edDup"></div>';
   }
 }
 
+function polHTML(c) {
+  if (!S.settings.policy) return '';
+  const iss = policyIssues({ ...c, amount: computeAmount(c) }, S.settings.policy, todayISO());
+  return iss.length ? `<ul class="pol-issues">${iss.map((x) => `<li class="${x.level}">${ic('warn')}<span>${esc(x.msg)}</span></li>`).join('')}</ul>` : '';
+}
 function edSave({ next = false } = {}) {
   const c = ED.cur;
   const bad = validate(c);
@@ -441,6 +449,7 @@ function viewHome() {
         <h2>${ic('star')}よく使う<small>タップで今日の分を追加</small></h2>
         <div class="tpl">${S.templates.map((t) => `<button class="tpl-chip" data-tpl="${t.id}"><span>${esc(t.label)}</span><b>${t.amount ? yen(t.amount) : ''}</b></button>`).join('')}</div>
       </section>` : ''}
+    ${(() => { const dl = deadlineInfo(S.settings.policy, todayISO()); const un = dl ? S.expenses.filter((e) => e.status === 'ok' && (e.date || '') <= `${dl.month}-31`) : []; return dl && dl.daysLeft <= 5 && un.length ? `<button class="note banner ${dl.daysLeft <= 1 ? 'warn' : ''}" data-act="settleOld">${ic('warn')}<span><b>${+dl.month.slice(5)}月分の精算の締切は ${md(dl.date)}（${dl.daysLeft <= 0 ? '今日' : `あと ${dl.daysLeft} 日`}）</b><small>未精算 ${un.length}件。精算書を作って総務に提出してください</small></span>${ic('chevR')}</button>` : ''; })()}
     ${old.length ? `
       <button class="note banner" data-act="settleOld">
         ${ic('doc')}<span><b>先月までの未精算が ${old.length}件（${yen(old.reduce((s, e) => s + e.amount, 0))}）あります</b><small>タップして精算書を作る</small></span>${ic('chevR')}
@@ -552,7 +561,8 @@ function viewReport() {
         <div class="rows">${reps.map((r) => `
           <div class="rep-item">
             <div><b>${md(r.from)}〜${md(r.to)}</b><small>${new Date(r.created).toLocaleDateString('ja-JP')} 作成 ・ ${r.ids.length}件</small></div>
-            <b class="a">${yen(r.reimb)}</b>
+            <b class="a">${yen(r.reimb)}${r.approval ? `<small class="apv ${r.approval.status}">${{ submitted: '提出済み', approved: '承認', rejected: '差し戻し' }[r.approval.status] || ''}</small>` : ''}</b>
+            <button class="chip" data-act="repSubmit" data-id="${r.id}">${ic('share')}総務へ</button>
             <button class="chip" data-repPdf="${r.id}">${ic('doc')}PDF</button>
             <button class="chip ghost" data-repUndo="${r.id}">${ic('undo')}戻す</button>
           </div>`).join('')}</div>
@@ -583,7 +593,7 @@ async function makePdf(items, { from, to, advance, reportId = null } = {}) {
         <div class="stack">
           <button class="btn primary big" data-act="sharePdf">${ic('share')}送る（LINE・メールなど）</button>
           <div class="row2"><button class="btn" data-act="savePdf">${ic('download')}保存</button><button class="btn" data-act="openPdf">${ic('print')}開く・印刷</button></div>
-          ${settledAlready ? '' : `<button class="btn ok" data-act="settle">${ic('check')}提出したので「精算済み」にする</button>`}
+          ${settledAlready ? (reportId ? `<button class="btn ok" data-act="repSubmit" data-id="${reportId}">${ic('share')}総務に提出（提出ファイルを送る）</button>` : '') : `<button class="btn ok" data-act="settleSubmit">${ic('share')}精算済みにして総務に提出</button><button class="btn" data-act="settle">${ic('check')}「精算済み」にするだけ（PDF で出した）</button>`}
         </div>
       </div>`, { cls: 'full' });
   } catch (err) {
@@ -593,13 +603,25 @@ async function makePdf(items, { from, to, advance, reportId = null } = {}) {
 }
 
 async function settleLast() {
-  const L = S.lastPdf; if (!L) return;
+  const L = S.lastPdf; if (!L) return null;
   const rep = await createReport(L.items, { from: L.from, to: L.to, advance: L.advance || 0, sum: L.sum });
   S.rep.advance = '';
   closeSheet();
   toast(`${rep.ids.length}件を精算済みにしました`, { label: '元に戻す', run: () => undoReport(rep.id, true) });
+  return rep;
 }
 
+async function checkBeforeSubmit(items) {
+  const errs = items.flatMap((e) => policyIssues(e, S.settings.policy, todayISO()).filter((x) => x.level === 'error').map((x) => `${md(e.date)} ${e.payee || ''}: ${x.msg}`));
+  if (!errs.length) return true;
+  return confirmBox(`会社のルールに合わない経費が ${errs.length}件あります（${errs.slice(0, 2).join(' ／ ')}）。このまま出しますか？`, 'このまま出す');
+}
+async function submitRep(rep) {
+  const blob = await sh.makeSubmission(rep);
+  await shareFile(new Blob([blob], { type: 'application/json' }), `精算の提出_${(S.settings.name || '申請者').replace(/[\\/:*?"<>|\s]+/g, '_')}_${rep.from}_${rep.to}.json`);
+  toast('提出ファイルを送りました（総務が取り込むと、結果ファイルが返ってきます）');
+  render();
+}
 async function undoReport(id, silent = false) {
   if (!silent && !(await confirmBox('この精算を取り消して、経費を「未精算」に戻しますか？', '未精算に戻す'))) return;
   await storeUndoReport(id);
@@ -633,6 +655,22 @@ function viewSettings() {
       <label class="f"><span class="lb">会社名</span><input data-s="company" value="${esc(st.company)}" placeholder="例: 株式会社○○建設"></label>
       <label class="f"><span class="lb">所属</span><input data-s="dept" value="${esc(st.dept)}" placeholder="例: 工事部"></label>
       <label class="f"><span class="lb">氏名</span><input data-s="name" value="${esc(st.name)}" placeholder="例: 山田 太郎"></label>
+      <label class="f"><span class="lb">社員番号（あれば）</span><input data-s="empNo" value="${esc(st.empNo || '')}" placeholder="例: 1024"></label>
+      <details class="mybank" ${st.myBank && st.myBank.number ? '' : 'open'}><summary>${ic('card')}精算の振込先 ${st.myBank && st.myBank.number ? `<small>${esc([st.myBank.bankName, st.myBank.branchName, st.myBank.number].filter(Boolean).join(' '))}</small>` : '<small>（総務に提出するときに一緒に届きます）</small>'}</summary>
+        <div class="row2"><label class="f"><span class="lb">銀行コード（4けた）</span><input data-mb="bankCode" inputmode="numeric" maxlength="4" value="${esc((st.myBank || {}).bankCode || '')}" placeholder="0005"></label>
+          <label class="f"><span class="lb">銀行名（カナ）</span><input data-mb="bankName" value="${esc((st.myBank || {}).bankName || '')}" placeholder="ミツビシユーエフジェイ"></label></div>
+        <div class="row2"><label class="f"><span class="lb">支店コード（3けた）</span><input data-mb="branchCode" inputmode="numeric" maxlength="3" value="${esc((st.myBank || {}).branchCode || '')}" placeholder="001"></label>
+          <label class="f"><span class="lb">支店名（カナ）</span><input data-mb="branchName" value="${esc((st.myBank || {}).branchName || '')}" placeholder="ホンテン"></label></div>
+        <div class="row2"><label class="f"><span class="lb">種類</span><select data-mb="type">${[['1', '普通'], ['2', '当座'], ['4', '貯蓄']].map(([v, l]) => `<option value="${v}" ${((st.myBank || {}).type || '1') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <label class="f"><span class="lb">口座番号</span><input data-mb="number" inputmode="numeric" maxlength="7" value="${esc((st.myBank || {}).number || '')}"></label></div>
+        <label class="f"><span class="lb">口座名義（カナ）</span><input data-mb="holder" value="${esc((st.myBank || {}).holder || '')}" placeholder="ヤマダ タロウ"></label>
+      </details>
+      <p class="muted">名前・社員番号・振込先はこの端末だけの情報です（同期でほかの人の名前に変わることはありません）。</p>
+    </section>
+    <section class="block">
+      <h2>${ic('check')}会社の経費ルール</h2>
+      ${st.policy ? `<p><b>${esc(st.policy.name || '会社の経費ルール')}</b></p><ul class="rules">${ruleLines(st.policy).map((x) => `<li>${esc(x)}</li>`).join('')}</ul>${st.policy.note ? `<p class="muted">${esc(st.policy.note)}</p>` : ''}` : '<p class="muted">総務から「会社の経費ルール」ファイルが届いたら、下の［ファイルを取り込む］で選んでください。入力のときにルールに合わないところを知らせます。</p>'}
+      <button class="btn" data-act="restore">${ic('undo')}ファイルを取り込む（ルール・承認の結果）</button>
     </section>
     <section class="block">
       <h2>${ic('spark')}読み取り方</h2>
@@ -689,7 +727,7 @@ function driveBlock() {
   if (!gd.drive.used) {
     return `<section class="block" id="drive">
       <h2>${ic('share')}Google ドライブで同期</h2>
-      <p class="muted">Google アカウントでつなぐと、マイドライブの「ラク経費」フォルダにデータと領収書を自動で保存します。パソコン版でも同じアカウントでつなぐと、撮ったレシートがそのままパソコンに出ます。機種変更しても消えません。</p>
+      <p class="muted">Google アカウントでつなぐと、マイドライブの「ラク経費」フォルダにデータと領収書を自動で保存します。自分のパソコンでも同じアカウントでつなぐと、撮ったレシートがそのままパソコンに出ます。機種変更しても消えません。<b>自分専用のアカウント</b>でつないでください（会社への提出は［精算］から）。</p>
       <button class="btn primary" data-act="driveConnect">${ic('share')}Google ドライブにつなぐ</button>
     </section>`;
   }
@@ -806,6 +844,8 @@ const ACTIONS = {
   savePdf: () => S.lastPdf && download(S.lastPdf.blob, S.lastPdf.name),
   openPdf: () => { if (!S.lastPdf) return; const u = URL.createObjectURL(S.lastPdf.blob); const w = window.open(u, '_blank'); if (!w) download(S.lastPdf.blob, S.lastPdf.name); setTimeout(() => URL.revokeObjectURL(u), 120000); },
   settle: () => settleLast(),
+  settleSubmit: async () => { const L = S.lastPdf; if (!L) return; if (!(await checkBeforeSubmit(L.items))) return; const rep = await settleLast(); if (rep) await submitRep(rep); },
+  repSubmit: async (b) => { const rep = S.reports.find((r) => r.id === b.dataset.id); if (!rep) return; if (!(await checkBeforeSubmit(rep.ids.map(byId).filter(Boolean)))) return; await submitRep(rep); },
   toggleKey: (b) => { const i = b.parentElement.querySelector('input'); i.type = i.type === 'password' ? 'text' : 'password'; b.textContent = i.type === 'password' ? '表示' : '隠す'; },
   testAi: async (b) => {
     if (!S.settings.apiKey) { toast('API キーを入れてください'); return; }
@@ -897,6 +937,7 @@ document.addEventListener('input', (ev) => {
     saveSettings();
     return;
   }
+  if (el.dataset.mb) { S.settings.myBank = { type: '1', ...(S.settings.myBank || {}), [el.dataset.mb]: el.value.trim() }; saveSettings(); return; }
   if (el.id === 'q') { S.list.q = el.value; render(); return; }
   if (el.id === 'rAdv') { S.rep.advance = el.value; }
 });
@@ -915,6 +956,7 @@ document.addEventListener('change', async (ev) => {
     if (el.dataset.s === 'aiModel' || el.dataset.s === 'carCategory' || el.dataset.s === 'defaultMethod' || el.dataset.s === 'cardMethod') { S.settings[el.dataset.s] = el.value; saveSettings(); }
     return;
   }
+  if (el.dataset.mb) { S.settings.myBank = { type: '1', ...(S.settings.myBank || {}), [el.dataset.mb]: el.value.trim() }; saveSettings(); return; }
   if (el.name === 'ocr') { S.settings.ocrMode = el.value; saveSettings(); render(); return; }
   if (el.id === 'rDone') { S.rep.includeDone = el.checked; render(); return; }
   if (el.id === 'rFrom' || el.id === 'rTo') { S.rep[el.id === 'rFrom' ? 'from' : 'to'] = el.value; render(); return; }
@@ -969,6 +1011,17 @@ async function backup({ send = false } = {}) {
 }
 
 async function restore(file) {
+  let j0 = null; try { j0 = JSON.parse(await file.text()); } catch (_) { /* バックアップの判定で知らせる */ }
+  if (j0 && j0.app === 'rakukeihi' && j0.kind === 'policy') {
+    if (!(await confirmBox(`「${(j0.policy && j0.policy.name) || '会社の経費ルール'}」を取り込みます。${ruleLines(j0.policy).slice(0, 4).join('・')}`, '取り込む'))) return;
+    S.settings.policy = asPolicy(j0.policy); if (j0.categories && j0.categories.length) S.settings.categories = j0.categories; if (j0.company && !S.settings.company) S.settings.company = j0.company;
+    saveSettings(); toast('会社の経費ルールを取り込みました'); render(); return;
+  }
+  if (j0 && j0.app === 'rakukeihi' && j0.kind === 'decision') {
+    try { const rep = await sh.applyDecision(j0); toast(`精算（${md(rep.from)}〜${md(rep.to)}）は「${j0.status === 'approved' ? '承認' : '差し戻し'}」でした${j0.comment ? `: ${j0.comment}` : ''}`); } catch (e) { toast(e.message); }
+    render(); return;
+  }
+  if (j0 && j0.app === 'rakukeihi' && j0.kind === 'submission') { toast('これは総務に送る提出ファイルです。総務のパソコン版で取り込んでください'); return; }
   let info;
   try { info = await readBackup(file); } catch (e) { toast(e.message); return; }
   const msg = `${info.total}件のうち、新しい経費 ${info.added}件・更新 ${info.updated}件を取り込みます。いまある経費は消えません。`;

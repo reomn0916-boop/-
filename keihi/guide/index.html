@@ -98,6 +98,7 @@ ol.steps > li { counter-increment: s; position: relative; padding: 2px 0 14px 48
 ol.steps > li::before { content: counter(s); position: absolute; left: 0; top: 0; width: 34px; height: 34px; border-radius: 99px; background: var(--accent); color: var(--accent-ink); font-weight: 800; display: grid; place-items: center; font-size: 16px; }
 ol.steps > li:not(:last-child)::after { content: ''; position: absolute; left: 16px; top: 38px; bottom: 4px; width: 2px; background: var(--line); }
 ol.steps > li b.t { display: block; font-size: 16.5px; }
+.badge-like { display: inline-block; padding: 0 8px; border-radius: 99px; background: var(--warn-bg); color: var(--warn); font-weight: 700; font-size: .88em; }
 .btnname { display: inline-block; padding: 0 8px; border-radius: 6px; background: var(--sunken); border: 1px solid var(--line2); font-weight: 700; font-size: .93em; line-height: 1.6; white-space: nowrap; }
 .tip, .warn, .info { display: block; position: relative; padding: 12px 14px 12px 42px; border-radius: 12px; margin: 12px 0; font-size: 15px; line-height: 1.75; }
 .tip::before, .warn::before, .info::before { position: absolute; left: 13px; top: 12px; }
@@ -248,9 +249,10 @@ kbd { font: 600 12.5px ui-monospace, monospace; padding: 1px 6px; border-radius:
 <section class="topic" id="first-settings" data-who="user admin" data-k="初期設定 最初の設定 名前 会社名 氏名 所属 申請者 設定 読み取り方 AI">
   <h3><span class="ico">⚙️</span>最初の設定（1 分）</h3>
   <ol class="steps">
-    <li><b class="t">名前を入れる</b><span class="btnname">設定</span>を開き、<b>会社名・所属・氏名</b>を入れます。精算書の上にのります。</li>
+    <li><b class="t">名前と振込先を入れる</b><span class="btnname">設定</span>を開き、<b>会社名・所属・氏名</b>（あれば社員番号）を入れます。精算書の上にのります。<b>精算の振込先</b>（銀行・支店・口座番号・名義カナ）も入れておくと、総務に提出するときに一緒に届きます。</li>
     <li><b class="t">読み取り方を選ぶ</b>ふつうは<b>「端末内で読む（無料）」</b>のままで大丈夫です。手書きやくしゃくしゃのレシートが多い人は、会社の指示があれば「AI で読む」にします（API キーが必要・1 枚数円）。</li>
-    <li><b class="t">Google ドライブにつなぐ（おすすめ）</b><span class="btnname">Google ドライブにつなぐ</span>を押して、会社で決めた Google アカウントでログインします。スマホとパソコンのデータが自動でそろい、スマホをなくしても消えません。<a href="#sync">くわしく</a></li>
+    <li><b class="t">会社のルールを取り込む</b>総務から「会社の経費ルール」ファイルが届いたら、<span class="btnname">設定</span>→<span class="btnname">ファイルを取り込む</span>で選びます。入力のときに「目的を書いてください」などと知らせてくれます。</li>
+    <li><b class="t">Google ドライブにつなぐ（おすすめ）</b><span class="btnname">Google ドライブにつなぐ</span>を押して、<b>自分の</b> Google アカウントでログインします。自分のスマホとパソコンのデータが自動でそろい、スマホをなくしても消えません。<a href="#sync">くわしく</a></li>
   </ol>
   <div class="shots"><figure class="phone"><img loading="lazy" src="img/m-settings-top.jpg" alt="スマホの設定画面"><figcaption>設定（スマホ）</figcaption></figure><figure class="phone"><img loading="lazy" src="img/m-settings-drive.jpg" alt="Google ドライブで同期"><figcaption>Google ドライブで同期</figcaption></figure></div>
 </section>
@@ -364,13 +366,15 @@ kbd { font: 600 12.5px ui-monospace, monospace; padding: 1px 6px; border-radius:
   <div class="tip">「確認待ちが○件あります」と出たら、先に確定してください。確認待ちは精算書に入りません。</div>
 </section>
 
-<section class="topic" id="approve" data-who="user acct" data-k="承認 上司 申請 差し戻し 承認者 提出ファイル 結果ファイル ワークフロー 決裁">
-  <h3><span class="ico">✅</span>承認に出す（会社に承認の決まりがあるとき）</h3>
+<section class="topic" id="approve" data-who="user" data-k="承認 上司 申請 提出 総務 総務に提出 差し戻し 承認者 提出ファイル 結果ファイル 出し方 送り方 経理に出す">
+  <h3><span class="ico">📮</span>総務に提出する</h3>
   <ol class="steps">
-    <li><b class="t">申請する人</b>パソコン版の［精算書］で精算済みにしたあと、［承認］→<span class="btnname">承認に出す</span>。できた「精算の提出」ファイルをメールやチャットで承認する人に送ります（領収書の画像も入っています）。</li>
-    <li><b class="t">承認する人</b>届いたファイルをパソコン版の画面にドラッグ → 領収書を見て、気になる経費にコメントを書き、<span class="btnname">承認する</span>か<span class="btnname">差し戻す</span>。できた「結果」ファイルを返します。</li>
-    <li><b class="t">申請する人</b>結果ファイルをドラッグすると、精算に結果がつき、コメントは経費の画面に出ます。差し戻しなら［精算書］→<span class="btnname">未精算に戻す</span>で直して、もう一度出します。</li>
+    <li><b class="t">精算書を作る</b><span class="btnname">精算</span>→<span class="btnname">精算書 PDF を作る</span>。</li>
+    <li><b class="t">「精算済みにして総務に提出」</b>提出ファイル（明細と領収書の画像・振込先が入っています）ができるので、LINE・メール・チャットで総務に送ります。会社のルールに合わない経費があるときは、先に知らせてくれます。</li>
+    <li><b class="t">結果が返ってきたら取り込む</b>総務から「精算の結果」ファイルが届いたら、<span class="btnname">設定</span>→<span class="btnname">ファイルを取り込む</span>で選びます。<span class="btnname">精算</span>の「これまでの精算」に<b>承認</b>か<b>差し戻し</b>が出て、コメントは経費の画面に出ます。</li>
+    <li><b class="t">差し戻されたら</b>「これまでの精算」で<span class="btnname">戻す</span>→経費を直す→もう一度精算書を作って提出します。</li>
   </ol>
+  <div class="info">あとから出し直すときは、「これまでの精算」の<span class="btnname">総務へ</span>で、同じ提出ファイルをもう一度作れます。パソコン版は［承認・総務 → 自分の精算］から。</div>
 </section>
 
 <!-- ============================ 同期 ============================ -->
@@ -384,14 +388,14 @@ kbd { font: 600 12.5px ui-monospace, monospace; padding: 1px 6px; border-radius:
     <li><b class="t">あとは自動</b>スマホで撮ったレシートが、少しするとパソコンに出ます。直したこと・消したことも伝わります。</li>
   </ol>
   <figure class="pc"><img loading="lazy" src="img/p-settings-sync.jpg" alt="パソコン版の同期の設定"><figcaption>つながっているときの表示（パソコン）</figcaption></figure>
-  <div class="warn"><b>どの端末も同じ Google アカウント</b>でつないでください。ちがうアカウントだと、データはそろいません。</div>
+  <div class="warn"><b>同期は 1 人 1 アカウント</b>です。自分のスマホとパソコンは、<b>自分の</b> Google アカウントでつなぎます。<b>ほかの人と同じアカウントでつながないでください</b>（全員の経費が 1 つに混ざります）。会社への提出は<a href="#approve">提出ファイル</a>で行います。</div>
   <div class="info">つながりは <b>1 時間で切れます</b>（Google の決まり）。「つなぎ直す」が出たら押すだけで、すぐ同期を再開します。スマホは<span class="btnname">設定</span>のタブに <b>!</b> が出ます。</div>
 </section>
 
 <section class="topic" id="backup" data-who="user acct admin" data-k="バックアップ 消えた 保存 復元 戻す 機種変更 ファイル 端末 データの場所">
   <h3><span class="ico">🛡️</span>データを消さないために（バックアップ）</h3>
   <ul>
-    <li><b>Google ドライブにつないでいれば</b>、自動で保存され、14 日分の控えも残ります。スマホを替えても、新しいスマホでつなぐだけで戻ります。</li>
+    <li><b>Google ドライブ（自分のアカウント）につないでいれば</b>、自動で保存され、14 日分の控えも残ります。スマホを替えても、新しいスマホでつなぐだけで戻ります。</li>
     <li><b>つないでいないとき</b>は、データはその端末の中だけです。<span class="btnname">設定</span>→<span class="btnname">バックアップを保存</span>で、月 1 回はファイルに保存してください。戻すときは<span class="btnname">バックアップから戻す</span>。</li>
     <li>ブラウザの「履歴とデータを消す」「サイトのデータを消す」をすると、端末の中のデータは消えます。</li>
   </ul>
@@ -581,7 +585,7 @@ kbd { font: 600 12.5px ui-monospace, monospace; padding: 1px 6px; border-radius:
     <li><b class="t">config.js に書く</b>できた ID（<code>…apps.googleusercontent.com</code>）を、リポジトリの <code>config.js</code> の <code>GOOGLE_CLIENT_ID = ''</code> の中に貼り付けて公開します。</li>
   </ol>
   <div class="info">くわしい手順と、うまくいかないときの直し方は <a href="../docs/google-drive.md">docs/google-drive.md</a>。はじめてつなぐときに「確認されていないアプリ」と出たら、自分たちのアプリなので<span class="btnname">続行</span>で進めます。</div>
-  <div class="warn">この方式では、<b>みんなが同じ Google アカウント</b>でつなぎます（会社用のアカウントを 1 つ作るのがおすすめ）。一人ひとり別のアカウントで、データを分けたり権限を付けたりしたいときは、サーバー版が必要です（<a href="../docs/server-plan.md">server-plan.md</a>）。</div>
+  <div class="warn"><b>同期は 1 人 1 アカウント</b>（各自が自分のスマホとパソコンをそろえる用）です。社員みんなで同じアカウントを使うと、全員の経費と名前が混ざります。会社への提出は「提出ファイル」で総務に送ります。<b>使う人全員の Google アカウントを、手順 3 のテストユーザーに追加</b>してください（100 人まで）。全員のデータを 1 か所で持ち、ログインと権限で分けたいときはサーバー版になります（<a href="../docs/server-plan.md">server-plan.md</a>）。</div>
 </section>
 
 <section class="topic" id="admin-roll" data-who="admin" data-k="配る 展開 社員 みんな 案内 文面 送る 周知 説明会">
@@ -589,8 +593,9 @@ kbd { font: 600 12.5px ui-monospace, monospace; padding: 1px 6px; border-radius:
   <p>次の文をそのまま社内チャット・メールに貼って送れます（アドレスは書き換えてください）。</p>
   <div class="tip" style="display:block"><b>【経費精算アプリ「ラク経費」の使い方】</b><br>
     1. スマホでこのアドレスを開いて「ホーム画面に追加」してください: https://（公開したアドレス）/keihi/<br>
-    2. 設定で名前を入れ、「Google ドライブにつなぐ」を押して、会社のアカウント（○○@gmail.com）でログイン<br>
-    3. レシートは「撮る」で撮るだけ。月末は「精算」→「精算書 PDF を作る」→ 送ってください<br>
+    2. ［設定］で名前・社員番号・精算の振込先を入れる。添付の「会社の経費ルール」ファイルを［設定 → ファイルを取り込む］で選ぶ<br>
+    3. （おすすめ）［設定 → Google ドライブにつなぐ］で<b>自分の</b> Google アカウントでログイン（スマホを替えても消えません）<br>
+    4. レシートは「撮る」で撮るだけ。月末は［精算］→［精算書 PDF を作る］→［精算済みにして総務に提出］で、毎月 ○ 日までに総務に送ってください<br>
     わからないことは、アプリの右上の「？」から使い方ガイドを開いて検索できます。</div>
 </section>
 
@@ -605,6 +610,64 @@ kbd { font: 600 12.5px ui-monospace, monospace; padding: 1px 6px; border-radius:
     <li>パソコン版で決算書 PDF ができた（経理で使う場合）</li>
     <li>バックアップのファイルを 1 回保存してみた</li>
   </ul>
+</section>
+
+<!-- ============================ 総務 ============================ -->
+<div class="part" data-part><h2>総務の人向け（全員の精算を集めて払う）</h2><span class="tag">パソコン版</span></div>
+
+<section class="topic" id="soumu-month" data-who="acct admin" data-k="総務 月の流れ 毎月 締め 集める 承認 支払 振込 段取り 手順">
+  <h3><span class="ico">🗓️</span>総務の毎月の流れ</h3>
+  <div class="big3">
+    <div><span class="n">1</span><b>集める</b><span>社員から届いた提出ファイルを、全部まとめてパソコン版にドラッグ。受け取り箱に社員別に並びます。</span></div>
+    <div><span class="n">2</span><b>確かめて承認</b><span>ルール違反・二重申請の疑いが出たものだけ開いて確認。問題のないものは<span class="btnname">まとめて承認</span>。</span></div>
+    <div><span class="n">3</span><b>振り込む</b><span>［振込］で銀行に渡すファイルを作り、ネットバンキングで振り込んだら<span class="btnname">支払済みにする</span>。</span></div>
+  </div>
+  <div class="tip">締切の前に［受け取り箱］の<b>未提出</b>を見て、<span class="btnname">お知らせ文をコピー</span>でまだの人にチャットで知らせられます。</div>
+</section>
+
+<section class="topic" id="soumu-inbox" data-who="acct admin" data-k="受け取り箱 提出ファイル 取り込む まとめて 一覧 社員別 月別 未決 承認 差し戻し 未提出 二重 重複 ルール違反 検索 全員">
+  <h3><span class="ico">📥</span>受け取り箱（全員の精算を見る）</h3>
+  <ol class="steps">
+    <li><b class="t">まとめて取り込む</b>メール・チャットで届いた「精算の提出_○○.json」を、何個でもまとめて画面にドラッグ（または［承認・総務］→<span class="btnname">提出・結果ファイルを取り込む</span>）。同じファイルを 2 回入れても 1 件のままです。</li>
+    <li><b class="t">一覧で見る</b>月・状態（未決・承認・差し戻し・支払済み）・社員で絞り込めます。上には未決の件数、承認済みで未払いの金額、支払済みの金額、<b>未提出の人</b>が出ます。</li>
+    <li><b class="t">気になるものを開く</b><span class="badge-like">ルール</span>は会社のルールに合わない経費、<span class="badge-like">二重の疑い</span>は<b>ほかの社員の提出にも同じ日・金額・支払先の経費がある</b>ものです。開くと領収書の画像と理由が並びます。</li>
+    <li><b class="t">承認・差し戻し</b>経費ごとにコメントを書いて<span class="btnname">承認する</span>か<span class="btnname">差し戻す</span>。できた「精算の結果」ファイルを社員に返します（承認だけなら返さなくても大丈夫です）。</li>
+  </ol>
+  <ul>
+    <li><b>全員の経費を探す</b>: 上の検索に支払先・金額・日付を入れると、全員の提出の中から探せます（電子帳簿保存法の検索にも）。</li>
+    <li><b>明細 CSV</b>: 全員分の明細を Excel で開ける CSV に出せます（社員・社員番号・状態・支払日つき）。</li>
+  </ul>
+</section>
+
+<section class="topic" id="soumu-pay" data-who="acct admin" data-k="振込 振込データ 全銀 全銀形式 総合振込 ネットバンキング 支払 払う 委託者コード 振込元 振込一覧 支払済み">
+  <h3><span class="ico">💸</span>振込データを作る（全銀形式）</h3>
+  <ol class="steps">
+    <li><b class="t">振込元を 1 回だけ入れる</b>［承認・総務 → 振込］→<span class="btnname">振込元を入れる</span>。銀行から伝えられた<b>委託者コード（10 けた）</b>・委託者名（カナ）と、振り込むときに使う会社の口座を入れます。</li>
+    <li><b class="t">振り込む人を確かめる</b>承認済みでまだ払っていない精算が、社員ごとにまとまって並びます。振込先がない人は<span class="btnname">入れる</span>から（社員が自分の設定で入れていれば、提出ファイルで自動で届きます）。</li>
+    <li><b class="t">振込データを作る</b>振込日を選んで<span class="btnname">振込データ（全銀形式）</span>。できた「総合振込_日付.txt」を、ネットバンキングの<b>総合振込 → ファイルの取り込み</b>で読み込みます。手で入れる銀行なら<span class="btnname">振込一覧（CSV）</span>を見ながら入れます。</li>
+    <li><b class="t">支払済みにする</b>振込の手続きが終わったら<span class="btnname">支払済みにする</span>。間違えたら「これまでの振込」で取り消せます。</li>
+  </ol>
+  <div class="warn">全銀形式は銀行によって細かい条件（総合振込か給与振込か・改行の有無など）が違うことがあります。<b>はじめて使うときは、少ない人数・少額で取り込めるか確かめてください。</b></div>
+</section>
+
+<section class="topic" id="soumu-people" data-who="acct admin" data-k="社員 名簿 振込先 口座 銀行コード 支店コード 名義 カナ 在籍 退職 社員番号 追加">
+  <h3><span class="ico">👥</span>社員と振込先（名簿）</h3>
+  <ul>
+    <li>提出ファイルが届くと、名前・所属・社員番号・振込先が<b>自動で名簿に入ります</b>。先に全員を<span class="btnname">社員を足す</span>で入れておくと、「未提出」の人が分かります。</li>
+    <li>総務が振込先を直すと、その人の振込先は提出ファイルで上書きされなくなります（<b>総務が固定</b>）。</li>
+    <li>退職・休職の人は「在籍」のチェックを外すと、未提出に数えません。</li>
+    <li>銀行名・支店名・名義は全角カナで入れて大丈夫です（振込データでは自動で半角カナになります）。漢字は使えません。</li>
+  </ul>
+</section>
+
+<section class="topic" id="soumu-rules" data-who="acct admin" data-k="会社のルール 経費規程 規程 上限 必須 目的 現場 人数 相手先 締切 科目 配る 配布 ルールファイル">
+  <h3><span class="ico">📜</span>会社の経費ルールを決めて配る</h3>
+  <ol class="steps">
+    <li><b class="t">ルールを決める</b>［承認・総務 → 会社のルール］で、提出の締切（毎月○日）、必ず書くこと（目的・現場・飲食の人数と相手）、領収書の画像、飲食の 1 人あたりの上限、<b>科目ごとの 1 件の上限</b>、使ってよい科目を決めます。</li>
+    <li><b class="t">配るファイルを作る</b><span class="btnname">配るファイルを作る</span>でできた「会社の経費ルール_○○.json」を、全員にメール・チャットで送ります。</li>
+    <li><b class="t">社員が取り込む</b>社員はスマホの［設定 → ファイルを取り込む］（パソコンはドラッグ）で選ぶだけ。入力の画面でルールに合わないところを赤・黄色で知らせ、提出するときにも確認します。締切が近づくとホームに出ます。</li>
+  </ol>
+  <div class="info">ルールに合わない経費も、止めずに出せます（理由を内容に書いてもらう運用）。総務の受け取り箱では<b>ルール</b>の印が付きます。ルールを変えたら、ファイルを作り直して配り直します。</div>
 </section>
 
 <!-- ============================ 困ったとき ============================ -->
@@ -627,7 +690,8 @@ kbd { font: 600 12.5px ui-monospace, monospace; padding: 1px 6px; border-radius:
   <details class="faq" data-k="文字化け excel エクセル csv 開く"><summary>CSV を Excel で開くと文字化けする</summary><div>経費の CSV は Excel でそのまま開ける形にしています。会計ソフト用（弥生・マネーフォワード）は Shift_JIS なので、会計ソフトで取り込んでください。</div></details>
   <details class="faq" data-k="電波 圏外 オフライン 山 地下 トンネル"><summary>電波がない現場でも使える？</summary><div>ホーム画面のアイコンから開いていれば、電波がなくても撮影・記録できます（読み取り用データを 1 回ダウンロード済みなら読み取りも）。電波が戻ると自動で同期します。</div></details>
   <details class="faq" data-k="料金 有料 無料 お金 費用 ai 料金"><summary>お金はかかる？</summary><div>アプリ・端末内の読み取り・Google ドライブ同期は無料です。「AI で読む」にしたときだけ、Anthropic へのお支払い（1 枚数円程度）がかかります。</div></details>
-  <details class="faq" data-k="何人 複数 社員 みんな 別々 権限 上司 見られる"><summary>社員それぞれのデータを分けたい・権限を付けたい</summary><div>今の方式（Google ドライブ同期）は、同じアカウントでつないだ端末のデータを 1 つにそろえます。人ごとに分けたいときは、それぞれ自分のアカウントでつなぎ、精算書（または承認の提出ファイル）で経理に出します。会社全体で 1 つのデータにして権限を分けたいときは、サーバー版を検討します。</div></details>
+  <details class="faq" data-k="何人 複数 社員 みんな 別々 権限 上司 見られる 同じアカウント 名前が変わる 混ざる"><summary>社員みんなで使うときは？（名前が混ざった）</summary><div>Google ドライブの同期は <b>1 人 1 アカウント</b>（自分のスマホとパソコン用）です。社員はそれぞれ自分のアカウントでつなぎ、精算は［精算済みにして総務に提出］で提出ファイルを総務に送ります。総務はパソコン版の［承認・総務 → 受け取り箱］で全員分をまとめて見られます。同じアカウントを何人かで使っていた場合は、それぞれの設定で名前を入れ直し、アカウントを分けてください。</div></details>
+  <details class="faq" data-k="振込 全銀 取り込めない エラー 銀行 ネットバンキング 総合振込"><summary>振込データを銀行が読み込んでくれない</summary><div>① 総合振込（種別 21）で取り込んでいるか ② 委託者コード・振込元の口座が銀行の登録と同じか ③ 振込先の銀行・支店コード、名義のカナに間違いがないか、を確かめてください。銀行によって改行の有無など細かい条件が違うことがあります。だめなときは<span class="btnname">振込一覧（CSV）</span>を見ながら手で入れてください。</div></details>
   <details class="faq" data-k="ポップアップ ブロック 許可 ログイン画面 出ない"><summary>「ポップアップがブロックされました」と出る</summary><div>ブラウザのアドレスバーの右に出る表示から、このサイトのポップアップを許可して、もう一度押してください。</div></details>
 </section>
 
@@ -678,7 +742,7 @@ kbd { font: 600 12.5px ui-monospace, monospace; padding: 1px 6px; border-radius:
   }
   toc.innerHTML = html;
   // よく探されること
-  const CHIPS = ['レシートの撮り方', 'まとめて', '精算書', '科目がわからない', '領収書がない', '電車・バス', 'Google ドライブ', 'つなぎ直す', 'インストール', '会計ソフト', '決算書', 'カードで払った'];
+  const CHIPS = ['レシートの撮り方', 'まとめて', '精算書', '総務に提出', '科目がわからない', '領収書がない', '電車・バス', 'Google ドライブ', '受け取り箱', '振込', '会社のルール', 'インストール', '会計ソフト', '決算書'];
   $('#chips').innerHTML = CHIPS.map((c) => `<button class="chip">${c}</button>`).join('');
   let who = 'all';
   try { who = localStorage.getItem('rakukeihi.guide.who') || 'all'; } catch (_) { /* なし */ }

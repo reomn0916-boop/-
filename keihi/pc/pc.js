@@ -39,7 +39,7 @@ const VIEWS = {
   books: { title: '帳簿', sub: () => '売上・収入、振替伝票、仕訳帳、期首残高' },
   statements: { title: '決算書', sub: () => '損益計算書・貸借対照表をボタンひとつで' },
   analysis: { title: '分析', sub: () => '現場別の損益・予算・車両・外注先・年次まとめ' },
-  approvals: { title: '承認', sub: () => '精算をファイルで提出して、承認・差し戻しを受け取ります' },
+  approvals: { title: '承認・総務', sub: () => '受け取り箱・振込データ・社員の振込先・会社のルール・自分の精算' },
   templates: { title: 'よく使う', sub: () => '毎回同じ経費を、ワンクリックで入れられます' },
   settings: { title: '設定', sub: () => '申請者・読み取り方・データの管理' },
 };
@@ -887,7 +887,10 @@ function viewSettings() {
       <section class="card" id="set-who"><h2>申請者</h2><p class="muted">精算書の上にのります。</p>
         <div class="row3"><label class="fld"><span class="lb">会社名</span><input data-s="company" value="${esc(s.company)}" placeholder="株式会社○○建設"></label>
         <label class="fld"><span class="lb">所属</span><input data-s="dept" value="${esc(s.dept)}" placeholder="工事部"></label>
-        <label class="fld"><span class="lb">氏名</span><input data-s="name" value="${esc(s.name)}" placeholder="山田 太郎"></label></div></section>
+        <label class="fld"><span class="lb">氏名</span><input data-s="name" value="${esc(s.name)}" placeholder="山田 太郎"></label></div>
+        <div class="row3"><label class="fld"><span class="lb">社員番号（あれば）</span><input data-s="empNo" value="${esc(s.empNo || '')}" placeholder="例: 1024"></label>
+        <div class="fld span2"><span class="lb">精算の振込先（総務に提出するときに一緒に届きます）</span><div class="row-inline">${s.myBank && s.myBank.number ? `<b>${esc([s.myBank.bankName || s.myBank.bankCode, s.myBank.branchName || s.myBank.branchCode, s.myBank.number, s.myBank.holder].filter(Boolean).join(' '))}</b>` : '<span class="muted">まだ入れていません</span>'}<button class="btn sm" data-act="myBankEdit">${ic('bank')}${s.myBank && s.myBank.number ? '直す' : '入れる'}</button></div></div></div>
+        <p class="hint">名前・所属・社員番号・振込先はこの端末だけの情報です（Google ドライブの同期で、ほかの人の名前に変わることはありません）。</p></section>
 
       <section class="card" id="set-ocr"><h2>読み取り方</h2>
         <div class="choice">
@@ -1109,7 +1112,9 @@ async function doImport(files, { goReview = true } = {}) {
   const backups = arr.filter((f) => /\.json$/i.test(f.name || '') || f.type === 'application/json');
   const csvs = arr.filter((f) => /\.(csv|tsv)$/i.test(f.name || '') || f.type === 'text/csv');
   const others = arr.filter((f) => !backups.includes(f) && !csvs.includes(f));
-  for (const b of backups) { if (!(await FX.importJson(b))) await importBackupFile(b); }
+  let subs = 0;
+  for (const b of backups) { const k = await FX.importJson(b, { batch: backups.length > 1 }); if (k === 'submission') subs++; else if (!k) await importBackupFile(b); }
+  if (backups.length > 1 && subs) await FX.afterBatchImport(subs);
   for (const c of csvs) await FX.bankImportFile(c);
   if (!others.length) return;
   const importable = others.filter(st.isImportable);
@@ -1622,7 +1627,7 @@ async function start() {
   paint(document);
   $('#paletteKey').innerHTML = `<kbd>${MOD}</kbd><kbd>K</kbd>`;
   await st.loadAll();
-  FX.init({ P, render, renderChrome, go, allJournals, fyOf, shiftFY, fyLabel, booksRange, accountOptions, emptyState, editLedger, printPages });
+  FX.init({ P, render, renderChrome, go, openExpense, allJournals, fyOf, shiftFY, fyLabel, booksRange, accountOptions, emptyState, editLedger, printPages });
   st.resumePending();
   P.view = VIEWS[location.hash.slice(1)] ? location.hash.slice(1) : 'home';
   render();
