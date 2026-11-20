@@ -4,6 +4,7 @@ import { buildAlignment, alignPoint, alignStation, alignStakes, fmtStation, inte
 import { initCalc, reportHtml, reportsCSV } from './calc.js';
 import { ICONS } from '../pc/icons.js';
 import { makeTracker, packProject, unpackProject, mergeProjects, mergeSummary, EXT } from './sync.js';
+import { gd, syncProject, listProjects, openProjectFile, autoSync, cloudState } from './cloud.js';
 import { explodeForDxf, dimLabel, hatchSegments, LTYPES } from './draft.js';
 import { SCALES, defaultSheet, layout as sheetLayout, makeXf, fitRange, autoScale, renderSheet, makePdf, sheetFrameEntities, sheetInfo, inViewport, dimGeom, dimText } from './sheet.js';
 
@@ -75,9 +76,11 @@ function readColors() {
 // ============================================================
 // 保存・読み込み
 // ============================================================
+let cloudAuto = null; let cloudBusy = false;
 function save() {
   tracker.track(doc);
   try { localStorage.setItem(STORE_KEY, JSON.stringify({ doc, view })); } catch { /* 容量不足など */ }
+  if (cloudAuto && !cloudBusy) cloudAuto.changed();
 }
 function load() {
   try {
@@ -1594,6 +1597,52 @@ $('#linkMerge').addEventListener('click', () => {
   toast('取り込みました: ' + mergeSummary(r));
   incoming = null;
 });
+// ---- Google ドライブ（パソコン版と自動でそろえる） ----
+async function cloudReady() {
+  if (!gd.configured()) {
+    const id = (prompt('Google の OAuth クライアント ID を貼り付けてください（…apps.googleusercontent.com）') || '').trim();
+    if (!/\.apps\.googleusercontent\.com$/.test(id)) { if (id) toast('ID の形がちがいます'); return false; }
+    gd.setClientId(id);
+  }
+  if (gd.connected()) return true;
+  try { await gd.connect(); return true; } catch (e) { toast(e.message); return false; }
+}
+function cloudAfter(r, { quiet = false } = {}) {
+  if (r.ok && r.merged && (r.merged.added || r.merged.updated || r.merged.removed)) {
+    tracker.reset(doc); recomputeCal(); renderNames(); updateZoneChip();
+    cloudBusy = true; changed(); cloudBusy = false;
+    toast('パソコン・ほかの端末の変更を取り込みました: ' + mergeSummary(r.merged));
+  } else if (r.ok && !quiet) toast(r.created ? 'Google ドライブに保存しました（マイドライブ › 現場CAD）' : 'Google ドライブと同期しました');
+  else if (!r.ok && !r.busy && !quiet) toast(r.error || '同期できませんでした');
+  updateCloudChip();
+}
+async function cloudSync() {
+  if (!(await cloudReady())) return;
+  cloudBusy = true; save(); cloudBusy = false;
+  cloudAfter(await syncProject(doc, 'mobile'));
+}
+async function cloudOpen() {
+  if (!(await cloudReady())) return;
+  let files;
+  try { files = await listProjects(); } catch (e) { toast(e.message); return; }
+  if (!files.length) { toast('Google ドライブにまだプロジェクトがありません'); return; }
+  let d = $('#cloudDialog');
+  if (!d) { d = document.createElement('dialog'); d.id = 'cloudDialog'; d.className = 'modal tall'; document.body.appendChild(d); }
+  d.innerHTML = `<h3>Google ドライブから開く</h3><div class="cloud-list">${files.map((f, i) => `<button data-ci="${i}"><b>${esc(f.name.replace(/\.gcad$/, ''))}</b><small>${new Date(f.modifiedTime).toLocaleString('ja-JP')}</small></button>`).join('')}</div><div class="row"><button class="btn" data-x>閉じる</button></div>`;
+  d.onclick = async (ev) => {
+    if (ev.target.closest('[data-x]')) { d.close(); return; }
+    const b = ev.target.closest('[data-ci]'); if (!b) return;
+    d.close();
+    try { const nd = await openProjectFile(files[+b.dataset.ci]); openProject(nd); toast(`「${nd.name}」を開きました（図形 ${nd.entities.length}）`); } catch (e) { toast('開けませんでした: ' + e.message); }
+  };
+  d.showModal();
+}
+function updateCloudChip() {
+  const b = $('#menu [data-act="cloudSync"]'); if (!b) return;
+  const lab = b.querySelector('.lab') || b;
+  lab.textContent = !gd.drive.used ? 'Google ドライブに保存・同期' : gd.connected() ? `Google ドライブと同期${cloudState.last ? `（${new Date(cloudState.last).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}）` : ''}` : 'Google ドライブにつなぎ直す';
+}
+
 async function sendPc() {
   const name = safeName() + EXT;
   const data = JSON.stringify(packProject(doc, 'mobile'));
@@ -1695,6 +1744,8 @@ const actions = {
   openPts() { $('#filePts').click(); },
   openJson() { $('#fileJson').click(); },
   sendPc() { sendPc(); },
+  cloudSync() { cloudSync(); },
+  cloudOpen() { cloudOpen(); },
   recvPc() { $('#fileGcad').click(); },
   saveDxf() { download(safeName() + '.dxf', encodeSJIS(toDXF(exportEntities(), { layers: doc.layers, scaleN: doc.sheet?.scaleN || 100 })), 'application/dxf'); },
   openSima() { openSima(); },
@@ -2406,7 +2457,7 @@ new ResizeObserver(resize).observe($('#stage'));
 resize();
 document.querySelectorAll('i[data-ic]').forEach((i) => { i.innerHTML = ICONS[i.dataset.ic] || ''; });
 document.querySelectorAll('#menu .menu-group > button[data-act]').forEach((b) => {
-  const MI = { new: 'new', rename: 'zone', sendPc: 'send', recvPc: 'recv', openFit: 'fit', openScale: 'scalefit', toolNige: 'nige', openSima: 'sima', openSheet: 'sheetdoc', openCalc: 'calc', openReports: 'report', openCal: 'gps', openLayers: 'layer', openDxf: 'import', openPts: 'sima', openJson: 'open', saveDxf: 'export', saveCsv: 'export', saveJson: 'save', help: 'help' };
+  const MI = { new: 'new', rename: 'zone', sendPc: 'send', recvPc: 'recv', cloudSync: 'sync', cloudOpen: 'open', openFit: 'fit', openScale: 'scalefit', toolNige: 'nige', openSima: 'sima', openSheet: 'sheetdoc', openCalc: 'calc', openReports: 'report', openCal: 'gps', openLayers: 'layer', openDxf: 'import', openPts: 'sima', openJson: 'open', saveDxf: 'export', saveCsv: 'export', saveJson: 'save', help: 'help' };
   const ic = ICONS[MI[b.dataset.act]]; if (ic && !b.querySelector('svg')) b.insertAdjacentHTML('afterbegin', `<i class="mi">${ic}</i>`);
 });
 $('#emptyState').addEventListener('click', (ev) => {
@@ -2423,3 +2474,8 @@ if ('serviceWorker' in navigator && location.protocol === 'https:') {
 
 // テスト・デバッグ用
 window.__genbacad = { doc, view, settings, setTool, place, parseCmd, actions, alignGeom, get calTf() { return calTf; } };
+
+// Google ドライブの自動同期（つないだことがあるとき）
+cloudAuto = autoSync({ getDoc: () => { cloudBusy = true; save(); cloudBusy = false; return doc; }, app: 'mobile', onDone: (r) => cloudAfter(r, { quiet: true }) });
+updateCloudChip();
+if (gd.connected() && doc.entities.length) cloudAuto.run();

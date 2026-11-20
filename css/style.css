@@ -413,3 +413,8 @@ dialog h2 { font-size: 18px; }
 /* 使い方 */
 .help h3 { color: var(--accent); font-size: 14px; margin-top: 18px; }
 @media (prefers-reduced-motion: reduce) { #toast, .toggle input[type="checkbox"], .toggle input[type="checkbox"]::after { transition: none; } }
+
+/* Google ドライブから開く */
+.cloud-list { display: flex; flex-direction: column; gap: 6px; max-height: 60vh; overflow: auto; margin: 10px 0; }
+.cloud-list button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: inherit; text-align: left; font: inherit; }
+.cloud-list small { opacity: .7; font-size: 12px; }

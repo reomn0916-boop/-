@@ -526,8 +526,23 @@ function blobToB64(blob) {
 }
 function b64ToBlob(b64, type) { const bin = atob(b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return new Blob([u], { type }); }
 
-export async function makeBackup() {
-  const images = await db.all('images');
+// 画像 1 枚をバックアップの形に（Google ドライブには 1 枚ずつ置く）
+export async function imageToBackup(id) {
+  const im = await db.get('images', id); if (!im) return null;
+  const o = { id: im.id, w: im.w, h: im.h, blob: await blobToB64(im.blob), thumb: im.thumb ? await blobToB64(im.thumb) : '' };
+  if (im.orig) Object.assign(o, { orig: await blobToB64(im.orig), origType: im.origType, origName: im.origName });
+  if (im.text) o.text = im.text;
+  return o;
+}
+export async function putBackupImage(im) {
+  const rec = { id: im.id, w: im.w, h: im.h, blob: b64ToBlob(im.blob, 'image/jpeg'), thumb: im.thumb ? b64ToBlob(im.thumb, 'image/jpeg') : null };
+  if (im.orig) Object.assign(rec, { orig: b64ToBlob(im.orig, im.origType || 'application/pdf'), origType: im.origType, origName: im.origName });
+  if (im.text) rec.text = im.text;
+  await db.put('images', rec);
+  S.thumbs.delete(im.id);
+}
+export async function makeBackup({ images: withImages = true } = {}) {
+  const images = withImages ? await db.all('images') : [];
   const { apiKey, ...settings } = S.settings; void apiKey;
   const history = (await db.all('history')) || [];
   const parts = [`{"app":"rakukeihi","version":4,"tombs":${JSON.stringify(S.tombs)},"recurring":${JSON.stringify(S.recurring)},"history":${JSON.stringify(history)},"exportedAt":${JSON.stringify(new Date().toISOString())},"settings":${JSON.stringify(settings)},"learned":${JSON.stringify(S.learned)},"templates":${JSON.stringify(S.templates)},"expenses":${JSON.stringify(S.expenses)},"reports":${JSON.stringify(S.reports)},"ledger":${JSON.stringify(S.ledger)},"images":[`];

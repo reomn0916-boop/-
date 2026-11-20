@@ -352,3 +352,10 @@ body.modal .toast { bottom: calc(env(safe-area-inset-bottom) + 84px); }
   .tabs { bottom: 14px; border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); height: var(--tabs-h); padding-bottom: 0; left: 16px; right: 16px; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+
+/* Google ドライブ */
+.drive-st { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 12px; margin: 8px 0 10px; background: var(--warn-bg); color: var(--warn); }
+.drive-st.ok { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+.drive-st small { color: inherit; opacity: .85; font-size: 12px; word-break: break-all; }
+.tabs [data-tab] { position: relative; }
+.tab-badge { position: absolute; top: 4px; right: calc(50% - 22px); min-width: 16px; height: 16px; border-radius: 99px; background: var(--warn); color: #fff; font: 700 11px/16px system-ui; font-style: normal; text-align: center; }

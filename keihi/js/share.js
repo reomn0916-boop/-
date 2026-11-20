@@ -1,7 +1,8 @@
 // 承認（ファイルで提出 → 承認者が承認・差し戻し → 結果を戻す）と、同期フォルダ（自動バックアップ・ほかの端末と同期）
 // サーバーを使わないので、ファイルのやりとりと、Google ドライブ・OneDrive などの同期フォルダを使う
 import { db, newId } from './db.js';
-import { S, on, makeBackup, readBackup, mergeBackup, saveMany, kvGet, kvSet, todayISO } from './store.js';
+import { S, on, makeBackup, readBackup, mergeBackup, saveMany, kvGet, kvSet, todayISO, imageToBackup, putBackupImage, loadAll } from './store.js';
+import * as gd from '../../lib/gdrive.js';
 import { summarize } from './report.js';
 
 function blobToB64(blob) { return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1]); r.onerror = () => rej(r.error); r.readAsDataURL(blob); }); }
@@ -56,7 +57,10 @@ export async function applyDecision(j) {
 // ---- 同期フォルダ（File System Access API: Chrome・Edge） ----------------------------------
 export const syncSupported = () => typeof window !== 'undefined' && 'showDirectoryPicker' in window;
 const deviceId = () => { let d = localStorage.getItem('rakukeihi.device'); if (!d) { d = `${/Mac/.test(navigator.platform) ? 'mac' : /Win/.test(navigator.platform) ? 'win' : 'pc'}-${Math.random().toString(36).slice(2, 6)}`; localStorage.setItem('rakukeihi.device', d); } return d; };
-export const syncState = { handle: null, permission: 'none', lastWrite: 0, lastRead: 0, busy: false, error: '' };
+export const syncState = { handle: null, permission: 'none', lastWrite: 0, lastRead: 0, busy: false, error: '', mode: 'none', progress: '' };
+// どちらで同期しているか: Google ドライブ（一度つないだ）> 同期フォルダ > なし
+export const syncMode = () => (gd.drive.used ? 'drive' : syncState.handle ? 'folder' : 'none');
+export { gd };
 
 export async function loadSyncFolder() {
   syncState.handle = (await kvGet('syncDir')) || null;
@@ -78,7 +82,8 @@ export async function reconnectSync() {
 export async function forgetSync() { await kvSet('syncDir', null); syncState.handle = null; syncState.permission = 'none'; }
 
 // 自分のファイルを書き、ほかの端末のファイルで新しいものを取り込む
-export async function syncNow() {
+export async function syncNow() { return syncMode() === 'drive' ? syncDrive() : syncFolder(); }
+async function syncFolder() {
   const h = syncState.handle;
   if (!h || syncState.permission !== 'granted' || syncState.busy) return { ok: false };
   syncState.busy = true; syncState.error = '';
@@ -112,9 +117,63 @@ export async function syncNow() {
   } finally { syncState.busy = false; }
 }
 
+// ---- Google ドライブ（スマホでも動く。サーバーなし） ---------------------------------------
+// マイドライブ/ラク経費/ に、端末ごとのデータ（画像なし）と日ごとの控え。画像は ラク経費/画像/ に 1 枚ずつ（一度送れば次からは送らない）
+export async function syncDrive() {
+  if (!gd.connected()) return { ok: false, auth: true, error: gd.needsReconnect() ? 'Google ドライブとのつながりが切れました。「つなぎ直す」を押してください' : 'Google ドライブにつないでいません' };
+  if (syncState.busy) return { ok: false, busy: true };
+  syncState.busy = true; syncState.error = ''; syncState.progress = '';
+  let merged = 0; let imgDown = 0; let imgUp = 0;
+  try {
+    const root = await gd.folder('ラク経費', { key: 'rakukeihi' });
+    const imgDir = await gd.folder('画像', { parent: root, key: 'rakukeihi-images' });
+    const files = await gd.list(root);
+    const me = `ラク経費_同期_${deviceId()}.json`;
+    const seen = (await kvGet('driveSeen')) || {};
+    for (const f of files) {
+      if (!/^ラク経費_同期_.+\.json$/.test(f.name) || f.name === me) continue;
+      if (seen[f.id] && seen[f.id] >= f.modifiedTime) continue;
+      syncState.progress = `${f.name.replace(/^ラク経費_同期_|\.json$/g, '')} の変更を読んでいます`;
+      let j; try { j = JSON.parse(await gd.readText(f.id)); } catch (_) { continue; }
+      if (j && j.app === 'rakukeihi') merged += await mergeBackup(j, { takeSettings: false, sync: true });
+      seen[f.id] = f.modifiedTime;
+    }
+    await kvSet('driveSeen', seen);
+    // 画像: ないものをもらい、まだ送っていないものを送る
+    const remote = new Map((await gd.list(imgDir)).map((f) => [f.name.replace(/\.json$/, ''), f.id]));
+    const local = new Set(await db.keys('images'));
+    const need = [...new Set(S.expenses.map((e) => e.imageId).filter((id) => id && !local.has(id) && remote.has(id)))];
+    for (const id of need) { syncState.progress = `画像を受け取っています（${++imgDown} / ${need.length}）`; try { await putBackupImage(JSON.parse(await gd.readText(remote.get(id)))); } catch (_) { /* 次の同期でまた */ } }
+    const send = [...local].filter((id) => !remote.has(id));
+    for (const id of send) { syncState.progress = `画像を送っています（${++imgUp} / ${send.length}）`; const o = await imageToBackup(id); if (o) await gd.write({ name: `${id}.json`, parent: imgDir, data: JSON.stringify(o) }); }
+    // 自分のデータ（画像なし）と、日ごとの控え（14 日分）
+    syncState.progress = 'データを送っています';
+    const data = await makeBackup({ images: false });
+    const mine = files.find((f) => f.name === me);
+    await gd.write({ id: mine ? mine.id : null, name: me, parent: root, data });
+    const day = `ラク経費_控え_${todayISO()}.json`;
+    const today = files.find((f) => f.name === day);
+    await gd.write({ id: today ? today.id : null, name: day, parent: root, data });
+    const lim = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10);
+    for (const f of files) { const m = f.name.match(/^ラク経費_控え_(\d{4}-\d{2}-\d{2})\.json$/); if (m && m[1] < lim) { try { await gd.remove(f.id); } catch (_) { /* 次回 */ } } }
+    if (imgDown) await loadAll();
+    syncState.lastWrite = Date.now(); await kvSet('syncLastWrite', syncState.lastWrite);
+    return { ok: true, merged, imgDown, imgUp };
+  } catch (e) {
+    syncState.error = e.message || String(e);
+    return { ok: false, auth: e instanceof gd.DriveAuthError, error: syncState.error };
+  } finally { syncState.busy = false; syncState.progress = ''; }
+}
+
 // 変更があったら少し待って同期、10 分ごとにも同期
 let timer = null;
+let started = false;
 export function startAutoSync(onDone) {
-  on('change', () => { clearTimeout(timer); timer = setTimeout(async () => { const r = await syncNow(); if (onDone) onDone(r); }, 20000); });
-  setInterval(async () => { const r = await syncNow(); if (onDone) onDone(r); }, 10 * 60000);
+  if (started) return; started = true;
+  const run = async () => { if (syncMode() === 'none') return; const r = await syncNow(); if (onDone) onDone(r); };
+  // 自分の同期で起きた変更では、もう一度同期しない
+  on('change', () => { if (syncState.busy) return; clearTimeout(timer); timer = setTimeout(run, 20000); });
+  setInterval(run, 10 * 60000);
+  // スマホ: アプリに戻ってきたとき
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && Date.now() - syncState.lastWrite > 60000) run(); });
 }

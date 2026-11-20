@@ -38,6 +38,7 @@ function tx(store, mode, fn) {
 
 export const db = {
   all: (store) => tx(store, 'readonly', (s) => s.getAll()),
+  keys: (store) => tx(store, 'readonly', (s) => s.getAllKeys()),
   get: (store, id) => tx(store, 'readonly', (s) => s.get(id)),
   put: (store, obj) => tx(store, 'readwrite', (s) => s.put(obj)),
   del: (store, id) => tx(store, 'readwrite', (s) => s.delete(id)),

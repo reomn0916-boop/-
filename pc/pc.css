@@ -417,3 +417,9 @@ label.chk { flex-direction: row !important; align-items: center; gap: 7px !impor
   #printArea .report { page-break-inside: avoid; }
 }
 #printArea { display: none; }
+
+/* Google ドライブから開く */
+.cloud-list { display: flex; flex-direction: column; gap: 6px; max-height: 60vh; overflow: auto; min-width: 420px; }
+.cloud-list button { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 9px 12px; border-radius: 6px; border: 1px solid var(--line, #ccc); background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.cloud-list button:hover { background: rgba(127,127,127,.12); }
+.cloud-list small { opacity: .7; font-size: 12px; }

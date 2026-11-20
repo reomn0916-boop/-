@@ -7,12 +7,14 @@ import { buildAlignment, alignPoint, alignStakes } from '../js/cogo.js';
 import { initCalc, reportHtml, reportsCSV } from '../js/calc.js';
 import { PAPERS, SCALES, defaultSheet, layout, makeXf, renderSheet, makePdf, sheetFrameEntities, drawPrims, buildPrims, sheetInfo } from '../js/sheet.js';
 import { LTYPES, LWS, COLORS, HATCHES, hatchSegments, dimGeom, dimLabel, explodeForDxf } from '../js/draft.js';
-import { makeTracker, packProject, unpackProject, EXT } from '../js/sync.js';
+import { makeTracker, packProject, unpackProject, mergeSummary, EXT } from '../js/sync.js';
+import { gd, syncProject, listProjects, openProjectFile, autoSync, cloudState } from '../js/cloud.js';
 import * as G from './geom.js';
 import { ICONS } from './icons.js';
 import { commandDefs } from './commands.js';
 import { civilDefs } from './civil.js';
 import { initLink } from './link.js';
+let cloudAuto = null; let cloudBusy = false; // Google ドライブの自動同期
 
 // ============================================================
 // 定数・状態
@@ -129,6 +131,7 @@ function redo() {
 /** 図面を変更したあとに呼ぶ */
 function commit(msg) {
   tracker.track(doc);
+  if (cloudAuto && !cloudBusy) cloudAuto.changed();
   clearCaches();
   ensureLayers();
   for (const id of [...sel]) if (!entById(id)) sel.delete(id);
@@ -1576,6 +1579,7 @@ const RIBBON = [
   { tab: '現場連携', groups: [
     { name: 'スマホへ', items: [A('l_send', '現場へ送る', 'send', () => link.send(), { tip: '.gcad にまとめて、スマホへ送れる形で保存します' }), A('l_sima', 'SIMA で送る', 'sima', () => exportPoints('sima'))] },
     { name: 'スマホから', items: [A('l_recv', '現場データ取込', 'recv', () => link.receive(), { tip: 'スマホから戻ってきた .gcad を差分で取り込みます' })] },
+    { name: 'Google ドライブ', items: [A('g_sync', 'ドライブと同期', 'sync', () => cloudSync(), { tip: 'マイドライブ › 現場CAD に保存し、スマホ版の変更を差分で取り込みます。つないでおくと自動で同期します' }), A('g_open', 'ドライブから開く', 'open', () => cloudOpen())] },
     { name: '連携フォルダ', items: [A('l_folder', 'フォルダ設定', 'folder', () => link.setupFolder()), A('l_check', '新着を確認', 'sync', () => link.check(true))] },
     { name: 'スマホ版', items: [A('l_phone', 'スマホ版の開き方', 'phone', () => link.phoneInfo())] },
   ] },
@@ -1720,6 +1724,46 @@ K.saveBlob = saveBlob;
 const GCAD_TYPES = [{ description: '現場CAD プロジェクト', accept: { 'application/octet-stream': [EXT] } }];
 function projectBlob() { return new Blob([JSON.stringify(packProject(doc, 'pc'))], { type: 'application/octet-stream' }); }
 K.projectBlob = projectBlob;
+
+// ---- Google ドライブ（スマホ版と自動でそろえる） ----
+async function cloudReady() {
+  if (!gd.configured()) {
+    let id = '';
+    const r = await dialog({ title: 'Google ドライブにつなぐ準備', body: '<p>Google Cloud で作る「OAuth クライアント ID」が 1 つ必要です（作り方は keihi/docs/google-drive.md）。公開するときに config.js に書いておけば、この手順は要りません。</p><p><input id="gcid" style="width:100%" placeholder="123456789-xxxx.apps.googleusercontent.com"></p>', buttons: [{ label: 'キャンセル', value: 'cancel' }, { label: '保存してつなぐ', value: 'ok', primary: true }], onButton: (v, b) => { id = $('#gcid', b) ? $('#gcid', b).value.trim() : ''; if (v === 'ok' && !/\.apps\.googleusercontent\.com$/.test(id)) { toast('「…apps.googleusercontent.com」で終わる ID を貼り付けてください'); return false; } return true; } });
+    if (r !== 'ok') return false;
+    gd.setClientId(id);
+  }
+  if (gd.connected()) return true;
+  try { await gd.connect(); return true; } catch (e) { toast(e.message, 5000); return false; }
+}
+function cloudAfter(r, { quiet = false } = {}) {
+  if (r.ok && r.merged && (r.merged.added || r.merged.updated || r.merged.removed)) {
+    tracker.reset(doc); clearCaches(); ensureLayers(); renderAll(); autosave(); setDirty(true);
+    toast('スマホ・ほかの端末の変更を取り込みました: ' + mergeSummary(r.merged), 5000);
+  } else if (r.ok && !quiet) toast(r.created ? 'Google ドライブに保存しました（マイドライブ › 現場CAD）' : 'Google ドライブと同期しました');
+  else if (!r.ok && !r.busy && (!quiet || r.auth)) toast(r.error || '同期できませんでした', 5000);
+  const lb = $('#linkBadge');
+  if (lb && gd.needsReconnect()) { lb.hidden = false; lb.textContent = 'Google ドライブにつなぎ直す'; lb.onclick = () => cloudSync(); }
+  else if (lb && lb.textContent === 'Google ドライブにつなぎ直す') lb.hidden = true;
+}
+async function cloudSync() {
+  if (!(await cloudReady())) return;
+  cloudBusy = true; tracker.track(doc); cloudBusy = false;
+  cloudAfter(await syncProject(doc, 'pc'));
+}
+async function cloudOpen() {
+  if (!(await cloudReady())) return;
+  let files;
+  try { files = await listProjects(); } catch (e) { toast(e.message); return; }
+  if (!files.length) { toast('Google ドライブにまだプロジェクトがありません'); return; }
+  let pick = null;
+  const r = await dialog({ title: 'Google ドライブから開く', body: `<div class="cloud-list">${files.map((f, i) => `<button type="button" data-ci="${i}"><b>${esc(f.name.replace(/\.gcad$/, ''))}</b><small>${new Date(f.modifiedTime).toLocaleString('ja-JP')}</small></button>`).join('')}</div>`,
+    buttons: [{ label: 'キャンセル', value: 'cancel' }], onOpen: (b) => { b.onclick = (ev) => { const x = ev.target.closest('[data-ci]'); if (x) { pick = files[+x.dataset.ci]; $('#dlg').close('pick'); } }; } });
+  if (r !== 'pick' || !pick) return;
+  if (!(await confirmDiscard())) return;
+  try { const nd = await openProjectFile(pick); replaceDoc(nd, ''); zoomAll(); toast(`「${nd.name}」を開きました（図形 ${nd.entities.length} 個）`); } catch (e) { toast('開けませんでした: ' + e.message); }
+}
+K.cloudSync = cloudSync;
 async function save() {
   if (fileHandle && fileHandle.createWritable) {
     try {
@@ -2260,3 +2304,7 @@ boot();
 
 // 動作確認用
 window.__pc = { doc, view, prefs, K, CMDS, startCmd, endCmd, get cmd() { return cmd; }, get sel() { return selEnts(); }, toS, toW, snapAt, parseInput, submitInput, commit, setSel, calc, link, sheet, loadFile, importDxfText };
+
+// Google ドライブの自動同期（つないだことがあるとき）
+cloudAuto = autoSync({ getDoc: () => doc, app: 'pc', onDone: (r) => cloudAfter(r, { quiet: true }) });
+if (gd.connected()) setTimeout(() => cloudAuto.run(), 1500); else if (gd.needsReconnect()) cloudAfter({ ok: false, auth: true, busy: true });

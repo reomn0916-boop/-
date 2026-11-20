@@ -721,19 +721,33 @@ export async function importJson(file) {
 // ===========================================================================
 export const SET_SECS = [['sync', '同期・自動バックアップ'], ['dencho', '電子帳簿保存法']];
 export function settingsExtra() {
-  const s = sh.syncState;
-  let sync;
-  if (!sh.syncSupported()) sync = `<p class="note">${ic('warn')}<span>同期フォルダは Chrome・Edge で使えます。このブラウザでは［データ・スマホ連携］のバックアップを使ってください。</span></p>`;
-  else if (!s.handle) {
-    sync = `<p class="muted">Google ドライブ・OneDrive・Dropbox などのパソコン上のフォルダを選ぶと、変更のたびに自動でそこへ保存します（画像も含む）。別のパソコンで同じフォルダを選ぶと、お互いの変更を取り込み合います。7日分の控えも残るので、バックアップの心配がなくなります。</p>
-      <button class="btn primary" data-act="syncChoose">${ic('folder')}同期フォルダを選ぶ</button>`;
+  const s = sh.syncState; const gd = sh.gd;
+  let drive;
+  if (gd.drive.used) {
+    const ok = gd.connected();
+    drive = `<div class="sync-box ${ok && !s.error ? 'ok' : 'warn'}">${ic(ok ? 'sync' : 'warn')}
+        <span><b>Google ドライブ${gd.drive.email ? `（${esc(gd.drive.email)}）` : ''} ／ マイドライブ › ラク経費</b><small>${ok ? `最後に同期: ${s.lastWrite ? ago(s.lastWrite) : 'まだ'}${s.busy ? ` ・ ${esc(s.progress || '同期中…')}` : ''}` : 'つながりが切れています（1 時間ごとに、もう一度つなぐ必要があります）'}${s.error && ok ? ` ・ エラー: ${esc(s.error)}` : ''}</small></span></div>
+      <div class="row-inline">${ok ? `<button class="btn primary" data-act="syncNow">${ic('sync')}今すぐ同期</button>` : `<button class="btn primary" data-act="driveConnect">${ic('key')}つなぎ直す</button>`}
+        <button class="link sm" data-act="driveOff">Google ドライブとの同期をやめる</button></div>
+      <p class="hint">スマホ版・ほかのパソコンでも同じ Google アカウントでつなぐと、自動でデータがそろいます。変更から 20 秒後・10 分ごと・アプリに戻ったときに同期します。画像は 1 枚ずつ一度だけ送ります。14 日分の控えも残ります（API キーは送りません）。</p>`;
   } else {
-    sync = `<div class="sync-box ${s.permission === 'granted' ? 'ok' : 'warn'}">${ic(s.permission === 'granted' ? 'sync' : 'warn')}
+    drive = `<p class="muted">Google アカウントでつなぐと、マイドライブの「ラク経費」フォルダにデータと領収書の画像を自動で保存します。<b>スマホ版とパソコンのどちらからでも</b>同じデータになり、バックアップの心配もなくなります（このアプリが作ったファイルだけを読み書きします）。</p>
+      <div class="row-inline"><button class="btn primary" data-act="driveConnect">${ic('sync')}Google ドライブにつなぐ</button>${gd.configured() ? '' : '<span class="muted small">はじめに OAuth クライアント ID が必要です</span>'}</div>`;
+  }
+  let sync;
+  if (gd.drive.used) sync = '';
+  else if (!sh.syncSupported()) sync = '';
+  else if (!s.handle) {
+    sync = `<details class="alt-sync"><summary>Google アカウントを使わない: パソコンのフォルダで同期する</summary><p class="muted">Google ドライブ・OneDrive・Dropbox などのパソコン上のフォルダを選ぶと、変更のたびに自動でそこへ保存します（画像も含む）。パソコンどうしで同期できます（スマホは対象外）。</p>
+      <button class="btn" data-act="syncChoose">${ic('folder')}同期フォルダを選ぶ</button></details>`;
+  } else {
+    sync = `<h3 class="sub-h">パソコンのフォルダで同期</h3><div class="sync-box ${s.permission === 'granted' ? 'ok' : 'warn'}">${ic(s.permission === 'granted' ? 'sync' : 'warn')}
         <span><b>${esc(s.handle.name)}</b><small>${s.permission === 'granted' ? `最後に保存: ${s.lastWrite ? ago(s.lastWrite) : 'まだ'}${s.busy ? ' ・ 同期中…' : ''}` : 'ブラウザを開き直したので、フォルダへの許可がもう一度必要です'}${s.error ? ` ・ エラー: ${esc(s.error)}` : ''}</small></span></div>
       <div class="row-inline">${s.permission === 'granted' ? `<button class="btn primary" data-act="syncNow">${ic('sync')}今すぐ同期</button>` : `<button class="btn primary" data-act="syncReconnect">${ic('key')}フォルダを許可する</button>`}
         <button class="btn" data-act="syncChoose">${ic('folder')}別のフォルダにする</button><button class="link sm" data-act="syncForget">同期をやめる</button></div>
       <p class="hint">変更から 20 秒後と、10 分ごとに保存します。ほかのパソコンの変更も、そのときに取り込みます（API キーは保存しません）。</p>`;
   }
+  sync = drive + sync;
   return `
     <section class="card" id="set-sync"><h2>同期・自動バックアップ</h2>${sync}</section>
     <section class="card" id="set-dencho"><h2>電子帳簿保存法</h2>
@@ -809,7 +823,13 @@ ${co}
   toast('事務処理規程のひな形を保存しました（空欄を埋めて使ってください）', { kind: 'ok' });
 }
 export function syncFoot() {
-  const s = sh.syncState; if (!s.handle) return null;
+  const s = sh.syncState;
+  if (sh.gd.drive.used) {
+    const ok = sh.gd.connected() && !s.error;
+    return `<div class="foot-card ${ok ? '' : 'warn'}">${ic(ok ? 'sync' : 'warn')}<span><b>${ok ? 'Google ドライブと同期中' : sh.gd.connected() ? '同期できませんでした' : 'Google ドライブにつなぎ直す'}</b><small>${s.busy ? esc(s.progress || '同期中…') : `最後: ${s.lastWrite ? ago(s.lastWrite) : 'まだ'}`}</small></span>
+    <button class="icon-btn sm" data-act="${sh.gd.connected() ? 'syncNow' : 'driveConnect'}" title="${sh.gd.connected() ? '今すぐ同期' : 'つなぎ直す'}">${ic(sh.gd.connected() ? 'sync' : 'key')}</button></div>`;
+  }
+  if (!s.handle) return null;
   const ok = s.permission === 'granted' && !s.error;
   return `<div class="foot-card ${ok ? '' : 'warn'}">${ic(ok ? 'sync' : 'warn')}<span><b>${ok ? '自動で同期中' : s.permission !== 'granted' ? '同期の許可が必要です' : '同期できませんでした'}</b><small>${esc(s.handle.name)} ・ ${s.lastWrite ? ago(s.lastWrite) : 'まだ'}</small></span>
     <button class="icon-btn sm" data-act="${ok ? 'syncNow' : 'syncReconnect'}" title="${ok ? '今すぐ同期' : 'フォルダを許可する'}">${ic(ok ? 'sync' : 'key')}</button></div>`;
@@ -826,7 +846,8 @@ export function homeAlerts() {
   const bs = budgetStatus({ expenses: S.expenses, ym: t.slice(0, 7), settings: S.settings }).filter((b) => b.level !== 'ok');
   if (bs.length) out.push(`<button class="banner ${bs.some((b) => b.level === 'over') ? 'warn' : ''}" data-act="goBudget">${ic('chart')}<span><b>${bs.some((b) => b.level === 'over') ? '今月の予算をこえた科目があります' : '今月の予算の 80% をこえた科目があります'}</b><small>${bs.slice(0, 4).map((b) => `${esc(b.category)} ${pct(b.ratio)}`).join(' ・ ')}</small></span><span class="banner-go">予算を見る ${ic('arrowR')}</span></button>`);
   const s = sh.syncState;
-  if (s.handle && s.permission !== 'granted') out.push(`<button class="banner" data-act="syncReconnect">${ic('sync')}<span><b>同期フォルダ（${esc(s.handle.name)}）への許可が必要です</b><small>ブラウザを開き直すと、もう一度許可がいります</small></span><span class="banner-go">許可する ${ic('arrowR')}</span></button>`);
+  if (sh.gd.needsReconnect()) out.push(`<button class="banner" data-act="driveConnect">${ic('sync')}<span><b>Google ドライブにつなぎ直してください</b><small>つながりは 1 時間で切れます。押すとすぐ同期を再開します</small></span><span class="banner-go">つなぎ直す ${ic('arrowR')}</span></button>`);
+  if (s.handle && s.permission !== 'granted' && !sh.gd.drive.used) out.push(`<button class="banner" data-act="syncReconnect">${ic('sync')}<span><b>同期フォルダ（${esc(s.handle.name)}）への許可が必要です</b><small>ブラウザを開き直すと、もう一度許可がいります</small></span><span class="banner-go">許可する ${ic('arrowR')}</span></button>`);
   if (pendingApprovals()) out.push(`<button class="banner" data-view-go="approvals">${ic('stamp')}<span><b>承認を待っている精算が ${pendingApprovals()}件あります</b></span><span class="banner-go">承認へ ${ic('arrowR')}</span></button>`);
   return out.join('');
 }
@@ -908,7 +929,7 @@ async function promptText(title, label, ph = '') {
   return r === 'ok' ? v.trim() : '';
 }
 const findL = (id) => S.ledger.find((x) => x.id === id);
-const syncDone = (r) => { if (r && r.merged) toast(`ほかのパソコンの変更を ${r.merged}件取り込みました`, { kind: 'ok' }); X.renderChrome(); if (X.P.view === 'settings') X.render(); };
+const syncDone = (r) => { if (r && r.auth && sh.gd.drive.used) { X.renderChrome(); if (X.P.view === 'home' || X.P.view === 'settings') X.render(); return; } if (r && r.merged) toast(`ほかのパソコンの変更を ${r.merged}件取り込みました`, { kind: 'ok' }); X.renderChrome(); if (X.P.view === 'settings') X.render(); };
 export const actions = {
   invNew: () => { if (X.P.view !== 'books' || X.P.books.tab !== 'invoice') { X.P.books.tab = 'invoice'; X.go('books'); } editInvoice(null); },
   invEdit: (b) => { const l = findL(b.dataset.id); if (l) editInvoice(l); },
@@ -941,6 +962,25 @@ export const actions = {
   syncChoose: async () => { try { await sh.chooseSyncFolder(); const r = await sh.syncNow(); toast(r.ok ? `「${sh.syncState.handle.name}」に保存しました。これから自動で同期します` : `同期できませんでした: ${r.error || ''}`, { kind: r.ok ? 'ok' : 'error' }); syncDone(r); } catch (e) { if (e.name !== 'AbortError') toast(`フォルダを選べませんでした: ${e.message || e}`, { kind: 'error' }); } },
   syncReconnect: async () => { if (await sh.reconnectSync()) { const r = await sh.syncNow(); syncDone(r); toast('同期フォルダにつながりました', { kind: 'ok' }); } X.render(); },
   syncNow: async (b) => { if (b) b.disabled = true; const r = await sh.syncNow(); if (b) b.disabled = false; if (r.ok) toast(`同期しました${r.merged ? `（${r.merged}件を取り込み）` : ''}`, { kind: 'ok' }); else toast(`同期できませんでした${r.error ? `: ${r.error}` : ''}`, { kind: 'error' }); syncDone(null); },
+  driveConnect: async () => {
+    const gd = sh.gd;
+    if (!gd.configured()) {
+      let id = '';
+      const r = await modal({ title: 'Google ドライブにつなぐ準備', width: 600,
+        body: `<p>Google ドライブにつなぐには、Google Cloud で作る「OAuth クライアント ID」が 1 つ必要です（無料・10 分ほど）。作り方は <code>keihi/docs/google-drive.md</code> にあります。公開するときに <code>config.js</code> に書いておけば、この手順は要りません。</p>
+          <label class="fld"><span class="lb">OAuth クライアント ID</span><input id="gcid" placeholder="123456789-xxxx.apps.googleusercontent.com" autofocus></label><p class="form-err" hidden></p>`,
+        actions: [{ label: 'やめる', value: 'no' }, { label: '保存してつなぐ', value: 'ok', kind: 'primary' }],
+        onMount: (el) => { $('#gcid', el).addEventListener('input', (ev) => { id = ev.target.value.trim(); }); guard(el, ['ok'], () => (/\.apps\.googleusercontent\.com$/.test(id) ? '' : '「…apps.googleusercontent.com」で終わる ID を貼り付けてください')); } });
+      if (r !== 'ok') return;
+      gd.setClientId(id);
+    }
+    try { await gd.connect(); } catch (e) { toast(e.message, { kind: 'error', ms: 7000 }); X.render(); return; }
+    const close = toast('Google ドライブと同期しています…（はじめは画像の数だけ時間がかかります）', { ms: 120000 });
+    const r = await sh.syncNow(); close();
+    toast(r.ok ? `Google ドライブ（${gd.drive.email || 'マイドライブ'}）と同期しました${r.merged ? `。${r.merged}件を取り込みました` : ''}${r.imgUp ? `。画像 ${r.imgUp}枚を送りました` : ''}` : `同期できませんでした: ${r.error || ''}`, { kind: r.ok ? 'ok' : 'error', ms: 7000 });
+    syncDone(null); X.render();
+  },
+  driveOff: async () => { if (!(await confirmDialog('Google ドライブとの同期をやめますか？（ドライブのファイルは消えません。この端末のデータもそのままです）', 'やめる'))) return; sh.gd.disconnect(); X.render(); X.renderChrome(); },
   syncForget: async () => { if (!(await confirmDialog('同期フォルダへの自動保存をやめますか？（フォルダの中のファイルは消えません）', 'やめる'))) return; await sh.forgetSync(); X.render(); X.renderChrome(); },
   histAll: () => histAll(),
   ruleDoc: () => ruleDoc(),
@@ -953,7 +993,7 @@ export async function startExtras() {
   try { const made = await st.runRecurring(); if (made.length) toast(`毎月の自動登録で ${made.length}件を入れました`, { kind: 'ok', ms: 6000 }); } catch (_) { /* なし */ }
   loadApprovals().then(() => X.renderChrome());
   try { await sh.loadSyncFolder(); } catch (_) { /* 使えない */ }
-  if (sh.syncState.handle && sh.syncState.permission === 'granted') sh.syncNow().then(syncDone);
+  if ((sh.syncState.handle && sh.syncState.permission === 'granted') || sh.gd.connected()) sh.syncNow().then(syncDone);
   sh.startAutoSync(syncDone);
   st.on('change', debounceNotify);
   checkNotify();

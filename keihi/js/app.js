@@ -10,6 +10,7 @@ import {
   templateFrom, addTemplate, removeTemplate, expenseFromTemplate, createReport, undoReport as storeUndoReport,
   makeBackup, readBackup, mergeBackup, wipeAll, resumePending, DEF_SETTINGS,
 } from './store.js';
+import * as sh from './share.js';
 
 // ---- 小さな道具 --------------------------------------------------------------
 
@@ -667,9 +668,10 @@ function viewSettings() {
       <h2>${ic('star')}よく使う</h2>
       ${S.templates.length ? `<div class="rows">${S.templates.map((t) => `<div class="rep-item"><div><b>${esc(t.label)}</b><small>${esc([t.category, t.site].filter(Boolean).join(' ・ '))}</small></div><b class="a">${t.amount ? yen(t.amount) : ''}</b><button class="chip ghost" data-deltpl="${t.id}">${ic('trash')}消す</button></div>`).join('')}</div>` : '<p class="muted">経費の編集画面の「よく使うに登録」で増やせます。毎日の通勤や駐車場など、決まった経費をワンタップで入れられます。</p>'}
     </section>
+    ${driveBlock()}
     <section class="block">
       <h2>${ic('box')}データ</h2>
-      <p class="muted" id="usage">データはこの端末の中だけに保存しています。機種変更やもしものために、ときどきバックアップしてください。</p>
+      <p class="muted" id="usage">${sh.gd.drive.used ? 'データはこの端末と Google ドライブに保存しています。' : 'データはこの端末の中だけに保存しています。機種変更やもしものために、ときどきバックアップしてください。'}</p>
       <p class="muted">パソコン版（このアドレスの最後に pc/ を付けたページ）では、送ったファイルをドラッグするだけで取り込めます。同じ経費は新しい方が残ります。</p>
       <div class="stack">
         <button class="btn primary" data-act="sendPc">${ic('share')}パソコンへ送る（LINE・メール・ドライブ）</button>
@@ -680,6 +682,31 @@ function viewSettings() {
     </section>
     <p class="foot muted">ラク経費 ・ 端末内保存（サーバーなし）</p>`;
 }
+
+// ---- Google ドライブ（パソコン版と自動でそろえる） -------------------------------------------
+function driveBlock() {
+  const gd = sh.gd; const s = sh.syncState;
+  if (!gd.drive.used) {
+    return `<section class="block" id="drive">
+      <h2>${ic('share')}Google ドライブで同期</h2>
+      <p class="muted">Google アカウントでつなぐと、マイドライブの「ラク経費」フォルダにデータと領収書を自動で保存します。パソコン版でも同じアカウントでつなぐと、撮ったレシートがそのままパソコンに出ます。機種変更しても消えません。</p>
+      <button class="btn primary" data-act="driveConnect">${ic('share')}Google ドライブにつなぐ</button>
+    </section>`;
+  }
+  const ok = gd.connected();
+  return `<section class="block" id="drive">
+    <h2>${ic('share')}Google ドライブで同期</h2>
+    <div class="drive-st ${ok && !s.error ? 'ok' : 'warn'}"><b>${ok ? '同期しています' : 'つながりが切れています'}</b><small>${gd.drive.email ? esc(gd.drive.email) + ' ・ ' : ''}${s.busy ? esc(s.progress || '同期中…') : `最後: ${s.lastWrite ? new Date(s.lastWrite).toLocaleString('ja-JP') : 'まだ'}`}${s.error && ok ? ` ・ ${esc(s.error)}` : ''}</small></div>
+    <div class="stack">${ok ? `<button class="btn primary" data-act="driveSync">${ic('share')}今すぐ同期</button>` : `<button class="btn primary" data-act="driveConnect">${ic('share')}つなぎ直す</button>`}
+      <button class="link" data-act="driveOff">同期をやめる</button></div>
+  </section>`;
+}
+async function driveAfter(r, quiet = false) {
+  if (r && r.ok && (r.merged || r.imgDown)) toast(`パソコン・ほかの端末の変更を取り込みました${r.merged ? `（${r.merged}件）` : ''}`);
+  else if (r && !r.ok && !r.busy && !quiet) toast(r.error || '同期できませんでした');
+  if (S.tab === 'settings') render(); else renderBadges();
+}
+function renderBadges() { const b = $('#driveBadge'); if (b) b.hidden = !sh.gd.needsReconnect(); }
 
 // ---- 描画 --------------------------------------------------------------------
 
@@ -795,6 +822,20 @@ const ACTIONS = {
   },
   addCat: () => { const i = $('#newCat'); const v = i.value.trim(); if (!v) return; if (!cats().includes(v)) { S.settings.categories = [...cats(), v]; saveSettings(); } render(); },
   resetCat: () => { S.settings.categories = DEFAULT_CATEGORIES.slice(); saveSettings(); render(); },
+  driveConnect: async () => {
+    const gd = sh.gd;
+    if (!gd.configured()) {
+      const id = (prompt('Google の OAuth クライアント ID を貼り付けてください（…apps.googleusercontent.com）。作り方は keihi/docs/google-drive.md にあります。') || '').trim();
+      if (!/\.apps\.googleusercontent\.com$/.test(id)) { if (id) toast('ID の形がちがいます'); return; }
+      gd.setClientId(id);
+    }
+    try { await gd.connect(); } catch (e) { toast(e.message); render(); return; }
+    toast('Google ドライブと同期しています…');
+    render();
+    driveAfter(await sh.syncNow());
+  },
+  driveSync: async (b) => { b.disabled = true; const r = await sh.syncNow(); if (r.ok && !r.merged) toast('同期しました'); driveAfter(r); },
+  driveOff: async () => { if (!confirm('Google ドライブとの同期をやめますか？（ドライブのファイルとこの端末のデータは消えません）')) return; sh.gd.disconnect(); render(); },
   backup: async () => backup(),
   sendPc: async () => backup({ send: true }),
   restore: () => $('#restoreIn').click(),
@@ -960,6 +1001,9 @@ async function start() {
   if (['home', 'list', 'report', 'settings'].includes(tab)) S.tab = tab;
   render();
   await takeShared();
+  sh.startAutoSync((r) => driveAfter(r, true));
+  if (sh.gd.connected()) sh.syncNow().then((r) => driveAfter(r, true));
+  renderBadges();
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }

@@ -1,8 +1,8 @@
 // オフライン用キャッシュ。ファイルを更新したら VERSION を上げる
-const VERSION = 'genbacad-v10';
+const VERSION = 'genbacad-v11';
 const FILES = [
   './', './index.html', './css/style.css', './js/app.js', './js/geo.js', './js/io.js', './js/cogo.js', './js/calc.js', './js/sheet.js',
-  './js/draft.js', './js/sync.js',
+  './js/draft.js', './js/sync.js', './js/cloud.js', './lib/gdrive.js', './config.js',
   './manifest.webmanifest', './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png',
   './pc/', './pc/index.html', './pc/pc.css', './pc/main.js', './pc/geom.js', './pc/icons.js', './pc/commands.js', './pc/civil.js', './pc/link.js', './pc/manifest.webmanifest',
 ];
@@ -13,7 +13,7 @@ self.addEventListener('install', (e) => {
 
 self.addEventListener('activate', (e) => {
   e.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== VERSION).map((k) => caches.delete(k))))
+    caches.keys().then((keys) => Promise.all(keys.filter((k) => k.startsWith('genbacad-') && k !== VERSION).map((k) => caches.delete(k))))
       .then(() => self.clients.claim()),
   );
 });
@@ -21,6 +21,7 @@ self.addEventListener('activate', (e) => {
 // ネット優先・オフライン時はキャッシュ
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
+  if (new URL(e.request.url).origin !== location.origin) return; // Google ドライブなどはそのまま
   e.respondWith(
     fetch(e.request)
       .then((res) => {
