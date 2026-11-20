@@ -62,3 +62,23 @@ test('全銀形式（総合振込）: 1 行 120 桁、件数と合計', () => {
   // Shift_JIS にすると 1 行 120 バイト（半角カナは 1 バイト）
   assert.equal(encodeSJIS(lines[1]).length, 120);
 });
+
+// ---- 振込先の変更は止める ----
+test('提出ファイルで振込先が変わっても、総務が認めるまで使わない', async () => {
+  const sh = await import('../js/share.js');
+  const st = await import('../js/store.js');
+  st.S.settings.roster = [];
+  const A = { bankCode: '0009', branchCode: '220', number: '7654321', holder: 'ヤマダ タロウ' };
+  sh.upsertRoster({ name: '山田 太郎', empNo: '1024', bank: A }, 's1');
+  const key = 'no:1024';
+  const me = () => st.S.settings.roster.find((p) => sh.personKey(p) === key);
+  assert.match(sh.payBlock(me()), /はじめて/);
+  sh.resolveBank(key, 'ok'); assert.equal(sh.payBlock(me()), '');
+  sh.upsertRoster({ name: '山田 太郎', empNo: '1024', bank: { ...A, holder: 'ﾔﾏﾀﾞ ﾀﾛｳ' } }, 's2'); // 半角・全角のちがいは同じ口座
+  assert.equal(sh.payBlock(me()), '');
+  sh.upsertRoster({ name: '山田 太郎', empNo: '1024', bank: { bankCode: '0005', branchCode: '001', number: '1111111', holder: 'ワルイ ヒト' } }, 's3');
+  assert.match(sh.payBlock(me()), /変更の申し出/); assert.equal(me().bank.number, '7654321');
+  sh.resolveBank(key, 'reject'); assert.equal(sh.payBlock(me()), ''); assert.equal(me().bank.number, '7654321');
+  sh.upsertRoster({ name: '山田 太郎', empNo: '1024', bank: { bankCode: '0005', branchCode: '001', number: '2222222', holder: 'ヤマダ タロウ' } }, 's4');
+  sh.resolveBank(key, 'accept'); assert.equal(me().bank.number, '2222222'); assert.equal(sh.payBlock(me()), '');
+});

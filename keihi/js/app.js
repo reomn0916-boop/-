@@ -619,7 +619,7 @@ async function checkBeforeSubmit(items) {
 async function submitRep(rep) {
   const blob = await sh.makeSubmission(rep);
   await shareFile(new Blob([blob], { type: 'application/json' }), `精算の提出_${(S.settings.name || '申請者').replace(/[\\/:*?"<>|\s]+/g, '_')}_${rep.from}_${rep.to}.json`);
-  toast('提出ファイルを送りました（総務が取り込むと、結果ファイルが返ってきます）');
+  toast(blob.size > sh.SUBMISSION_WARN ? `提出ファイルが ${(blob.size / 1024 / 1024).toFixed(1)}MB と大きく、メールで送れないことがあります。LINE・チャット・ドライブで送るか、期間を分けてください` : `提出ファイル（${(blob.size / 1024 / 1024).toFixed(1)}MB）を送りました。総務が取り込むと、結果ファイルが返ってきます`);
   render();
 }
 async function undoReport(id, silent = false) {
@@ -1020,6 +1020,11 @@ async function restore(file) {
   if (j0 && j0.app === 'rakukeihi' && j0.kind === 'decision') {
     try { const rep = await sh.applyDecision(j0); toast(`精算（${md(rep.from)}〜${md(rep.to)}）は「${j0.status === 'approved' ? '承認' : '差し戻し'}」でした${j0.comment ? `: ${j0.comment}` : ''}`); } catch (e) { toast(e.message); }
     render(); return;
+  }
+  if (j0 && j0.app === 'rakukeihi' && j0.kind === 'decisions') {
+    let n = 0;
+    for (const d of j0.list || []) { if (!S.reports.some((r) => r.id === d.reportId)) continue; try { await sh.applyDecision({ ...d, app: 'rakukeihi', kind: 'decision' }); n++; } catch (_) { /* ほかの人の精算 */ } }
+    toast(n ? `自分の精算 ${n}件は「承認」でした` : 'このファイルに、この端末の精算の結果はありませんでした'); render(); return;
   }
   if (j0 && j0.app === 'rakukeihi' && j0.kind === 'submission') { toast('これは総務に送る提出ファイルです。総務のパソコン版で取り込んでください'); return; }
   let info;

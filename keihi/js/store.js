@@ -547,7 +547,10 @@ export async function makeBackup({ images: withImages = true } = {}) {
   const images = withImages ? await db.all('images') : [];
   const { apiKey, ...settings } = S.settings; void apiKey;
   const history = (await db.all('history')) || [];
-  const parts = [`{"app":"rakukeihi","version":4,"tombs":${JSON.stringify(S.tombs)},"recurring":${JSON.stringify(S.recurring)},"history":${JSON.stringify(history)},"exportedAt":${JSON.stringify(new Date().toISOString())},"settings":${JSON.stringify(settings)},"learned":${JSON.stringify(S.learned)},"templates":${JSON.stringify(S.templates)},"expenses":${JSON.stringify(S.expenses)},"reports":${JSON.stringify(S.reports)},"ledger":${JSON.stringify(S.ledger)},"images":[`];
+  // 総務の受け取り箱（承認・支払済み）。画像はファイルのバックアップのときだけ入れる（Google ドライブには 1 件ずつ送る）
+  const approvals = (await db.all('approvals')) || [];
+  const apvImgs = withImages ? (await db.all('apvimgs')) || [] : [];
+  const parts = [`{"app":"rakukeihi","version":5,"approvals":${JSON.stringify(approvals)},"approvalImages":${JSON.stringify(apvImgs)},"tombs":${JSON.stringify(S.tombs)},"recurring":${JSON.stringify(S.recurring)},"history":${JSON.stringify(history)},"exportedAt":${JSON.stringify(new Date().toISOString())},"settings":${JSON.stringify(settings)},"learned":${JSON.stringify(S.learned)},"templates":${JSON.stringify(S.templates)},"expenses":${JSON.stringify(S.expenses)},"reports":${JSON.stringify(S.reports)},"ledger":${JSON.stringify(S.ledger)},"images":[`];
   for (let i = 0; i < images.length; i++) {
     const im = images[i];
     const o = { id: im.id, w: im.w, h: im.h, blob: await blobToB64(im.blob), thumb: im.thumb ? await blobToB64(im.thumb) : '' };
@@ -583,6 +586,17 @@ export async function mergeBackup(j, { takeSettings = true, sync = false } = {})
   }
   for (const l of S.ledger.filter((x) => isDead(x.id, x.updated))) { await db.del('ledger', l.id); changed++; }
   for (const r of S.reports.filter((x) => isDead(x.id, x.updated || x.created))) { await db.del('reports', r.id); changed++; }
+  // 総務の受け取り箱: 新しく直した方（承認・支払済み）を残す
+  {
+    const local = new Map(((await db.all('approvals')) || []).map((r) => [r.id, r]));
+    for (const r of local.values()) if (isDead(r.id, r.updated || r.received)) { await db.del('approvals', r.id); await db.del('apvimgs', r.id); changed++; }
+    for (const r of j.approvals || []) {
+      if (isDead(r.id, r.updated || r.received)) continue;
+      const cur = local.get(r.id);
+      if (!cur || (r.updated || r.received || 0) > (cur.updated || cur.received || 0)) { await db.put('approvals', r); changed++; }
+    }
+    for (const im of j.approvalImages || []) if (!(await db.get('apvimgs', im.id))) await db.put('apvimgs', im);
+  }
   const tplBefore = S.templates.length; S.templates = S.templates.filter((t) => !isDead(t.id, t.updated)); if (S.templates.length !== tplBefore) changed++;
   const recBefore = S.recurring.length; S.recurring = S.recurring.filter((r) => !isDead(r.id, r.updated)); if (S.recurring.length !== recBefore) changed++;
 

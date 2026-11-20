@@ -645,8 +645,13 @@ export const pendingApprovals = () => (apvCache || []).filter((a) => a.status ==
 const recState = (a) => (a.paid ? ['支払済み', 'done', 'cash'] : APV[a.status] || APV.pending);
 const subMonth = (s) => (s.to || s.from || '').slice(0, 7);
 const payable = (s) => Math.max(0, (s.sum.reimb || 0) - (s.advance || 0));
-const issueCount = (s) => (s.items || []).reduce((n, e) => n + (e.issues || []).length, 0);
-const errCount = (s) => (s.items || []).reduce((n, e) => n + (e.issues || []).filter((x) => x.level === 'error').length, 0);
+// ルールのチェックは、総務の端末のルールでやり直す（提出ファイルの結果は書き換えられるので信用しない）
+const myPolicy = () => S.settings.companyPolicy || S.settings.policy || null;
+const issuesOf = (s, e) => { const p = myPolicy(); return p ? policyIssues(e, p, new Date(s.at || Date.now()).toISOString().slice(0, 10)) : (e.issues || []); };
+// 提出ファイルのチェック結果と、総務がやり直した結果がちがう（同じルールなのに）→ 書き換えの疑い
+const tampered = (s, e) => { const p = myPolicy(); return !!p && !!s.policyName && s.policyName === (p.name || '') && Array.isArray(e.issues) && e.issues.length < issuesOf(s, e).length; };
+const issueCount = (s) => (s.items || []).reduce((n, e) => n + issuesOf(s, e).length, 0);
+const errCount = (s) => (s.items || []).reduce((n, e) => n + issuesOf(s, e).filter((x) => x.level === 'error').length + (tampered(s, e) ? 1 : 0), 0);
 const APV_TABS = [['inbox', '受け取り箱', 'inbox'], ['pay', '振込', 'cash'], ['people', '社員と振込先', 'pen'], ['rules', '会社のルール', 'shield'], ['mine', '自分の精算', 'send']];
 const bankText = (b) => (b && b.number ? `${b.bankName || b.bankCode || ''} ${b.branchName || b.branchCode || ''} ${{ 1: '普通', 2: '当座', 4: '貯蓄', 9: 'その他' }[b.type || '1']} ${b.number}` : '');
 
@@ -739,7 +744,8 @@ function apvPay() {
   const groups = new Map();
   for (const r of due) { const k = sh.personKey(r.sub.applicant); const g = groups.get(k) || { key: k, name: r.sub.applicant.name, recs: [], amount: 0, person: findP(r.sub.applicant) }; g.recs.push(r); g.amount += payable(r.sub); groups.set(k, g); }
   const gs = [...groups.values()];
-  if (!A.paySel) A.paySel = new Set(gs.filter((g) => g.person && g.person.bank && !checkAccount(g.person.bank).length).map((g) => g.key));
+  const blockOf = (g) => { const b = sh.payBlock(g.person); return b || (checkAccount(g.person.bank).length ? `振込先: ${checkAccount(g.person.bank)[0]}` : ''); };
+  if (!A.paySel) A.paySel = new Set(gs.filter((g) => !blockOf(g)).map((g) => g.key));
   const sel = gs.filter((g) => A.paySel.has(g.key));
   const total = sel.reduce((s, g) => s + g.amount, 0);
   const payerOk = payer.code && payer.number && payer.bankCode && payer.branchCode && payer.name;
@@ -752,10 +758,10 @@ function apvPay() {
     </section>
     <section class="card"><header><h2>振り込む人</h2><span class="muted">承認済みで、まだ払っていない精算</span></header>
       ${gs.length ? `<table class="grid ledger pay-table"><thead><tr><th class="c-check"></th><th>社員</th><th>振込先</th><th class="num">精算</th><th class="c-amt num">金額</th></tr></thead>
-        <tbody>${gs.map((g) => { const b = g.person && g.person.bank; const bad = b ? checkAccount(b) : ['振込先がありません']; return `<tr>
-          <td class="c-check"><input type="checkbox" data-paysel="${esc(g.key)}" ${A.paySel.has(g.key) ? 'checked' : ''} ${bad.length ? 'disabled' : ''}></td>
+        <tbody>${gs.map((g) => { const b = g.person && g.person.bank; const bad = blockOf(g); return `<tr>
+          <td class="c-check"><input type="checkbox" data-paysel="${esc(g.key)}" ${A.paySel.has(g.key) && !bad ? 'checked' : ''} ${bad ? 'disabled' : ''}></td>
           <td class="c-payee"><b>${esc(g.name)}</b></td>
-          <td>${bad.length ? `<span class="warn-text">${ic('warn')}${esc(bad[0])}</span> <button class="link sm" data-act="personEdit" data-id="${esc(g.key)}">入れる</button>` : esc(bankText(b))}</td>
+          <td>${b ? esc(bankText(b)) : ''}${bad ? `<br><span class="warn-text">${ic('warn')}${esc(bad)}</span> <button class="link sm" data-act="apvTab" data-id="people">確かめる</button>` : ''}</td>
           <td class="num">${g.recs.length}</td><td class="c-amt num"><b>${yen(g.amount)}</b></td></tr>`; }).join('')}</tbody></table>
         <div class="pay-foot">
           <label class="fld inline"><span class="lb">振込日</span><input type="date" id="payDate" value="${esc(A.payDate || st.addDays(today(), 1))}"></label>
@@ -772,7 +778,7 @@ function selectedPay() {
   const A = X.P.apv; const roster = S.settings.roster || [];
   const due = apvCache.filter((r) => r.status === 'approved' && !r.paid && A.paySel.has(sh.personKey(r.sub.applicant)));
   const m = new Map();
-  for (const r of due) { const k = sh.personKey(r.sub.applicant); const p = roster.find((x) => sh.personKey(x) === k); const g = m.get(k) || { name: r.sub.applicant.name, empNo: r.sub.applicant.empNo || '', bank: p && p.bank, amount: 0, ids: [] }; g.amount += payable(r.sub); g.ids.push(r.id); m.set(k, g); }
+  for (const r of due) { const k = sh.personKey(r.sub.applicant); const p = roster.find((x) => sh.personKey(x) === k); const g = m.get(k) || { name: r.sub.applicant.name, empNo: r.sub.applicant.empNo || '', bank: p && p.bank, person: p, amount: 0, ids: [] }; g.amount += payable(r.sub); g.ids.push(r.id); m.set(k, g); }
   return [...m.values()];
 }
 async function editAccount(title, cur = {}, { sender = false } = {}) {
@@ -803,12 +809,14 @@ function apvPeople() {
   const roster = S.settings.roster || [];
   return `<section class="card"><header><h2>社員の名簿</h2><span class="muted">提出ファイルが届くと、名前・社員番号・振込先が自動で入ります（社員が自分の設定で入れた振込先）</span><button class="btn sm" data-act="personAdd">${ic('plus')}社員を足す</button></header>
     ${roster.length ? `<table class="grid ledger"><thead><tr><th>氏名</th><th>所属</th><th>社員番号</th><th>振込先</th><th class="c-check">在籍</th><th class="c-act"></th></tr></thead>
-      <tbody>${roster.map((p) => { const bad = p.bank ? checkAccount(p.bank) : ['なし']; return `<tr class="${p.active === false ? 'closed' : ''}"><td class="c-payee"><b>${esc(p.name)}</b></td><td>${esc(p.dept || '')}</td><td>${esc(p.empNo || '')}</td>
-        <td>${bad.length ? `<span class="warn-text">${ic('warn')}${p.bank ? esc(bad[0]) : '未登録'}</span>` : esc(bankText(p.bank))}${p.bankLocked ? ' <span class="badge ok xs">総務が固定</span>' : ''}</td>
+      <tbody>${roster.map((p) => { const bad = p.bank ? checkAccount(p.bank) : ['なし']; const key = esc(sh.personKey(p)); return `<tr class="${p.active === false ? 'closed' : ''}"><td class="c-payee"><b>${esc(p.name)}</b></td><td>${esc(p.dept || '')}</td><td>${esc(p.empNo || '')}</td>
+        <td>${bad.length ? `<span class="warn-text">${ic('warn')}${p.bank ? esc(bad[0]) : '未登録'}</span>` : esc(bankText(p.bank))}
+          ${p.bank && p.bankOk === false && !bad.length ? `<div class="bank-ask">${ic('warn')}<span>はじめての振込先です。本人に確かめてください</span><button class="btn sm" data-act="bankOk" data-id="${key}">${ic('check')}確かめた</button></div>` : ''}
+          ${p.pendingBank ? `<div class="bank-ask warn">${ic('warn')}<span><b>振込先の変更の申し出</b>${esc(bankText(p.pendingBank.bank))}（${esc(p.pendingBank.bank.holder || '')}）・${new Date(p.pendingBank.at).toLocaleDateString('ja-JP')}。<b>本人に電話などで確かめてから</b>認めてください</span><button class="btn sm" data-act="bankAccept" data-id="${key}">認める</button><button class="btn sm ghost danger" data-act="bankReject" data-id="${key}">認めない</button></div>` : ''}</td>
         <td class="c-check"><input type="checkbox" data-pactive="${esc(sh.personKey(p))}" ${p.active === false ? '' : 'checked'}></td>
         <td class="c-act"><button class="icon-btn sm" data-act="personEdit" data-id="${esc(sh.personKey(p))}" title="振込先を直す">${ic('pen')}</button></td></tr>`; }).join('')}</tbody></table>`
       : '<p class="muted">まだいません。提出ファイルを取り込むと自動で増えます。先に全員を入れておくと、「未提出」の人が分かります。</p>'}
-    <p class="hint">在籍のチェックを外した人は「未提出」に数えません（退職・休職など）。</p></section>`;
+    <p class="hint">在籍のチェックを外した人は「未提出」に数えません（退職・休職など）。提出ファイルで振込先が変わっても、そのままは使いません。<b>総務が本人に確かめて「認める」まで、前の振込先のまま止めます</b>（なりすまし・書き換え対策）。</p></section>`;
 }
 
 // ---- 会社のルール ----
@@ -876,7 +884,8 @@ async function apvSubmit(id) {
   if (errs.length && !(await confirmDialog(`会社のルールに合わない経費が ${errs.length}件あります。このまま出しますか？`, 'このまま出す', { detail: errs.slice(0, 6).join('\n') }))) return;
   const blob = await sh.makeSubmission(rep);
   download(blob, `精算の提出_${safe(S.settings.name || '申請者')}_${rep.from}_${rep.to}.json`);
-  toast('提出ファイルを保存しました。メールやチャットで総務（承認する人）に送ってください', { kind: 'ok', ms: 7000 });
+  if (blob.size > sh.SUBMISSION_WARN) toast(`提出ファイルが ${(blob.size / 1024 / 1024).toFixed(1)}MB と大きく、メールに添付できないことがあります。期間を分けて精算するか、チャットや共有フォルダで送ってください`, { kind: 'error', ms: 10000 });
+  else toast(`提出ファイル（${(blob.size / 1024 / 1024).toFixed(1)}MB）を保存しました。メールやチャットで総務に送ってください`, { kind: 'ok', ms: 7000 });
   X.render();
 }
 async function apvOpen(id) {
@@ -884,19 +893,21 @@ async function apvOpen(id) {
   const rec = apvCache.find((a) => a.id === id); if (!rec) return;
   const s = rec.sub; const urls = [];
   const dup = sh.duplicateIndex(apvCache);
-  const imgOf = (e) => { if (!e.imageId) return ''; const b = sh.approvalImage(rec, e.imageId); if (!b) return ''; const u = URL.createObjectURL(b); urls.push(u); return `<a href="${u}" target="_blank" rel="noopener" class="thumb"><img src="${u}" alt=""></a>`; };
+  const blobs = await sh.approvalImages(rec);
+  const imgOf = (e) => { if (!e.imageId) return ''; const b = blobs[e.imageId]; if (!b) return ''; const u = URL.createObjectURL(b); urls.push(u); return `<a href="${u}" target="_blank" rel="noopener" class="thumb"><img src="${u}" alt=""></a>`; };
   let comment = rec.comment || ''; const ic2 = { ...(rec.itemComments || {}) };
   const a = s.applicant;
   const r = await modal({
     title: `${a.name || ''} さんの精算（${md(s.from)}〜${md(s.to)}）`, width: 1040,
     body: `<div class="apv-detail">
       <div class="ad-sum"><div><span>支給額</span><b>${yen(payable(s))}</b></div><div><span>立替の合計</span><b>${yen(s.sum.reimb)}</b></div>${s.sum.company ? `<div><span>会社払い</span><b>${yen(s.sum.company)}</b></div>` : ''}${s.advance ? `<div><span>仮払金</span><b>${yen(s.advance)}</b></div>` : ''}<div><span>件数</span><b>${s.sum.count}件</b></div><div><span>提出</span><b>${new Date(s.at).toLocaleDateString('ja-JP')}</b></div><div><span>所属・番号</span><b>${esc([a.dept, a.empNo].filter(Boolean).join(' ') || '—')}</b></div>${rec.paid ? `<div><span>支払</span><b>${esc(String(rec.paid.at))}</b></div>` : ''}</div>
-      ${s.policyName ? `<p class="muted small">ルール: ${esc(s.policyName)}</p>` : ''}
+      ${s.policyName ? `<p class="muted small">ルール: ${esc(s.policyName)}${myPolicy() && myPolicy().name !== s.policyName ? `（総務のルール「${esc(myPolicy().name || '名前なし')}」でチェックし直しています）` : ''}</p>` : ''}
+      ${(() => { const p = (S.settings.roster || []).find((x) => sh.personKey(x) === sh.personKey(a)); return p && p.pendingBank ? `<div class="note warn">${ic('warn')}<span><b>振込先の変更の申し出があります</b>今: ${esc(bankText(p.bank))} → 申し出: ${esc(bankText(p.pendingBank.bank))}。本人に確かめてから［社員と振込先］で認めてください。</span></div>` : ''; })()}
       <div class="table-wrap modal-table"><table class="grid"><thead><tr><th class="c-img"></th><th class="c-date">日付</th><th>支払先・内容</th><th class="c-cat">科目</th><th class="c-amt num">金額</th><th>チェック</th><th>コメント（差し戻しの理由など）</th></tr></thead>
-      <tbody>${s.items.map((e) => { const d = dup.get(`${rec.id}|${e.id}`); const iss = e.issues || []; return `<tr class="${iss.some((x) => x.level === 'error') || d ? 'flag' : ''}"><td class="c-img">${imgOf(e)}</td><td class="c-date"><b>${md(e.date)}</b></td>
+      <tbody>${s.items.map((e) => { const d = dup.get(`${rec.id}|${e.id}`); const iss = issuesOf(s, e); const tp = tampered(s, e); return `<tr class="${iss.some((x) => x.level === 'error') || d || tp ? 'flag' : ''}"><td class="c-img">${imgOf(e)}</td><td class="c-date"><b>${md(e.date)}</b></td>
         <td class="c-payee"><b>${esc(e.payee || '')}</b><small>${esc([e.site, e.memo, e.people ? `${e.people}人 ${e.guests || ''}` : ''].filter(Boolean).join(' ・ '))}${e.invoiceNo ? ` ・ ${esc(e.invoiceNo)}` : ''}</small></td>
         <td class="c-cat"><span class="tag">${esc(e.category || '')}</span></td><td class="c-amt num"><b>${yen(e.amount)}</b><small>${esc(e.method || '')}</small></td>
-        <td class="chk-cell">${iss.map((x) => `<span class="${x.level === 'error' ? 'err' : 'wrn'}">${esc(x.msg)}</span>`).join('')}${d ? `<span class="err">二重の疑い: ${esc(d.join('・'))} の提出にも同じ日・金額・支払先</span>` : ''}</td>
+        <td class="chk-cell">${iss.map((x) => `<span class="${x.level === 'error' ? 'err' : 'wrn'}">${esc(x.msg)}</span>`).join('')}${d ? `<span class="err">二重の疑い: ${esc(d.join('・'))} の提出にも同じ日・金額・支払先</span>` : ''}${tp ? '<span class="err">社員の端末のチェック結果と合いません（ファイルが書き換えられた可能性）</span>' : ''}</td>
         <td><input data-ci="${e.id}" value="${esc(ic2[e.id] || '')}" placeholder="—"></td></tr>`; }).join('')}</tbody></table></div>
       <label class="fld"><span class="lb">全体へのコメント</span><textarea id="adCom" rows="2" placeholder="例: 11/5 の領収書の宛名をお願いします">${esc(comment)}</textarea></label>
     </div>`,
@@ -930,6 +941,13 @@ export async function importJson(file, { batch = false } = {}) {
     X.render();
     return 'decision';
   }
+  if (j.kind === 'decisions') {
+    let n = 0; let last = null;
+    for (const d of j.list || []) { if (!S.reports.some((r) => r.id === d.reportId)) continue; try { last = await sh.applyDecision({ ...d, app: 'rakukeihi', kind: 'decision' }); n++; } catch (_) { /* ほかの人の精算 */ } }
+    toast(n ? `自分の精算 ${n}件の結果を取り込みました（${last ? `${md(last.from)}〜${md(last.to)} ほか` : ''}「承認」）` : 'このファイルに、この端末の精算の結果はありませんでした', { kind: n ? 'ok' : '', ms: 7000 });
+    X.render();
+    return 'decisions';
+  }
   if (j.kind === 'policy') {
     const ok = await confirmDialog(`「${(j.policy && j.policy.name) || '会社の経費ルール'}」を取り込みますか？`, '取り込む', { title: '会社の経費ルール', detail: `${ruleSummary(j.policy).join('\n')}${j.categories && j.categories.length ? `\n勘定科目: ${j.categories.length}個` : ''}` });
     if (!ok) return 'policy';
@@ -953,9 +971,11 @@ export const apvActions = {
     const dup = sh.duplicateIndex(apvCache);
     const list = apvCache.filter((r) => r.status === 'pending' && (!X.P.apv.month || subMonth(r.sub) === X.P.apv.month) && !errCount(r.sub) && !(r.sub.items || []).some((e) => dup.has(`${r.id}|${e.id}`)));
     if (!list.length) return;
-    if (!(await confirmDialog(`ルール違反・二重の疑いがない ${list.length}件（${yen(list.reduce((s, r) => s + payable(r.sub), 0))}）をまとめて承認します。`, '承認する', { detail: '承認の結果ファイルは作りません（差し戻しのときだけ、1件ずつ開いて結果ファイルを作ってください）。' }))) return;
-    for (const r of list) await sh.decide(r, { status: 'approved', comment: '', itemComments: {}, by: S.settings.name || '' });
-    await loadApprovals(); X.render(); toast(`${list.length}件を承認しました`, { kind: 'ok' });
+    if (!(await confirmDialog(`ルール違反・二重の疑いがない ${list.length}件（${yen(list.reduce((s, r) => s + payable(r.sub), 0))}）をまとめて承認します。`, '承認する', { detail: '承認の結果を 1 つのファイルにまとめて保存します。全員に同じファイルを送れば、それぞれ自分の精算の結果だけが取り込まれます（ほかの人の名前・金額は入りません）。' }))) return;
+    const out = [];
+    for (const r of list) { await sh.decide(r, { status: 'approved', comment: '', itemComments: {}, by: S.settings.name || '' }); out.push({ submissionId: r.id, reportId: r.sub.reportId, status: 'approved', comment: '', itemComments: {}, by: S.settings.name || '', at: r.decided }); }
+    download(new Blob([JSON.stringify({ app: 'rakukeihi', kind: 'decisions', at: Date.now(), list: out })], { type: 'application/json' }), `精算の結果_まとめて_${today()}.json`);
+    await loadApprovals(); X.render(); toast(`${list.length}件を承認しました。結果ファイル（まとめて）を全員に送ってください`, { kind: 'ok', ms: 7000 });
   },
   apvRemind: async () => {
     const months = [...new Set(apvCache.map((r) => subMonth(r.sub)))].sort().reverse();
@@ -981,9 +1001,13 @@ export const apvActions = {
   personEdit: async (b) => {
     const list = [...(S.settings.roster || [])]; const i = list.findIndex((p) => sh.personKey(p) === b.dataset.id); if (i < 0) return;
     const a = await editAccount(`${list[i].name} さんの振込先`, list[i].bank || { holder: '' }); if (!a) return;
-    list[i] = { ...list[i], bank: a, bankLocked: true }; S.settings.roster = list; st.saveSettings(); X.P.apv.paySel = null; X.render();
-    toast('振込先を保存しました（総務が直した振込先は、提出ファイルで上書きしません）', { kind: 'ok' });
+    const { pendingBank, ...rest } = list[i]; void pendingBank;
+    list[i] = { ...rest, bank: a, bankOk: true }; S.settings.roster = list; st.saveSettings(); X.P.apv.paySel = null; X.render();
+    toast('振込先を保存しました（提出ファイルで変わっても、総務が認めるまでこの振込先を使います）', { kind: 'ok' });
   },
+  bankOk: (b) => { sh.resolveBank(b.dataset.id, 'ok'); X.P.apv.paySel = null; X.render(); },
+  bankAccept: async (b) => { if (!(await confirmDialog('本人に確かめましたか？ 振込先を新しい口座に変えます。', '変える'))) return; sh.resolveBank(b.dataset.id, 'accept'); X.P.apv.paySel = null; X.render(); toast('振込先を変えました', { kind: 'ok' }); },
+  bankReject: (b) => { sh.resolveBank(b.dataset.id, 'reject'); X.P.apv.paySel = null; X.render(); toast('変更の申し出を取り消しました（前の振込先のまま）'); },
   payCsv: () => {
     const g = selectedPay(); const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const rows = [['氏名', '社員番号', '銀行コード', '銀行名', '支店コード', '支店名', '種類', '口座番号', '口座名義', '金額']];
@@ -995,7 +1019,7 @@ export const apvActions = {
   },
   payZengin: () => {
     const g = selectedPay(); const d = $('#payDate') ? $('#payDate').value : today();
-    const errs = g.flatMap((x) => checkAccount(x.bank, { who: x.name }));
+    const errs = g.flatMap((x) => [...(sh.payBlock(x.person) ? [`${x.name}: ${sh.payBlock(x.person)}`] : []), ...checkAccount(x.bank, { who: x.name })]);
     if (errs.length) { toast(`振込先を確かめてください: ${errs.join('・')}`, { kind: 'error', ms: 8000 }); return; }
     const txt = zenginTransfer({ sender: S.settings.payer, date: d, items: g.map((x) => ({ ...x.bank, amount: x.amount, custCode: x.empNo })) });
     download(new Blob([encodeSJIS(txt)], { type: 'text/plain' }), `総合振込_${d.replace(/-/g, '')}.txt`);
@@ -1271,7 +1295,8 @@ async function promptText(title, label, ph = '') {
   return r === 'ok' ? v.trim() : '';
 }
 const findL = (id) => S.ledger.find((x) => x.id === id);
-const syncDone = (r) => { if (r && r.auth && sh.gd.drive.used) { X.renderChrome(); if (X.P.view === 'home' || X.P.view === 'settings') X.render(); return; } if (r && r.merged) toast(`ほかのパソコンの変更を ${r.merged}件取り込みました`, { kind: 'ok' }); X.renderChrome(); if (X.P.view === 'settings') X.render(); };
+const syncDone = (r) => { if (r && r.ok && r.merged) loadApprovals().then(() => { if (X.P.view === 'approvals') X.render(); X.renderChrome(); });
+  if (r && r.auth && sh.gd.drive.used) { X.renderChrome(); if (X.P.view === 'home' || X.P.view === 'settings') X.render(); return; } if (r && r.merged) toast(`ほかのパソコンの変更を ${r.merged}件取り込みました`, { kind: 'ok' }); X.renderChrome(); if (X.P.view === 'settings') X.render(); };
 export const actions = {
   invNew: () => { if (X.P.view !== 'books' || X.P.books.tab !== 'invoice') { X.P.books.tab = 'invoice'; X.go('books'); } editInvoice(null); },
   invEdit: (b) => { const l = findL(b.dataset.id); if (l) editInvoice(l); },

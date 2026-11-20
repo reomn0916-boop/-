@@ -1,0 +1,14 @@
+{
+  "name": "rakukeihi",
+  "private": true,
+  "type": "module",
+  "description": "ラク経費（レシートを撮るだけの経費精算・帳簿）",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:e2e": "node --test --test-concurrency=1 test/e2e/*.e2e.mjs",
+    "test:all": "npm test && npm run test:e2e"
+  },
+  "devDependencies": {
+    "playwright": "^1.50.0"
+  }
+}

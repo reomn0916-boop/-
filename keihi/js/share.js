@@ -1,7 +1,7 @@
 // 承認（ファイルで提出 → 承認者が承認・差し戻し → 結果を戻す）と、同期フォルダ（自動バックアップ・ほかの端末と同期）
 // サーバーを使わないので、ファイルのやりとりと、Google ドライブ・OneDrive などの同期フォルダを使う
 import { db, newId } from './db.js';
-import { S, on, makeBackup, readBackup, mergeBackup, saveMany, kvGet, kvSet, todayISO, imageToBackup, putBackupImage, loadAll, saveSettings } from './store.js';
+import { S, on, makeBackup, readBackup, mergeBackup, saveMany, kvGet, kvSet, todayISO, imageToBackup, putBackupImage, loadAll, saveSettings, tomb } from './store.js';
 import * as gd from '../../lib/gdrive.js';
 import { summarize } from './report.js';
 import { policyIssues } from './policy.js';
@@ -11,11 +11,25 @@ function b64ToBlob(b64, type) { const bin = atob(b64); const u = new Uint8Array(
 
 // ---- 承認 -------------------------------------------------------------------
 
+// 提出用に画像を小さくする（長い辺 1400px・JPEG）。メールに添付できる大きさにするため
+async function shrink(blob, max = 1400, q = 0.7) {
+  try {
+    const bmp = await createImageBitmap(blob);
+    const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
+    const w = Math.round(bmp.width * k); const h = Math.round(bmp.height * k);
+    const c = typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(w, h) : Object.assign(document.createElement('canvas'), { width: w, height: h });
+    c.getContext('2d').drawImage(bmp, 0, 0, w, h);
+    const out = c.convertToBlob ? await c.convertToBlob({ type: 'image/jpeg', quality: q }) : await new Promise((r) => c.toBlob(r, 'image/jpeg', q));
+    return out && out.size < blob.size ? out : blob;
+  } catch (_) { return blob; }
+}
+export const SUBMISSION_WARN = 9 * 1024 * 1024; // これより大きいとメールで送れないことが多い
+
 // 提出ファイル（精算の明細と領収書の画像）
 export async function makeSubmission(rep) {
   const items = rep.ids.map((id) => S.expenses.find((e) => e.id === id)).filter(Boolean);
   const images = [];
-  for (const e of items) if (e.imageId) { const r = await db.get('images', e.imageId); if (r) images.push({ id: r.id, blob: await blobToB64(r.blob) }); }
+  for (const e of items) if (e.imageId) { const r = await db.get('images', e.imageId); if (r) images.push({ id: r.id, blob: await blobToB64(await shrink(r.blob)) }); }
   const sum = summarize(items);
   const pol = S.settings.policy || null;
   const withIssues = items.map((e) => ({ ...e, issues: policyIssues(e, pol, todayISO()) }));
@@ -23,35 +37,61 @@ export async function makeSubmission(rep) {
     applicant: { name: S.settings.name, dept: S.settings.dept, company: S.settings.company, empNo: S.settings.empNo || '', bank: S.settings.myBank || null },
     policyName: (pol && pol.name) || '', sum: { reimb: sum.reimb, company: sum.company, count: sum.count }, items: withIssues, images };
   rep.approval = { status: 'submitted', at: Date.now(), submissionId: sub.id }; rep.updated = Date.now();
+  S.reports = S.reports.map((r) => (r.id === rep.id ? rep : r));
   await db.put('reports', rep);
   return new Blob([JSON.stringify(sub)], { type: 'application/json' });
 }
 
 // 承認者: 届いた提出ファイルを保存
 export async function receiveSubmission(j) {
-  const rec = { id: j.id, received: Date.now(), status: 'pending', comment: '', itemComments: {}, sub: j };
+  const { images = [], ...rest } = j;
+  const rec = { id: j.id, received: Date.now(), updated: Date.now(), status: 'pending', comment: '', itemComments: {}, sub: { ...rest, images: [] } };
   const old = await db.get('approvals', j.id);
   if (old) { rec.status = old.status; rec.comment = old.comment; rec.itemComments = old.itemComments; rec.paid = old.paid || null; rec.received = old.received; }
+  await db.put('apvimgs', { id: j.id, images });
   await db.put('approvals', rec);
-  upsertRoster(j.applicant);
+  upsertRoster(j.applicant, j.id);
   return rec;
 }
 // ---- 総務: 社員の名簿（提出ファイルの名前・社員番号・振込先で自動で増える。総務が直せる） ----------------
 export const personKey = (a) => (a && a.empNo ? `no:${String(a.empNo).trim()}` : `name:${String((a && a.name) || '').replace(/\s/g, '')}`);
-export function upsertRoster(a) {
+// 振込先が同じか（銀行・支店・種類・口座番号・名義）
+const kanaKey = (x) => String(x || '').normalize('NFKC').replace(/[\s　]/g, '').toUpperCase();
+export const sameBank = (a, b) => !!a && !!b && ['bankCode', 'branchCode', 'number'].every((k) => String(a[k] || '').replace(/^0+/, '') === String(b[k] || '').replace(/^0+/, '')) && String(a.type || '1') === String(b.type || '1') && kanaKey(a.holder) === kanaKey(b.holder);
+// 提出ファイルで届いた振込先は、そのまま使わない:
+// - はじめての振込先 → 使うが「総務がまだ確かめていない」（bankOk: false）。振込の前に確認がいる
+// - 前とちがう振込先 → 前の振込先のまま、変更の申し出（pendingBank）として止める
+export function upsertRoster(a, subId = '') {
   if (!a || !(a.name || a.empNo)) return;
   const list = [...(S.settings.roster || [])];
   const k = personKey(a);
   const i = list.findIndex((p) => personKey(p) === k);
-  const cur = i >= 0 ? list[i] : { name: '', dept: '', empNo: '', bank: null, active: true };
-  const next = { ...cur, name: a.name || cur.name, dept: a.dept || cur.dept, empNo: a.empNo || cur.empNo, bank: cur.bankLocked ? cur.bank : (a.bank && a.bank.number ? a.bank : cur.bank), active: cur.active !== false };
+  const cur = i >= 0 ? list[i] : { name: '', dept: '', empNo: '', bank: null, bankOk: false, active: true };
+  const next = { ...cur, name: a.name || cur.name, dept: a.dept || cur.dept, empNo: a.empNo || cur.empNo, active: cur.active !== false };
+  const inc = a.bank && a.bank.number ? a.bank : null;
+  if (inc) {
+    if (!cur.bank) { next.bank = inc; next.bankOk = false; } else if (sameBank(cur.bank, inc)) { if (next.pendingBank && sameBank(next.pendingBank.bank, inc)) delete next.pendingBank; } else if (!next.pendingBank || !sameBank(next.pendingBank.bank, inc)) next.pendingBank = { bank: inc, at: Date.now(), subId };
+  }
   if (i >= 0) list[i] = next; else list.push(next);
   S.settings.roster = list; saveSettings();
 }
-export async function setPaid(ids, paid) {
-  for (const id of ids) { const r = await db.get('approvals', id); if (!r) continue; r.paid = paid; await db.put('approvals', r); }
+// 総務: 振込先を確かめた・変更を認める・認めない
+export function resolveBank(key, action) {
+  S.settings.roster = (S.settings.roster || []).map((p) => {
+    if (personKey(p) !== key) return p;
+    if (action === 'ok') return { ...p, bankOk: true };
+    if (action === 'accept' && p.pendingBank) { const { pendingBank, ...rest } = p; return { ...rest, bank: pendingBank.bank, bankOk: true, bankChangedAt: Date.now() }; }
+    if (action === 'reject') { const { pendingBank, ...rest } = p; void pendingBank; return rest; }
+    return p;
+  });
+  saveSettings();
 }
-export async function removeApproval(id) { await db.del('approvals', id); }
+// 振り込めるか（はじめての振込先は確認済み・変更の申し出がない）
+export const payBlock = (p) => (!p || !p.bank ? '振込先がありません' : p.pendingBank ? '振込先の変更の申し出があります（確かめてください）' : p.bankOk === false ? 'はじめての振込先です（確かめてください）' : '');
+export async function setPaid(ids, paid) {
+  for (const id of ids) { const r = await db.get('approvals', id); if (!r) continue; r.paid = paid; r.updated = Date.now(); await db.put('approvals', r); }
+}
+export async function removeApproval(id) { await db.del('approvals', id); await db.del('apvimgs', id); tomb('approval', id); }
 // 社員をまたいだ二重申請: 同じ日・同じ金額・同じ支払先の経費が、ちがう提出に入っている
 const pk = (s) => String(s || '').normalize('NFKC').replace(/\s|株式会社|\(株\)|㈱/g, '').toLowerCase();
 export function duplicateIndex(recs) {
@@ -61,12 +101,21 @@ export function duplicateIndex(recs) {
   for (const list of m.values()) if (new Set(list.map((x) => x.rec)).size > 1) for (const x of list) dup.set(`${x.rec}|${x.item}`, list.filter((y) => y.rec !== x.rec).map((y) => y.who));
   return dup;
 }
-export const listApprovals = async () => ((await db.all('approvals')) || []).sort((a, b) => b.received - a.received);
-export const approvalImage = (rec, imageId) => { const im = rec.sub.images.find((x) => x.id === imageId); return im ? b64ToBlob(im.blob, 'image/jpeg') : null; };
+export async function listApprovals() {
+  const list = (await db.all('approvals')) || [];
+  // 前の版で画像を同じところに入れていた記録は、画像を別に移す
+  for (const r of list) if (r.sub && r.sub.images && r.sub.images.length) { await db.put('apvimgs', { id: r.id, images: r.sub.images }); r.sub = { ...r.sub, images: [] }; await db.put('approvals', r); }
+  return list.sort((a, b) => b.received - a.received);
+}
+// 届いた精算の画像: { 画像の id: Blob }
+export async function approvalImages(rec) {
+  const r = await db.get('apvimgs', rec.id);
+  return Object.fromEntries(((r && r.images) || []).map((im) => [im.id, b64ToBlob(im.blob, 'image/jpeg')]));
+}
 
 // 承認者: 承認・差し戻しを決めて、結果ファイルを作る
 export async function decide(rec, { status, comment = '', itemComments = {}, by = '' }) {
-  Object.assign(rec, { status, comment, itemComments, decided: Date.now(), by });
+  Object.assign(rec, { status, comment, itemComments, decided: Date.now(), by, updated: Date.now() });
   await db.put('approvals', rec);
   const res = { app: 'rakukeihi', kind: 'decision', submissionId: rec.id, reportId: rec.sub.reportId, status, comment, itemComments, by, at: rec.decided };
   return new Blob([JSON.stringify(res)], { type: 'application/json' });
@@ -174,6 +223,13 @@ export async function syncDrive() {
     const local = new Set(await db.keys('images'));
     const need = [...new Set(S.expenses.map((e) => e.imageId).filter((id) => id && !local.has(id) && remote.has(id)))];
     for (const id of need) { syncState.progress = `画像を受け取っています（${++imgDown} / ${need.length}）`; try { await putBackupImage(JSON.parse(await gd.readText(remote.get(id)))); } catch (_) { /* 次の同期でまた */ } }
+    // 総務の受け取り箱の画像（提出 1 件ずつ）
+    const apvLocal = new Set(await db.keys('apvimgs'));
+    for (const r of (await db.all('approvals')) || []) {
+      const name = `apv_${r.id}`;
+      if (!apvLocal.has(r.id) && remote.has(name)) { try { await db.put('apvimgs', JSON.parse(await gd.readText(remote.get(name)))); } catch (_) { /* 次回 */ } }
+    }
+    for (const id of apvLocal) if (!remote.has(`apv_${id}`)) { const rec = await db.get('apvimgs', id); if (rec && rec.images && rec.images.length) await gd.write({ name: `apv_${id}.json`, parent: imgDir, data: JSON.stringify(rec) }); }
     const send = [...local].filter((id) => !remote.has(id));
     for (const id of send) { syncState.progress = `画像を送っています（${++imgUp} / ${send.length}）`; const o = await imageToBackup(id); if (o) await gd.write({ name: `${id}.json`, parent: imgDir, data: JSON.stringify(o) }); }
     // 自分のデータ（画像なし）と、日ごとの控え（14 日分）

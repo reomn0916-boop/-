@@ -1,6 +1,6 @@
 // 端末内の保存（IndexedDB）。経費・領収書の画像・精算書の履歴
 const DB_NAME = 'rakukeihi';
-const DB_VER = 3;
+const DB_VER = 4;
 let dbp = null;
 
 function open() {
@@ -16,6 +16,7 @@ function open() {
       if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv', { keyPath: 'k' }); // 同期フォルダなど
       if (!db.objectStoreNames.contains('history')) db.createObjectStore('history', { keyPath: 'id' }); // 訂正・削除の履歴（電子帳簿保存法）
       if (!db.objectStoreNames.contains('approvals')) db.createObjectStore('approvals', { keyPath: 'id' }); // 届いた精算の承認
+      if (!db.objectStoreNames.contains('apvimgs')) db.createObjectStore('apvimgs', { keyPath: 'id' }); // 届いた精算の領収書の画像（一覧を軽くするため別に置く）
     };
     req.onsuccess = () => { const d = req.result; d.onversionchange = () => { d.close(); dbp = null; }; resolve(d); }; // 新しい版を開いたタブに道をゆずる
     req.onerror = () => reject(req.error);

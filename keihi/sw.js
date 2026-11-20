@@ -1,6 +1,6 @@
 // ラク経費のオフライン対応と、Android の「共有」から画像を受け取る処理
 // ファイルを更新したら VERSION を上げる
-const VERSION = 'rakukeihi-v8';
+const VERSION = 'rakukeihi-v10';
 const FILES = [
   './', './index.html', './app.css', './manifest.webmanifest',
   './js/app.js', './js/db.js', './js/ocr.js', './js/parse.js', './js/report.js', './js/crop.js',

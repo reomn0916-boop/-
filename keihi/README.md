@@ -231,7 +231,8 @@ pc/charts.js           ホームのグラフ
 pc/ui.js               アイコン・トースト・ダイアログ・メニュー
 pc/pc.css              パソコン版の見た目（明るい / 暗い表示）
 sw.js                  オフライン対応・Android の共有の受け取り（スマホ版・パソコン版の両方）
-test/                  読み取り・切り抜き・帳簿のテスト（node --test test/*.test.mjs）
+test/                  計算のテスト（npm test）と、画面の自動テスト test/e2e/（npm run test:e2e。くわしくは test/e2e/README.md）
+package.json           テストの実行（playwright）
 ```
 
 端末内 OCR の部品（tesseract.js 7.0.0・日本語データ）と PDF の読み取り（pdf.js 6.4.299）は jsDelivr から読み込み、一度使うと端末に保存されてオフラインでも動きます。
