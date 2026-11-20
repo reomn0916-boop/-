@@ -47,16 +47,26 @@ export const S = {
   learned: lsGet('learned', { payeeCat: {}, tnoPayee: {} }),
   templates: lsGet('templates', []),
   recurring: lsGet('recurring', []),
+  tombs: lsGet('tombs', {}), // 消した記録の印（同期で、ほかの端末の同じ記録も消すため）: id → { kind, at }
   thumbs: new Map(),
   ocr: new Map(),
 };
 if (!S.learned.payeeCat) S.learned.payeeCat = {};
 if (!S.learned.tnoPayee) S.learned.tnoPayee = {};
 
-export const saveSettings = () => lsSet('settings', S.settings);
+// 設定は「最後に変えた時刻」を付けて保存する（同期で新しい方を使う）
+export const saveSettings = ({ stamp = true } = {}) => { if (stamp) S.settings.__at = Date.now(); return lsSet('settings', S.settings); };
 export const saveLearned = () => lsSet('learned', S.learned);
 export const saveTemplates = () => lsSet('templates', S.templates);
 export const saveRecurring = () => lsSet('recurring', S.recurring);
+
+// ---- 消した記録の印（同期用） -------------------------------------------------------
+const TOMB_DAYS = 400;
+function saveTombs() { const lim = Date.now() - TOMB_DAYS * 86400000; for (const [k, v] of Object.entries(S.tombs)) if (!v || v.at < lim) delete S.tombs[k]; lsSet('tombs', S.tombs); }
+export function tomb(kind, id) { S.tombs[id] = { kind, at: Date.now() }; saveTombs(); }
+function untomb(id) { if (S.tombs[id]) { delete S.tombs[id]; saveTombs(); } }
+// 消した印が、その記録の最後の更新より新しければ「消えている」
+const isDead = (id, updated) => { const t = S.tombs[id]; return !!t && t.at >= (updated || 0); };
 export const byId = (id) => S.expenses.find((e) => e.id === id);
 export const cats = () => (S.settings.categories && S.settings.categories.length ? S.settings.categories : DEFAULT_CATEGORIES);
 export const isCompanyPaid = (e) => e.method === '会社カード' || e.method === '請求書払い';
@@ -383,9 +393,9 @@ export async function commit(c) {
 
 // ---- 定期的な経費・売上（毎月○日に自動で登録） ---------------------------------------------
 // rule = { id, label, kind: 'expense' | 'income', day, start: 'YYYY-MM', last: 'YYYY-MM', data: {...} }
-export function addRecurring(rule) { S.recurring.push({ id: newId('rc'), start: todayISO().slice(0, 7), last: '', day: 1, ...rule }); saveRecurring(); emit('change'); }
-export function updateRecurring(id, patch) { const r = S.recurring.find((x) => x.id === id); if (r) Object.assign(r, patch); saveRecurring(); emit('change'); }
-export function removeRecurring(id) { S.recurring = S.recurring.filter((x) => x.id !== id); saveRecurring(); emit('change'); }
+export function addRecurring(rule) { S.recurring.push({ id: newId('rc'), start: todayISO().slice(0, 7), last: '', day: 1, ...rule, updated: Date.now() }); saveRecurring(); emit('change'); }
+export function updateRecurring(id, patch) { const r = S.recurring.find((x) => x.id === id); if (r) Object.assign(r, patch, { updated: Date.now() }); saveRecurring(); emit('change'); }
+export function removeRecurring(id) { tomb('recurring', id); S.recurring = S.recurring.filter((x) => x.id !== id); saveRecurring(); emit('change'); }
 export async function runRecurring(today = todayISO()) {
   const made = [];
   for (const r of S.recurring) {
@@ -395,8 +405,13 @@ export async function runRecurring(today = todayISO()) {
       const last = +monthEnd(ym).slice(8);
       const date = `${ym}-${String(Math.min(+r.day || 1, last)).padStart(2, '0')}`;
       if (date > today) break;
-      if (r.kind === 'income') { const l = { ...r.data, type: 'income', date, recurring: r.id }; delete l.id; await saveLedger(l); made.push(l); } else { const e = newExpense({ ...r.data, date, status: 'ok', auto: [], recurring: r.id }); await saveExpense(e, { quiet: true }); made.push(e); }
-      r.last = ym; ym = addMonth(ym, 1);
+      // 記録の id を「ルール + 月」で決める: 2 台のパソコンが同じ月を登録しても、同期で 1 件にまとまる
+      const rid = `${r.id}_${ym}`;
+      const exists = r.kind === 'income' ? S.ledger.some((x) => x.id === rid) : S.expenses.some((x) => x.id === rid);
+      if (!exists && !S.tombs[rid]) {
+        if (r.kind === 'income') { const l = { ...r.data, id: rid, type: 'income', date, recurring: r.id }; await saveLedger(l); made.push(l); } else { const e = newExpense({ ...r.data, id: rid, date, status: 'ok', auto: [], recurring: r.id }); await saveExpense(e, { quiet: true }); made.push(e); }
+      }
+      r.last = ym; r.updated = Date.now(); ym = addMonth(ym, 1);
     }
   }
   if (made.length) { saveRecurring(); emit('change'); }
@@ -417,6 +432,7 @@ export async function removeExpenses(ids) {
     if (e.status !== 'draft') logHistory('expense', e, null);
     await db.del('expenses', id);
     if (img) await db.del('images', img.id);
+    tomb('expense', id);
     S.expenses = S.expenses.filter((x) => x.id !== id);
     S.ocr.delete(id);
     snap.push({ e, img });
@@ -425,7 +441,7 @@ export async function removeExpenses(ids) {
   return snap;
 }
 export async function restoreSnapshot(snap) {
-  for (const { e, img } of snap) { if (img) await db.put('images', img); await db.put('expenses', e); S.expenses.push(e); }
+  for (const { e, img } of snap) { if (img) await db.put('images', img); e.updated = Date.now(); untomb(e.id); await db.put('expenses', e); S.expenses.push(e); }
   emit('change');
 }
 
@@ -444,8 +460,8 @@ export function templateFrom(c) {
     site: c.site, method: c.method, memo: c.memo,
   };
 }
-export function addTemplate(t) { S.templates.unshift(t); S.templates = S.templates.slice(0, 30); saveTemplates(); emit('change'); }
-export function removeTemplate(id) { S.templates = S.templates.filter((x) => x.id !== id); saveTemplates(); emit('change'); }
+export function addTemplate(t) { t.updated = Date.now(); untomb(t.id); S.templates.unshift(t); S.templates = S.templates.slice(0, 30); saveTemplates(); emit('change'); }
+export function removeTemplate(id) { tomb('template', id); S.templates = S.templates.filter((x) => x.id !== id); saveTemplates(); emit('change'); }
 export function expenseFromTemplate(t, date = todayISO()) {
   return newExpense({
     kind: t.kind, payee: t.payee || (t.kind === 'car' ? '自家用車' : t.kind === 'transit' ? '電車・バス' : ''), amount: t.amount,
@@ -458,7 +474,7 @@ export function expenseFromTemplate(t, date = todayISO()) {
 // ---- 精算の記録 ----------------------------------------------------------------
 
 export async function createReport(items, { from, to, advance = 0, sum }) {
-  const rep = { id: newId('r'), created: Date.now(), from, to, ids: items.map((e) => e.id), reimb: sum.reimb, company: sum.company, advance };
+  const rep = { id: newId('r'), created: Date.now(), updated: Date.now(), from, to, ids: items.map((e) => e.id), reimb: sum.reimb, company: sum.company, advance };
   await db.put('reports', rep);
   S.reports.push(rep);
   const changed = [];
@@ -473,6 +489,7 @@ export async function undoReport(id) {
   for (const eid of rep.ids) { const x = byId(eid); if (x && x.reportId === id) { x.status = 'ok'; x.reportId = null; changed.push(x); } }
   if (changed.length) await saveMany(changed);
   await db.del('reports', id);
+  tomb('report', id);
   S.reports = S.reports.filter((r) => r.id !== id);
   emit('change');
 }
@@ -484,6 +501,7 @@ export async function saveLedger(l) {
   if (!l.created) l.created = Date.now();
   logHistory('ledger', S.ledger.find((x) => x.id === l.id) || null, l);
   l.updated = Date.now();
+  untomb(l.id);
   await db.put('ledger', l);
   const i = S.ledger.findIndex((x) => x.id === l.id);
   if (i >= 0) S.ledger[i] = l; else S.ledger.push(l);
@@ -495,6 +513,7 @@ export async function removeLedger(id) {
   const l = S.ledger.find((x) => x.id === id); if (!l) return null;
   logHistory('ledger', l, null);
   await db.del('ledger', id);
+  tomb('ledger', id);
   S.ledger = S.ledger.filter((x) => x.id !== id);
   emit('change');
   return l;
@@ -510,7 +529,8 @@ function b64ToBlob(b64, type) { const bin = atob(b64); const u = new Uint8Array(
 export async function makeBackup() {
   const images = await db.all('images');
   const { apiKey, ...settings } = S.settings; void apiKey;
-  const parts = [`{"app":"rakukeihi","version":3,"exportedAt":${JSON.stringify(new Date().toISOString())},"settings":${JSON.stringify(settings)},"learned":${JSON.stringify(S.learned)},"templates":${JSON.stringify(S.templates)},"expenses":${JSON.stringify(S.expenses)},"reports":${JSON.stringify(S.reports)},"ledger":${JSON.stringify(S.ledger)},"images":[`];
+  const history = (await db.all('history')) || [];
+  const parts = [`{"app":"rakukeihi","version":4,"tombs":${JSON.stringify(S.tombs)},"recurring":${JSON.stringify(S.recurring)},"history":${JSON.stringify(history)},"exportedAt":${JSON.stringify(new Date().toISOString())},"settings":${JSON.stringify(settings)},"learned":${JSON.stringify(S.learned)},"templates":${JSON.stringify(S.templates)},"expenses":${JSON.stringify(S.expenses)},"reports":${JSON.stringify(S.reports)},"ledger":${JSON.stringify(S.ledger)},"images":[`];
   for (let i = 0; i < images.length; i++) {
     const im = images[i];
     const o = { id: im.id, w: im.w, h: im.h, blob: await blobToB64(im.blob), thumb: im.thumb ? await blobToB64(im.thumb) : '' };
@@ -536,9 +556,22 @@ export async function readBackup(file) {
 }
 
 // 取り込む（同じ経費は新しい方を残す。ほかの経費は消さない）
-export async function mergeBackup(j, { takeSettings = true } = {}) {
+export async function mergeBackup(j, { takeSettings = true, sync = false } = {}) {
+  let changed = 0;
+  // 1) 消した印: ほかの端末で消した記録を、こちらでも消す
+  for (const [id, t] of Object.entries(j.tombs || {})) { const cur = S.tombs[id]; if (t && (!cur || cur.at < t.at)) S.tombs[id] = t; }
+  saveTombs();
+  for (const e of S.expenses.filter((x) => isDead(x.id, x.updated))) {
+    await db.del('expenses', e.id); if (e.imageId) await db.del('images', e.imageId); changed++;
+  }
+  for (const l of S.ledger.filter((x) => isDead(x.id, x.updated))) { await db.del('ledger', l.id); changed++; }
+  for (const r of S.reports.filter((x) => isDead(x.id, x.updated || x.created))) { await db.del('reports', r.id); changed++; }
+  const tplBefore = S.templates.length; S.templates = S.templates.filter((t) => !isDead(t.id, t.updated)); if (S.templates.length !== tplBefore) changed++;
+  const recBefore = S.recurring.length; S.recurring = S.recurring.filter((r) => !isDead(r.id, r.updated)); if (S.recurring.length !== recBefore) changed++;
+
+  // 2) 経費（新しく直した方が残る）と画像
   const have = new Map(S.expenses.map((e) => [e.id, e]));
-  const put = (j.expenses || []).filter((e) => !have.has(e.id) || (e.updated || 0) > (have.get(e.id).updated || 0));
+  const put = (j.expenses || []).filter((e) => !isDead(e.id, e.updated) && (!have.has(e.id) || (e.updated || 0) > (have.get(e.id).updated || 0)));
   const needImg = new Set(put.map((e) => e.imageId).filter(Boolean));
   for (const im of j.images || []) {
     if (!needImg.has(im.id)) continue;
@@ -548,18 +581,38 @@ export async function mergeBackup(j, { takeSettings = true } = {}) {
     await db.put('images', rec);
   }
   if (put.length) await db.putMany('expenses', put);
-  const reps = new Set(S.reports.map((r) => r.id));
-  const newReps = (j.reports || []).filter((r) => !reps.has(r.id));
-  if (newReps.length) await db.putMany('reports', newReps);
+  changed += put.length;
+  // 3) 精算（承認の結果・仮払金なども新しい方）
+  const reps = new Map(S.reports.map((r) => [r.id, r]));
+  const putReps = (j.reports || []).filter((r) => !isDead(r.id, r.updated || r.created) && (!reps.has(r.id) || (r.updated || r.created || 0) > (reps.get(r.id).updated || reps.get(r.id).created || 0)));
+  if (putReps.length) await db.putMany('reports', putReps);
+  changed += putReps.length;
+  // 4) 帳簿の記録
   const led = new Map(S.ledger.map((l) => [l.id, l]));
-  const putLed = (j.ledger || []).filter((l) => !led.has(l.id) || (l.updated || 0) > (led.get(l.id).updated || 0));
+  const putLed = (j.ledger || []).filter((l) => !isDead(l.id, l.updated) && (!led.has(l.id) || (l.updated || 0) > (led.get(l.id).updated || 0)));
   if (putLed.length) await db.putMany('ledger', putLed);
-  if (takeSettings && j.settings) { S.settings = { ...DEF_SETTINGS, ...j.settings, ...pickFilled(S.settings), apiKey: S.settings.apiKey }; saveSettings(); }
+  changed += putLed.length;
+  // 5) 変更の履歴（電子帳簿保存法）: 両方の端末の履歴を合わせる
+  if ((j.history || []).length) { const hs = new Set(((await db.all('history')) || []).map((h) => h.id)); const nh = j.history.filter((h) => !hs.has(h.id)); if (nh.length) await db.putMany('history', nh); }
+  // 6) 設定: 同期のときは、あとで変えた方の設定を使う（API キー・読み取り方はこの端末のまま）
+  if (sync && j.settings && (j.settings.__at || 0) > (S.settings.__at || 0)) {
+    S.settings = { ...DEF_SETTINGS, ...j.settings, apiKey: S.settings.apiKey, ocrMode: S.settings.ocrMode, aiModel: S.settings.aiModel };
+    saveSettings({ stamp: false }); changed++;
+  } else if (!sync && takeSettings && j.settings) { S.settings = { ...DEF_SETTINGS, ...j.settings, ...pickFilled(S.settings), apiKey: S.settings.apiKey }; saveSettings(); }
   S.learned = { payeeCat: { ...(j.learned?.payeeCat || {}), ...S.learned.payeeCat }, tnoPayee: { ...(j.learned?.tnoPayee || {}), ...S.learned.tnoPayee } }; saveLearned();
-  const tids = new Set(S.templates.map((t) => t.id));
-  S.templates = [...S.templates, ...(j.templates || []).filter((t) => !tids.has(t.id))]; saveTemplates();
+  // 7) よく使う・毎月の自動登録（新しく直した方。自動登録は進んだ月も合わせる）
+  const tpl = new Map(S.templates.map((t) => [t.id, t]));
+  for (const t of j.templates || []) { if (isDead(t.id, t.updated)) continue; const cur = tpl.get(t.id); if (!cur || (t.updated || 0) > (cur.updated || 0)) { tpl.set(t.id, t); changed++; } }
+  S.templates = [...tpl.values()].slice(0, 30); saveTemplates();
+  const rec = new Map(S.recurring.map((r) => [r.id, r]));
+  for (const r of j.recurring || []) {
+    if (isDead(r.id, r.updated)) continue;
+    const cur = rec.get(r.id);
+    if (!cur || (r.updated || 0) > (cur.updated || 0)) { rec.set(r.id, { ...r, last: [r.last, cur && cur.last].filter(Boolean).sort().pop() || '' }); changed++; } else if ((r.last || '') > (cur.last || '')) cur.last = r.last;
+  }
+  S.recurring = [...rec.values()]; saveRecurring();
   await loadAll();
-  return put.length;
+  return changed;
 }
 // 自分の端末で入れた名前などは残す
 function pickFilled(st) { const o = {}; ['company', 'dept', 'name'].forEach((k) => { if (st[k]) o[k] = st[k]; }); return o; }

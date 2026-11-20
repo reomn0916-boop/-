@@ -6,8 +6,8 @@ import { booksOf, accountGroups, accountType, REVENUE_ACCOUNTS } from '../js/boo
 import { consumptionTax, TAX_METHODS, SIMPLE_RATES, siteReport, vehicleReport, payoutSummary, budgetStatus, yearCompare } from '../js/finance.js';
 import { decodeBytes, parseStatement, suggestRows, ledgerFromRows } from '../js/bank.js';
 import { invoiceTotals, nextInvoiceNo, overdueInvoices } from '../js/invoice.js';
-import { depreciationSchedule, straightRate, DEP_METHODS, LIFE_HINTS, withholding } from '../js/assets.js';
-import { encodeSJIS, toYayoi, toMF, toFreee } from '../js/exports.js';
+import { depreciationSchedule, DEP_METHODS, LIFE_HINTS, withholding, SMALL_LIMIT, smallAssetTotal, rateOf } from '../js/assets.js';
+import { encodeSJIS, toYayoi, toMF } from '../js/exports.js';
 import { ruleJournal, aiJournal } from '../js/aijournal.js';
 import * as sh from '../js/share.js';
 import { renderInvoice, pagesToPdf, taxPage, bluePage, toPayoutCSV } from '../js/report.js';
@@ -200,7 +200,7 @@ function bankTab(r) {
         <td class="c-amt num"><b>${yen(l.amount)}</b></td>
         <td class="c-act"><button class="icon-btn sm" data-led-del="${l.id}" title="削除">${ic('trash')}</button></td></tr>`).join('')}</tbody></table>` : ''}</div>`;
 }
-const ACTION_LABEL = { expense: '経費', transfer: '振替', income: '売上・収入', paid: '請求の入金', skip: '取り込まない' };
+const ACTION_LABEL = { expense: '経費', transfer: '振替', income: '売上・収入', paid: '請求の入金', refund: '返金・返品', skip: '取り込まない' };
 export async function bankImportFile(file) {
   let rows;
   try { rows = parseStatement(decodeBytes(new Uint8Array(await file.arrayBuffer()))); } catch (e) { toast(`読み込めませんでした: ${e.message || e}`, { kind: 'error' }); return; }
@@ -210,7 +210,7 @@ export async function bankImportFile(file) {
   let acc = '普通預金';
   let sug = suggestRows(rows, { kind, expenses: S.expenses, ledger: S.ledger, learned: S.learned, categories: st.cats() });
   const accounts = (a) => {
-    if (a === 'expense') return accountGroups(bk().mode, st.cats()).filter(([g]) => /費用|経費/.test(g)).flatMap(([, l]) => l);
+    if (a === 'expense' || a === 'refund') return accountGroups(bk().mode, st.cats()).filter(([g]) => /費用|経費/.test(g)).flatMap(([, l]) => l);
     if (a === 'income') return [...REVENUE_ACCOUNTS, ...(bk().mode === 'sole' ? ['事業主借'] : []), '借入金', '前受金'];
     return accountGroups(bk().mode, st.cats()).filter(([g]) => !/費用|経費|収益/.test(g)).flatMap(([, l]) => l);
   };
@@ -219,7 +219,7 @@ export async function bankImportFile(file) {
     <td class="c-date">${md(x.date)}</td>
     <td class="desc"><b>${esc(x.desc)}</b>${x.note ? `<small>${esc(x.note)}</small>` : ''}</td>
     <td class="num">${x.out ? yen(x.out) : ''}</td><td class="num in">${x.in ? yen(x.in) : ''}</td>
-    <td><select data-a>${opt((x.out ? ['expense', 'transfer'] : ['income', ...(x.ref ? ['paid'] : [])]).concat('skip').map((k) => [k, ACTION_LABEL[k]]), x.action)}</select></td>
+    <td><select data-a>${opt((x.out ? ['expense', 'transfer'] : kind === 'card' ? ['refund'] : ['income', ...(x.ref ? ['paid'] : [])]).concat('skip').map((k) => [k, ACTION_LABEL[k]]), x.action)}</select></td>
     <td>${x.action === 'skip' || x.action === 'paid' ? `<span class="muted">${x.action === 'paid' ? '売掛金' : ''}</span>` : `<select data-acc>${opt([...new Set([x.account, ...accounts(x.action)])].filter(Boolean), x.account)}</select>`}</td>
   </tr>`;
   const r = await modal({
@@ -245,8 +245,8 @@ export async function bankImportFile(file) {
         if (t.id === 'bAcc') { acc = t.value; return; }
         const tr = t.closest('[data-i]'); if (!tr) return;
         const x = sug[+tr.dataset.i];
-        if (t.matches('[data-inc]')) { x.include = t.checked; if (x.include && x.action === 'skip') x.action = x.out ? 'expense' : 'income'; }
-        if (t.matches('[data-a]')) { x.action = t.value; x.include = t.value !== 'skip'; if (!accounts(x.action).includes(x.account)) x.account = x.action === 'expense' ? '雑費' : x.action === 'income' ? '売上高' : x.action === 'transfer' ? (bk().mode === 'sole' ? '事業主貸' : '未払金') : ''; }
+        if (t.matches('[data-inc]')) { x.include = t.checked; if (x.include && x.action === 'skip') x.action = x.out ? 'expense' : kind === 'card' ? 'refund' : 'income'; }
+        if (t.matches('[data-a]')) { x.action = t.value; x.include = t.value !== 'skip'; if (!accounts(x.action).includes(x.account)) x.account = x.action === 'expense' || x.action === 'refund' ? '雑費' : x.action === 'income' ? '売上高' : x.action === 'transfer' ? (bk().mode === 'sole' ? '事業主貸' : '未払金') : ''; }
         if (t.matches('[data-acc]')) x.account = t.value;
         draw();
       });
@@ -271,15 +271,17 @@ function assetsTab(r) {
     return { a, c, book: last ? last.bookClose : (a.acquired <= r.to ? a.cost : null) };
   });
   const total = rows.reduce((s, x) => s + (x.c ? x.c.amount : 0), 0);
+  const small = smallAssetTotal(list, r);
   return `
-    <div class="sumbar"><span>${list.length}件</span><span>今期の減価償却費 <b>${yen(total)}</b></span><span class="muted">期末に「減価償却費 ／ 資産」の仕訳を自動で作ります${sole ? '（事業で使う割合を超える分は事業主貸）' : ''}</span></div>
+    ${small > SMALL_LIMIT ? `<div class="note warn">${ic('warn')}<span>この期に「少額減価償却資産」で一度に経費にした合計が ${yen(small)} です。特例は 1 年 300万円までなので、こえた分は定額法・定率法などに直してください。</span></div>` : ''}
+    <div class="sumbar"><span>${list.length}件</span><span>今期の減価償却費 <b>${yen(total)}</b></span>${small ? `<span>少額の特例 ${yen(small)} / 300万円</span>` : ''}<span class="muted">期末に「減価償却費 ／ 資産」の仕訳を自動で作ります${sole ? '（事業で使う割合を超える分は事業主貸）' : ''}</span></div>
     <div class="table-wrap">${list.length ? `<table class="grid ledger">
       <thead><tr><th>資産</th><th class="c-date">取得日</th><th class="c-amt num">取得価額</th><th>償却の方法</th>${sole ? '<th class="num">事業割合</th>' : ''}<th class="c-amt num">今期の償却</th><th class="c-amt num">期末の残り</th><th class="c-act"></th></tr></thead>
       <tbody>${rows.map(({ a, c, book }) => `<tr data-act="assetEdit" data-id="${a.id}">
         <td class="c-payee"><b>${esc(a.name || '（名前なし）')}</b><small>${esc(a.account || '工具器具備品')}</small></td>
         <td class="c-date"><b>${md(a.acquired)}</b><small>${a.acquired.slice(0, 4)}</small></td>
         <td class="c-amt num">${yen(a.cost)}</td>
-        <td>${a.method === 'small' ? '少額（一度に経費）' : a.method === 'lump3' ? '一括償却（3年）' : `定額法 ${a.life}年（${straightRate(a.life).toFixed(3)}）`}</td>
+        <td>${a.method === 'small' ? '少額（一度に経費）' : a.method === 'lump3' ? '一括償却（3年）' : `${a.method === 'declining' ? '定率法' : '定額法'} ${a.life}年（${rateOf(a)}）`}</td>
         ${sole ? `<td class="num">${a.ratio == null ? 100 : a.ratio}%</td>` : ''}
         <td class="c-amt num"><b>${c ? yen(c.amount) : '—'}</b>${c && c.months < 12 ? `<small>${c.months}か月分</small>` : ''}</td>
         <td class="c-amt num">${book == null ? '—' : yen(book)}</td>
@@ -289,7 +291,7 @@ function assetsTab(r) {
 }
 async function editAsset(a0) {
   const b = bk(); const sole = b.mode === 'sole';
-  const a = a0 ? { ...a0 } : { id: newId('fa'), name: '', account: '工具器具備品', acquired: today(), cost: null, method: 'straight', life: 5, ratio: 100, paidFrom: '普通預金' };
+  const a = a0 ? { ...a0 } : { id: newId('fa'), name: '', account: '工具器具備品', acquired: today(), cost: null, method: b.mode === 'corp' ? 'declining' : 'straight', life: 5, ratio: 100, paidFrom: '普通預金' };
   const payFrom = [['', '支払の仕訳を作らない（期首残高に入れた）'], ['普通預金', '普通預金から払った'], ['現金', '現金で払った'], ['未払金', 'カード・後払い（未払金）'], ['借入金', 'ローン（借入金）'], ...(sole ? [['事業主借', '個人のお金で払った（事業主借）']] : [])];
   const r = await modal({
     title: a0 ? '固定資産を直す' : '固定資産を登録する', width: 680,
@@ -314,10 +316,16 @@ async function editAsset(a0) {
       };
       const upd = () => {
         read();
-        $('#aLifeW', el).hidden = a.method !== 'straight'; $('#aHints', el).hidden = a.method !== 'straight';
+        const lifeUsed = a.method === 'straight' || a.method === 'declining';
+        $('#aLifeW', el).hidden = !lifeUsed; $('#aHints', el).hidden = !lifeUsed;
         const n = $('#aNote', el); let msg = '';
+        const fy = X.fyOf(a.acquired || today()); const smallSum = smallAssetTotal(bk().fixedAssets || [], fy, a.id) + (a.method === 'small' ? a.cost || 0 : 0);
         if (a.cost && a.cost < 100000) msg = '10万円未満の物は固定資産にしなくても、買った年の「消耗品費」にできます。';
-        else if (a.method === 'small' && a.cost >= 300000) msg = '少額減価償却資産の特例は 30万円未満の物だけです（年間の合計 300万円まで。青色申告・中小企業向け）。';
+        else if (a.method === 'small' && a.cost >= 300000) msg = '少額減価償却資産の特例は 30万円未満の物だけです（青色申告の個人・中小企業者）。';
+        else if (a.method === 'small' && smallSum > SMALL_LIMIT) msg = `少額減価償却資産の特例は 1 年に 300万円までです。この期の合計が ${yen(smallSum)} になります。`;
+        else if (a.method === 'declining' && b.mode === 'sole') msg = '個人事業主の車・機械などは、届出をしていなければ定額法です（定率法は「減価償却資産の償却方法の届出書」が必要）。';
+        else if (a.method === 'straight' && b.mode === 'corp' && a.account !== '建物') msg = '法人の車・機械・器具は、届出をしていなければ定率法です。';
+        else if (a.method === 'declining' && +a.life > 20) msg = '定率法の表は耐用年数 20 年までです。';
         else if (a.method === 'lump3' && a.cost >= 200000) msg = '一括償却資産は 20万円未満の物だけです。';
         n.hidden = !msg; n.innerHTML = `${ic('spark')}<span>${msg}</span>`;
         const sch = a.cost && a.acquired ? depreciationSchedule(a, { closeMonth: b.closeMonth }) : [];
@@ -325,7 +333,7 @@ async function editAsset(a0) {
       };
       el.addEventListener('input', upd); el.addEventListener('change', upd); moneyBlur(el);
       el.addEventListener('click', (ev) => { const l = ev.target.closest('[data-life]'); if (l) { $('#aLife', el).value = l.dataset.life; if (!$('#aName', el).value) $('#aName', el).value = l.textContent.replace(/ \d+年$/, ''); upd(); } });
-      guard(el, ['ok'], () => { read(); return !a.name ? '名前を入れてください' : !a.acquired ? '取得日を入れてください' : !a.cost ? '取得価額を入れてください' : ''; });
+      guard(el, ['ok'], () => { read(); const fy = X.fyOf(a.acquired || today()); return !a.name ? '名前を入れてください' : !a.acquired ? '取得日を入れてください' : !a.cost ? '取得価額を入れてください' : a.method === 'small' && a.cost >= 300000 ? '少額減価償却資産の特例は 30万円未満の物だけです' : a.method === 'small' && smallAssetTotal(bk().fixedAssets || [], fy, a.id) + a.cost > SMALL_LIMIT ? '少額減価償却資産の特例は 1 年 300万円までです。ほかの方法を選んでください' : ''; });
       upd();
     },
   });
@@ -444,7 +452,7 @@ export function setupExtra() {
       <p class="hint">固定資産（車など）の割合は［固定資産］で 1 つずつ決めます。</p></section>` : ''}
     <section class="card"><h2>消費税</h2>
       <label class="chk"><input type="checkbox" data-bx="taxable" ${b.taxable ? 'checked' : ''}><span><b>消費税の課税事業者（インボイス登録をしている）</b><small>決算書の画面で、納める消費税の見込みを計算します。経理は税込（税込経理）です。</small></span></label>
-      ${b.taxable ? `<div class="choice three">${Object.entries(TAX_METHODS).map(([k, v]) => `<label class="choice-card ${b.taxMethod === k ? 'on' : ''}"><input type="radio" name="taxm" value="${k}" ${b.taxMethod === k ? 'checked' : ''}><span><b>${v}</b><small>${{ general: '売上の消費税 − 経費の消費税（インボイスのない経費は控除が減ります）', simple: '売上の消費税 × (1 − みなし仕入率)。前々年の売上が 5,000万円以下で届出をした人', twoTenths: '売上の消費税 × 20%。インボイス登録で免税から課税になった人（2026年9月30日を含む期まで）' }[k]}</small></span></label>`).join('')}</div>
+      ${b.taxable ? `<div class="choice">${Object.entries(TAX_METHODS).map(([k, v]) => `<label class="choice-card ${b.taxMethod === k ? 'on' : ''}"><input type="radio" name="taxm" value="${k}" ${b.taxMethod === k ? 'checked' : ''}><span><b>${v}</b><small>${{ general: '売上の消費税 − 経費の消費税（インボイスのない経費は控除が減ります）', simple: '売上の消費税 × (1 − みなし仕入率)。前々年の売上が 5,000万円以下で届出をした人', twoTenths: '売上の消費税 × 20%。インボイス登録で免税から課税になった人（個人は 2026年分まで、法人は 2026年9月30日を含む期まで）', threeTenths: '売上の消費税 × 30%。2割特例を使っていた個人事業者（令和8年度改正。2027年分から）' }[k]}</small></span></label>`).join('')}</div>
         ${b.taxMethod === 'simple' ? `<label class="fld narrow"><span class="lb">事業の区分（みなし仕入率）</span>${select('', SIMPLE_RATES.map(([v, l]) => [v, `${l} ${v}%`]), b.simpleRate, 'tag', 'data-b="simpleRate"')}</label>` : ''}` : ''}
     </section>
     <section class="card"><h2>請求書の発行元</h2><p class="muted">請求書の右上にのります。登録番号を入れると、適格請求書（インボイス）の形になります。</p>
@@ -468,7 +476,7 @@ export function taxCard(from, to) {
       ${t.method === 'general' ? `<div><span>経費の消費税（控除）</span><b>${yen(t.buyTax)}</b></div>` : ''}
       <div class="net"><span>納める見込み</span><b>${yen(t.payable)}</b></div></div>
     ${t.method === 'general' && t.noInvCount ? `<p class="hint warn">${ic('warn')}登録番号のない経費 ${t.noInvCount}件は控除が減っています（約 ${yen(t.noInvoiceCut)}）</p>` : ''}
-    <table class="mini-table"><tbody>${Object.entries(TAX_METHODS).map(([k, v]) => `<tr class="${k === t.method ? 'on' : ''}"><td>${v}</td><td class="num">${yen(t.byMethod[k])}</td></tr>`).join('')}</tbody></table>
+    <table class="mini-table"><tbody>${Object.keys(t.byMethod).map((k) => `<tr class="${k === t.method ? 'on' : ''}"><td>${TAX_METHODS[k]}</td><td class="num">${yen(t.byMethod[k])}</td></tr>`).join('')}</tbody></table>
     ${better ? `<p class="hint">${ic('spark')}${TAX_METHODS[t.best]}の方が ${yen(t.byMethod[t.method] - t.byMethod[t.best])} 少なくなります（選べる条件は税理士に確かめてください）</p>` : ''}
   </section>`;
 }
@@ -484,7 +492,7 @@ function blueExtra(s, from, to) {
   for (const a of b.fixedAssets || []) {
     const c = depreciationSchedule(a, { closeMonth: b.closeMonth }).find((x) => inR(x.fyEnd, r)); if (!c) continue;
     const ratio = a.ratio == null ? 100 : +a.ratio;
-    assets.push({ name: a.name, acquired: a.acquired, cost: a.cost, life: a.method === 'straight' ? a.life : a.method === 'lump3' ? 3 : '-', rate: a.method === 'straight' ? straightRate(a.life).toFixed(3) : a.method === 'lump3' ? '1/3' : '一括', months: c.months, amount: c.amount, ratio, biz: Math.round((c.amount * ratio) / 100), bookClose: c.bookClose });
+    assets.push({ name: a.name, acquired: a.acquired, cost: a.cost, life: a.method === 'straight' || a.method === 'declining' ? a.life : a.method === 'lump3' ? 3 : '-', rate: rateOf(a), months: c.months, amount: c.amount, ratio, biz: Math.round((c.amount * ratio) / 100), bookClose: c.bookClose });
   }
   const js = X.allJournals().filter((j) => inR(j.date, r));
   const rents = new Map(); let wages = 0; const cogs = {};
@@ -498,17 +506,17 @@ function blueExtra(s, from, to) {
 export const FIN_CSV_ITEMS = [
   { divider: true },
   { label: '弥生会計 形式（仕訳日記帳）', icon: 'download', value: 'yayoi' },
-  { label: 'マネーフォワード クラウド 形式', icon: 'download', value: 'mf' },
-  { label: 'freee 形式（取引）', icon: 'download', value: 'freee' },
+  { label: 'マネーフォワード クラウド 形式（仕訳帳）', icon: 'download', value: 'mf' },
+  { label: 'freee 用（弥生会計仕訳インポート）', icon: 'download', value: 'freee' },
   { divider: true },
   { label: '支払調書の一覧（外注先）', icon: 'pen', value: 'payout' },
 ];
 export function finCsv(v, from, to) {
   const js = X.allJournals().filter((j) => j.date >= from && j.date <= to);
-  const mode = bk().mode;
-  if (v === 'yayoi') { csvOut(toYayoi(js, mode), `弥生_仕訳_${from}_${to}.csv`, true); toast('弥生会計の「仕訳日記帳のインポート」で読み込めます', { kind: 'ok' }); }
-  if (v === 'mf') { csvOut(toMF(js, mode), `MF_仕訳_${from}_${to}.csv`, true); toast('マネーフォワード クラウド会計の「仕訳帳 → インポート」で読み込めます', { kind: 'ok' }); }
-  if (v === 'freee') { const { csv, skipped } = toFreee(js, mode); csvOut(csv, `freee_取引_${from}_${to}.csv`, true); toast(`freee の「取引のインポート」で読み込めます${skipped ? `（振替 ${skipped}件は freee では手で入れてください）` : ''}`, { kind: 'ok', ms: 7000 }); }
+  const b = bk();
+  if (v === 'yayoi') { csvOut(toYayoi(js, b), `弥生_仕訳_${from}_${to}.csv`, true); toast('弥生会計の［ファイル → インポート］で読み込めます（弥生インポート形式）', { kind: 'ok', ms: 7000 }); }
+  if (v === 'mf') { csvOut(toMF(js, b), `MF_仕訳帳_${from}_${to}.csv`, true); toast('マネーフォワード クラウド会計の［仕訳帳 → インポート → 仕訳帳］で読み込めます', { kind: 'ok', ms: 7000 }); }
+  if (v === 'freee') { csvOut(toYayoi(js, b), `freee用_弥生形式_${from}_${to}.csv`, true); toast('freee の［取引 → 振替伝票 → インポート → 弥生会計仕訳インポート］で読み込めます', { kind: 'ok', ms: 8000 }); }
   if (v === 'payout') csvOut(toPayoutCSV(payoutSummary({ ledger: S.ledger, from, to }), from, to), `支払調書_${from}_${to}.csv`);
 }
 

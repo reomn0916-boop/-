@@ -7,14 +7,16 @@ const ymOf = (d) => (d || '').slice(0, 7);
 // ---- 消費税 -------------------------------------------------------------------
 // 税込の記録から、預かった税・払った税を逆算して納める税額の目安を出す（国税＋地方税の合計）
 const NONTAX = new Set(['租税公課', '給料賃金', '保険料', '支払利息', '減価償却費', '受取利息', '事業主貸', '事業主借']);
-export const TAX_METHODS = { general: '一般課税（原則）', simple: '簡易課税', twoTenths: '2割特例' };
+export const TAX_METHODS = { general: '一般課税（原則）', simple: '簡易課税', twoTenths: '2割特例', threeTenths: '3割特例' };
 export const SIMPLE_RATES = [[90, '第1種（卸売業）'], [80, '第2種（小売業）'], [70, '第3種（建設業・製造業など）'], [60, '第4種（その他）'], [50, '第5種（サービス業など）'], [40, '第6種（不動産業）']];
 
-// 適格請求書がない仕入れの控除の割合（経過措置）
+// 適格請求書がない仕入れの控除の割合（経過措置。令和8年度改正で 2026年10月から 70%）
 export function noInvoiceRatio(date) {
   if (date < '2023-10-01') return 1;
   if (date < '2026-10-01') return 0.8;
-  if (date < '2029-10-01') return 0.5;
+  if (date < '2028-10-01') return 0.7;
+  if (date < '2030-10-01') return 0.5;
+  if (date < '2031-10-01') return 0.3;
   return 0;
 }
 const taxIn = (amount, rate) => (amount * rate) / (100 + rate);
@@ -40,11 +42,14 @@ export function consumptionTax({ journals, from, to, settings }) {
       let t;
       if (j.tax10 || j.tax8) t = taxIn(j.tax10 || 0, 10) + taxIn(j.tax8 || 0, 8) + taxIn(Math.max(0, j.amount - (j.tax10 || 0) - (j.tax8 || 0)), 10);
       else t = taxIn(base, 10);
+      if (j.src === 'asset' && j.ratio != null) { t = (t * Math.min(100, Math.max(0, +j.ratio))) / 100; } // 固定資産の私用分は控除しない
       const ratio = j.invoice === false ? noInvoiceRatio(j.date) : 1;
       if (ratio < 1) { noInvoiceCut += t * (1 - ratio); noInvCount++; }
       buyTax += t * ratio; buyBase += base; buyCount++;
     }
   }
+  // 家事按分で事業主貸に振り替えた分は、控除する消費税からも外す
+  for (const j of journals) if (inR(j.date, from, to) && j.src === 'alloc' && accountType(j.credit, b.mode) === 'expense' && !NONTAX.has(j.credit)) { const t = taxIn(j.amount, 10); buyTax -= t; buyBase -= j.amount; }
   // 外注費の源泉分（総額に含まれる消費税）
   for (const j of journals) if (inR(j.date, from, to) && j.src === 'payout' && j.credit === '預り金') { const t = taxIn(j.amount, 10); buyTax += j.invoice === false ? t * noInvoiceRatio(j.date) : t; }
   const salesTotal = sales10 + sales8;
@@ -52,7 +57,11 @@ export function consumptionTax({ journals, from, to, settings }) {
     general: Math.max(0, salesTax - buyTax),
     simple: Math.max(0, salesTax * (1 - (+b.simpleRate || 70) / 100)),
     twoTenths: salesTax * 0.2,
+    threeTenths: salesTax * 0.3,
   };
+  // 2割特例: 個人は令和8年（2026年）分まで、法人は 2026年9月30日を含む期まで。3割特例: 個人の令和9年（2027年）分から
+  const avail = { general: true, simple: true, twoTenths: b.mode === 'sole' ? from <= '2026-12-31' : from <= '2026-09-30', threeTenths: b.mode === 'sole' && to >= '2027-01-01' };
+  for (const k of Object.keys(methods)) if (!avail[k] && k !== b.taxMethod) delete methods[k];
   const pick = methods[b.taxMethod] != null ? b.taxMethod : 'general';
   const floor100 = (n) => Math.floor(n / 100) * 100;
   return {

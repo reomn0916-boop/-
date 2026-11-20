@@ -3,8 +3,16 @@
 // 定額法の償却率（耐用年数省令の値: 1000 分の 1 単位で切り上げ。3 年 → 0.334、6 年 → 0.167）
 export const straightRate = (life) => Math.ceil(1000 / Math.max(1, life)) / 1000;
 
+// 200%定率法（平成24年4月1日以後に取得した資産）: 耐用年数 → [償却率, 改定償却率, 保証率]（減価償却資産の耐用年数等に関する省令 別表第十）
+export const DECLINING = {
+  2: [1.000, 0, 0], 3: [0.667, 1.000, 0.11089], 4: [0.500, 1.000, 0.12499], 5: [0.400, 0.500, 0.10800], 6: [0.333, 0.334, 0.09911],
+  7: [0.286, 0.334, 0.08680], 8: [0.250, 0.334, 0.07909], 9: [0.222, 0.250, 0.07126], 10: [0.200, 0.250, 0.06552], 11: [0.182, 0.200, 0.05992],
+  12: [0.167, 0.200, 0.05566], 13: [0.154, 0.167, 0.05180], 14: [0.143, 0.167, 0.04854], 15: [0.133, 0.143, 0.04565], 16: [0.125, 0.143, 0.04294],
+  17: [0.118, 0.125, 0.04038], 18: [0.111, 0.112, 0.03884], 19: [0.105, 0.112, 0.03693], 20: [0.100, 0.112, 0.03486],
+};
 export const DEP_METHODS = {
   straight: '定額法',
+  declining: '定率法（200%定率法）',
   small: '少額減価償却資産（30万円未満を一度に経費）',
   lump3: '一括償却資産（20万円未満を3年で均等）',
 };
@@ -36,9 +44,9 @@ export function depreciationSchedule(asset, { closeMonth = 12, upto = '2100-12-3
   const life = Math.max(1, Math.round(+asset.life || 1));
   const ends = fyEnds(asset.acquired, upto, closeMonth);
   const rows = [];
-  let book = cost;
+  let book = cost; let revised = 0;
   ends.forEach((end, i) => {
-    if (book <= (method === 'straight' ? 1 : 0)) return;
+    if (book <= (method === 'straight' || method === 'declining' ? 1 : 0)) return;
     let months = 12;
     if (i === 0) {
       const [ay, am] = asset.acquired.split('-').map(Number);
@@ -49,7 +57,14 @@ export function depreciationSchedule(asset, { closeMonth = 12, upto = '2100-12-3
     let amount;
     if (method === 'small') amount = book;
     else if (method === 'lump3') amount = i < 2 ? Math.floor(cost / 3) : book;
-    else {
+    else if (method === 'declining') {
+      const [r, u, g] = DECLINING[Math.min(20, Math.max(2, life))];
+      let base = Math.floor((book * r * months) / 12); // 調整前償却額
+      if (!revised && base < Math.floor(cost * g) && u) revised = book; // 償却保証額を下回ったら、改定取得価額 × 改定償却率に切り替え
+      if (revised) base = Math.floor((revised * u * months) / 12);
+      amount = base;
+      if (book - amount < 1) amount = book - 1;
+    } else {
       amount = Math.floor((cost * straightRate(life) * months) / 12);
       if (book - amount < 1) amount = book - 1; // 最後は 1 円（備忘価額）を残す
     }
@@ -64,4 +79,16 @@ export function withholding(gross) {
   const g = Math.max(0, Math.round(+gross || 0));
   if (g <= 1000000) return Math.floor(g * 0.1021);
   return Math.floor((g - 1000000) * 0.2042 + 102100);
+}
+
+// 少額減価償却資産の特例（30万円未満を一度に経費）: 1 年（その期）の合計は 300万円まで
+export const SMALL_LIMIT = 3000000;
+export function smallAssetTotal(assets = [], { from, to }, exceptId = null) {
+  return assets.filter((a) => a.method === 'small' && a.id !== exceptId && a.acquired >= from && a.acquired <= to).reduce((s, a) => s + Math.round(+a.cost || 0), 0);
+}
+// 減価償却の方法のくわしい名前（決算書の内訳用）
+export function rateOf(a) {
+  if (a.method === 'declining') return (DECLINING[Math.min(20, Math.max(2, +a.life || 2))] || [0])[0].toFixed(3);
+  if (a.method === 'straight' || !a.method) return straightRate(+a.life || 1).toFixed(3);
+  return a.method === 'lump3' ? '1/3' : '一括';
 }

@@ -17,7 +17,7 @@ export async function makeSubmission(rep) {
   const sum = summarize(items);
   const sub = { app: 'rakukeihi', kind: 'submission', id: newId('s'), reportId: rep.id, at: Date.now(), from: rep.from, to: rep.to, advance: rep.advance || 0,
     applicant: { name: S.settings.name, dept: S.settings.dept, company: S.settings.company }, sum: { reimb: sum.reimb, company: sum.company, count: sum.count }, items, images };
-  rep.approval = { status: 'submitted', at: Date.now(), submissionId: sub.id };
+  rep.approval = { status: 'submitted', at: Date.now(), submissionId: sub.id }; rep.updated = Date.now();
   await db.put('reports', rep);
   return new Blob([JSON.stringify(sub)], { type: 'application/json' });
 }
@@ -45,7 +45,7 @@ export async function decide(rec, { status, comment = '', itemComments = {}, by 
 export async function applyDecision(j) {
   const rep = S.reports.find((r) => r.id === j.reportId);
   if (!rep) throw new Error('この端末にない精算の結果です');
-  rep.approval = { status: j.status, comment: j.comment, itemComments: j.itemComments || {}, by: j.by, at: j.at, submissionId: j.submissionId };
+  rep.approval = { status: j.status, comment: j.comment, itemComments: j.itemComments || {}, by: j.by, at: j.at, submissionId: j.submissionId }; rep.updated = Date.now();
   await db.put('reports', rep);
   const changed = [];
   for (const [id, c] of Object.entries(j.itemComments || {})) { const e = S.expenses.find((x) => x.id === id); if (e && c) { e.reviewComment = c; changed.push(e); } }
@@ -91,7 +91,7 @@ export async function syncNow() {
       const f = await fh.getFile();
       if (seen[name] && seen[name] >= f.lastModified) continue;
       const info = await readBackup(f);
-      if (info.added || info.updated || info.ledgerAdded) merged += await mergeBackup(info.j, { takeSettings: false });
+      merged += await mergeBackup(info.j, { takeSettings: false, sync: true });
       seen[name] = f.lastModified;
     }
     await kvSet('syncSeen', seen);

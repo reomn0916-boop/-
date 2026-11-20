@@ -87,7 +87,7 @@ export function journalsFrom({ expenses = [], ledger = [], reports = [], setting
     const route = e.route && (e.route.from || e.route.to) ? `${e.route.from || ''}→${e.route.to || ''}` : '';
     out.push({
       date: e.date, debit: e.category || '雑費', credit: b.payMap[e.method] || '未払金', amount: Math.round(e.amount),
-      memo: [e.payee, route, e.memo].filter(Boolean).join(' '), src: 'expense', ref: e.id, site: e.site || '', invoice: !!e.invoiceNo, tax10: e.tax10, tax8: e.tax8,
+      memo: [e.payee, route, e.memo].filter(Boolean).join(' '), src: 'expense', ref: e.id, site: e.site || '', invoice: !!e.invoiceNo || e.kind === 'transit' || e.kind === 'car' || e.noInvoiceOk === true, tax10: e.tax10, tax8: e.tax8,
     });
   }
   for (const l of ledger) {
@@ -107,8 +107,8 @@ export function journalsFrom({ expenses = [], ledger = [], reports = [], setting
   for (const a of b.fixedAssets || []) {
     if (!a.cost || !a.acquired) continue;
     const acc = a.account || '工具器具備品';
-    if (a.paidFrom) out.push({ date: a.acquired, debit: acc, credit: a.paidFrom, amount: Math.round(a.cost), memo: `${a.name || '固定資産'} 取得`, src: 'asset', ref: a.id, invoice: true });
     const ratio = b.mode === 'sole' ? Math.min(100, Math.max(0, a.ratio == null ? 100 : +a.ratio)) : 100;
+    if (a.paidFrom) out.push({ date: a.acquired, debit: acc, credit: a.paidFrom, amount: Math.round(a.cost), memo: `${a.name || '固定資産'} 取得`, src: 'asset', ref: a.id, invoice: a.invoice !== false, ratio });
     for (const r of depreciationSchedule(a, { closeMonth: b.closeMonth, upto: today })) {
       if (!r.amount) continue;
       const biz = Math.round((r.amount * ratio) / 100);

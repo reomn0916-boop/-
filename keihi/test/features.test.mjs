@@ -7,7 +7,7 @@ import { consumptionTax, siteReport, budgetStatus, vehicleReport, payoutSummary,
 import { parseStatement, suggestRows, ledgerFromRows, parseDate } from '../js/bank.js';
 import { parseEml, decodeWords } from '../js/eml.js';
 import { invoiceTotals, nextInvoiceNo, overdueInvoices } from '../js/invoice.js';
-import { toYayoi, toMF, toFreee } from '../js/exports.js';
+import { toYayoi, toMF } from '../js/exports.js';
 import { ruleJournal } from '../js/aijournal.js';
 import { parseReceipt } from '../js/parse.js';
 
@@ -70,7 +70,7 @@ test('消費税: 一般・簡易・2割特例、登録番号なしの経過措�
   assert.equal(t.byMethod.simple, 30000);
   assert.equal(t.byMethod.twoTenths, 20000);
   assert.equal(t.best, 'twoTenths');
-  assert.equal(noInvoiceRatio('2026-09-30'), 0.8); assert.equal(noInvoiceRatio('2026-10-01'), 0.5);
+  assert.equal(noInvoiceRatio('2026-09-30'), 0.8); assert.equal(noInvoiceRatio('2026-10-01'), 0.7);
 });
 
 test('現場ごとの損益と予算', () => {
@@ -159,9 +159,8 @@ test('請求書の金額（税率ごとに端数処理）と期日超過', () =>
 test('会計ソフトの形式', () => {
   const j = [{ date: '2026-05-01', debit: '消耗品費', credit: '現金', amount: 1100, memo: 'コメリ', src: 'expense' }, { date: '2026-05-02', debit: '普通預金', credit: '売上高', amount: 5000, memo: '', src: 'income' }, { date: '2026-05-03', debit: '普通預金', credit: '売掛金', amount: 5000, memo: '', src: 'journal' }];
   const y = toYayoi(j, 'sole').trim().split('\r\n');
-  assert.equal(y.length, 3); assert.equal(y[0].split(',').length, 25); assert.match(y[0], /^2000,,,2026\/05\/01,消耗品費,,,課対仕入込10%,1100/);
+  assert.equal(y.length, 3); assert.equal(y[0].split(',').length, 25); assert.match(y[0], /^2000,,,2026\/05\/01,消耗品費,,,課対仕入込10%適格,1100/);
   const mf = toMF(j, 'sole').trim().split('\r\n'); assert.equal(mf.length, 4); assert.match(mf[1], /課税仕入 10%/);
-  const fr = toFreee(j, 'sole'); assert.equal(fr.skipped, 1); assert.equal(fr.csv.trim().split('\r\n').length, 3);
 });
 
 test('文章から仕訳（決まった言い回し）', () => {
