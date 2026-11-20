@@ -2501,7 +2501,7 @@ $('#emptyState').addEventListener('click', (ev) => {
 });
 updateEmpty();
 
-const APP_VERSION = 'v13（SIMA で縮尺合わせ）';
+const APP_VERSION = 'v15（PC の拡大時の線の太さを修正）';
 $('#appVer').textContent = APP_VERSION;
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((r) => r.update()).catch(() => {});

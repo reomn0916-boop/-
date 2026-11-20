@@ -36,6 +36,7 @@ const prefs = {
   ortho: false, grid: false, showLw: true, showNames: true, showSheet: true, dark: false,
   dimUnit: 'mm', inUnit: 'm', textH: 3.5, cur: { layer: '0', color: '', ltype: '', lw: 0 },
   prefix: 'P', ptGrp: '位置出し', recent: [], tab: '作図', term: 'tick', hatch: { pattern: 'line', pitch: 2, ang: 45 },
+  wheel: 'auto', // ホイール・2本指: auto（マウスは拡大縮小、タッチパッドは移動）／ zoom ／ pan
 };
 const tracker = makeTracker();
 let sel = new Set();
@@ -134,7 +135,7 @@ function commit(msg) {
   for (const id of [...sel]) if (!entById(id)) sel.delete(id);
   setDirty(true); autosave();
   baseDirty = true; draw();
-  renderProps(); renderLayers(); renderNames();
+  renderProps(); renderLayers(); renderNames(); updateWelcome();
   if (msg) toast(msg);
 }
 
@@ -280,8 +281,29 @@ function sheet() {
 }
 const scaleN = () => sheet().scaleN;
 const pxmm = () => (view.s * scaleN()) / 1000;
+/** 線の太さ用の倍率（用紙 1 mm あたりの画面 px）。等倍（100%）より拡大しても線は太くしない */
+const PX_MM_100 = 96 / 25.4;
+const lwPxmm = () => Math.min(pxmm(), PX_MM_100);
 const mmToM = (mm) => (mm * scaleN()) / 1000;
+// 表示の履歴（前の表示に戻る）。続けて動かしている間は1回分にまとめる
+const viewHist = [];
+let viewMarkAt = 0;
+function markView(force = false) {
+  const now = Date.now();
+  if (force || now - viewMarkAt > 700) {
+    const l = viewHist[viewHist.length - 1];
+    if (!l || l.x !== view.x || l.y !== view.y || l.s !== view.s) { viewHist.push({ x: view.x, y: view.y, s: view.s }); if (viewHist.length > 40) viewHist.shift(); }
+  }
+  viewMarkAt = force ? 0 : now; // 全体表示などは1回の操作として区切る
+}
+function zoomPrev() {
+  const v = viewHist.pop();
+  if (!v) { toast('これより前の表示はありません'); return; }
+  Object.assign(view, v); viewMarkAt = 0;
+  baseDirty = true; draw(); autosave();
+}
 function fitBox(x0, y0, x1, y1, pad = 40) {
+  markView(true);
   view.x = (x0 + x1) / 2; view.y = (y0 + y1) / 2;
   view.s = clamp(Math.min((W - 2 * pad) / Math.max(y1 - y0, 1e-3), (H - 2 * pad) / Math.max(x1 - x0, 1e-3)), 1e-4, 1e6);
   baseDirty = true; draw(); autosave();
@@ -305,6 +327,7 @@ function zoomPaper() {
   fitBox(Math.min(...cs.map((p) => p.x)), Math.min(...cs.map((p) => p.y)), Math.max(...cs.map((p) => p.x)), Math.max(...cs.map((p) => p.y)), 24);
 }
 function zoomAt(sx, sy, f) {
+  markView();
   const p = toW(sx, sy);
   view.s = clamp(view.s * f, 1e-4, 1e6);
   view.x = p.x + (sy - H / 2) / view.s; view.y = p.y - (sx - W / 2) / view.s;
@@ -352,27 +375,28 @@ function drawPaper(c) {
   const o = toS(X.toM({ x: 0, y: 0 })), ex = toS(X.toM({ x: 1, y: 0 })), ey = toS(X.toM({ x: 0, y: 1 }));
   c.save();
   c.setTransform(DPR * (ex.x - o.x), DPR * (ex.y - o.y), DPR * (ey.x - o.x), DPR * (ey.y - o.y), DPR * o.x, DPR * o.y);
+  const lwk = Math.min(1, PX_MM_100 / (Math.hypot(ex.x - o.x, ex.y - o.y) || 1)); // 拡大しても枠の線は太くしない
   if (prefs.grid) {
-    c.strokeStyle = prefs.dark ? '#26313d' : '#dbe6f3'; c.lineWidth = 0.15;
+    c.strokeStyle = prefs.dark ? '#26313d' : '#dbe6f3'; c.lineWidth = 0.15 * lwk;
     c.beginPath();
     for (let x = L.vp.x; x <= L.vp.x + L.vp.w + 1e-6; x += 10) { c.moveTo(x, L.vp.y); c.lineTo(x, L.vp.y + L.vp.h); }
     for (let y = L.vp.y; y <= L.vp.y + L.vp.h + 1e-6; y += 10) { c.moveTo(L.vp.x, y); c.lineTo(L.vp.x + L.vp.w, y); }
     c.stroke();
   }
   if (prefs.dark) {
-    c.strokeStyle = '#6b7684'; c.lineWidth = 0.35;
+    c.strokeStyle = '#6b7684'; c.lineWidth = 0.35 * lwk;
     for (const r of [L.frame, L.vp, L.title, L.panel].filter(Boolean)) c.strokeRect(r.x, r.y, r.w, r.h);
   } else {
-    try { drawPrims(c, buildPrims(cfg, L, sheetInfo(cfg, L, X, sheetData()))); } catch { /* 描けない枠は省く */ }
+    try { drawPrims(c, buildPrims(cfg, L, sheetInfo(cfg, L, X, sheetData())), lwk); } catch { /* 描けない枠は省く */ }
   }
   c.restore();
 }
 
 function strokeStyle(c, e, col, isSel) {
-  const st = styleOf(e), k = pxmm();
+  const st = styleOf(e), k = lwPxmm();
   let w = prefs.showLw ? Math.max(1, st.lw * k) : 1;
   if (isSel) w = Math.max(w, 2.2);
-  c.lineWidth = Math.min(w, 40);
+  c.lineWidth = Math.min(w, 8);
   const pat = (LTYPES[st.ltype]?.pat || []).map((v) => v * k);
   c.setLineDash(pat.length && pat.reduce((a, b) => a + b, 0) > 5 ? pat : []);
   c.strokeStyle = col; c.fillStyle = col;
@@ -612,7 +636,7 @@ function paint() {
   }
   if (drag?.kind === 'grip' && drag.ghost) drawEnt(ctx, drag.ghost, false, GHOST);
   // カーソル
-  if (mouse) {
+  if (mouse && !panCursor()) {
     const pointing = wantsPoint() || drag?.kind === 'grip';
     const p = hover && pointing ? toS(hover.p) : mouse;
     const cc = prefs.dark ? 'rgba(230,236,245,.75)' : 'rgba(25,34,45,.7)';
@@ -816,6 +840,8 @@ const link = initLink(K);
 
 function startCmd(id) {
   closeMenu();
+  if (handMode) setHand(false);
+  if (zboxMode) setZbox(false);
   const def = CMDS[id];
   if (!def) { console.warn('unknown command', id); return; }
   if (def.run) { endCmd(); def.run(); return; } // ダイアログなどすぐ終わるもの
@@ -908,7 +934,7 @@ function refreshMB() {
     if (overlay) info += '<div class="mb-result">計算結果を表示中 <button class="btn" data-mb="clearOverlay">消す</button></div>';
     const rec = prefs.recent.filter((id) => CMDS[id]);
     if (rec.length) info += '<h4>最近のコマンド</h4><div class="recent">' + rec.map((id, i) => `<button data-cmd="${id}">${ICONS[CMDS[id].icon] || ICONS[id] || ''}<span>${esc(CMDS[id].title)}</span>${i === 0 ? '<kbd>Enter</kbd>' : ''}</button>`).join('') + '</div>';
-    info += `<h4>操作のこつ</h4><div class="tips"><kbd>ホイール</kbd><span>拡大・縮小</span><kbd>中ボタン</kbd><span>ドラッグで画面移動</span><kbd>F8</kbd><span>直交モード</span><kbd>Ctrl+Z</kbd><span>元に戻す</span><kbd>Ctrl+K</kbd><span>コマンドを名前で探す</span></div>`;
+    info += `<h4>操作のこつ</h4><div class="tips"><kbd>ホイール</kbd><span>拡大・縮小</span><kbd>右・中ドラッグ</kbd><span>画面移動（Space+ドラッグ・矢印キーも）</span><kbd>Alt+←</kbd><span>前の表示に戻る</span><kbd>F8</kbd><span>直交モード</span><kbd>Ctrl+Z</kbd><span>元に戻す</span><kbd>Ctrl+K</kbd><span>コマンドを名前で探す</span></div>`;
   }
   $('#mbInfo').innerHTML = info;
   updateWelcome();
@@ -1032,9 +1058,28 @@ $('#mbInput').addEventListener('keydown', (ev) => {
 // ============================================================
 // マウス・キーボード
 // ============================================================
-let drag = null; // {kind:'pan'|'win'|'click', sx, sy, vx, vy}
+let drag = null; // {kind:'pan'|'rpan'|'win'|'click'|'grip', sx, sy, vx, vy}
 let lastMid = 0;
-cv.addEventListener('contextmenu', (ev) => { ev.preventDefault(); if (drag?.kind === 'pan') return; openCtxMenu(ev.clientX, ev.clientY); });
+// 画面移動: 中ボタン・右ボタンのドラッグ、Space を押しながら左ドラッグ、手のひらモード、
+// タッチパッドの2本指、矢印キー
+let spaceDown = false, spaceUsed = false, handMode = false, rBusy = false, zboxMode = false;
+const panCursor = () => drag?.kind === 'pan' || (drag?.kind === 'rpan' && drag.moved) || spaceDown || handMode || zboxMode;
+function syncCursor() {
+  cv.style.cursor = drag?.kind === 'pan' || (drag?.kind === 'rpan' && drag.moved) ? 'grabbing' : spaceDown || handMode ? 'grab' : zboxMode ? 'zoom-in' : '';
+  $('.navbar [data-nav="hand"]')?.classList.toggle('on', handMode);
+  $('.navbar [data-nav="zbox"]')?.classList.toggle('on', zboxMode);
+  draw();
+}
+function setZbox(on) { zboxMode = on; if (on) handMode = false; syncCursor(); if (on) toast('範囲拡大: 拡大したい範囲をドラッグ（クリックでその場所を2倍）。作図は続けられます'); }
+function setHand(on) { handMode = on; if (on) zboxMode = false; syncCursor(); if (on) toast('手のひら: ドラッグで画面移動（もう一度押すか Esc で戻る）'); }
+function startPan(kind, sx, sy) { markView(); drag = { kind, sx, sy, vx: view.x, vy: view.y, moved: kind === 'pan' }; syncCursor(); }
+/** 画面上で (dx, dy) px ずらす（右・下が正） */
+function panBy(dx, dy) { markView(); view.x -= dy / view.s; view.y += dx / view.s; baseDirty = true; draw(); autosave(); }
+cv.addEventListener('contextmenu', (ev) => {
+  ev.preventDefault();
+  if (rBusy) return; // 右ボタンはボタンを離したときに開く（ドラッグなら画面移動）
+  openCtxMenu(ev.clientX, ev.clientY);
+});
 cv.addEventListener('mousedown', (ev) => {
   cv.focus();
   closeMenu();
@@ -1044,21 +1089,26 @@ cv.addEventListener('mousedown', (ev) => {
     const now = Date.now();
     if (now - lastMid < 350) { zoomAll(); lastMid = 0; return; }
     lastMid = now;
-    drag = { kind: 'pan', sx, sy, vx: view.x, vy: view.y };
+    startPan('pan', sx, sy);
     return;
   }
-  if (ev.button === 2) return; // メニューは contextmenu で開く
+  if (ev.button === 2) { rBusy = true; startPan('rpan', sx, sy); return; } // 動かせば画面移動、動かさなければメニュー
   if (ev.button !== 0) return;
+  if (spaceDown || handMode) { ev.preventDefault(); spaceUsed = true; startPan('pan', sx, sy); return; }
+  if (zboxMode) { ev.preventDefault(); drag = { kind: 'zbox', sx, sy }; return; }
   const gp = gripAt(sx, sy);
   if (gp) { drag = { kind: 'grip', sx, sy, e: gp.e, g: gp.g, ghost: null }; hover = { p: { ...gp.g.p }, kind: null }; return; }
   drag = { kind: 'click', sx, sy, shift: ev.shiftKey || ev.ctrlKey };
 });
 window.addEventListener('mousemove', (ev) => {
   const r = cv.getBoundingClientRect(), sx = ev.clientX - r.left, sy = ev.clientY - r.top;
-  if (drag?.kind === 'pan') {
+  if (drag?.kind === 'rpan' && !drag.moved && Math.hypot(sx - drag.sx, sy - drag.sy) > 4) { drag.moved = true; syncCursor(); }
+  if (drag?.kind === 'pan' || (drag?.kind === 'rpan' && drag.moved)) {
     view.x = drag.vx + (sy - drag.sy) / view.s; view.y = drag.vy - (sx - drag.sx) / view.s;
     baseDirty = true; mouse = { x: sx, y: sy }; draw(); return;
   }
+  if (drag?.kind === 'rpan') return;
+  if (drag?.kind === 'zbox') { mouse = { x: sx, y: sy }; winSel = { x0: drag.sx, y0: drag.sy, x1: Math.max(sx, drag.sx + 0.01), y1: sy }; draw(); return; }
   if (ev.target !== cv && !drag) { if (mouse) { mouse = null; draw(); } return; }
   mouse = { x: sx, y: sy };
   if (drag?.kind === 'click' && Math.hypot(sx - drag.sx, sy - drag.sy) > 5 && (!cmd || cmd.mode === 'select')) drag.kind = 'win';
@@ -1079,7 +1129,20 @@ window.addEventListener('mousemove', (ev) => {
 window.addEventListener('mouseup', (ev) => {
   if (!drag) return;
   const d = drag; drag = null;
-  if (d.kind === 'pan') { autosave(); return; }
+  if (d.kind === 'rpan') {
+    setTimeout(() => { rBusy = false; }, 400); // Windows はボタンを離した後に contextmenu が来る
+    syncCursor();
+    if (d.moved) autosave(); else openCtxMenu(ev.clientX, ev.clientY);
+    return;
+  }
+  if (d.kind === 'pan') { syncCursor(); autosave(); return; }
+  if (d.kind === 'zbox') {
+    const r0 = cv.getBoundingClientRect(), ex = ev.clientX - r0.left, ey = ev.clientY - r0.top;
+    winSel = null;
+    if (Math.hypot(ex - d.sx, ey - d.sy) < 6) zoomAt(ex, ey, 2);
+    else { const a = toW(d.sx, d.sy), b = toW(ex, ey); fitBox(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.max(a.x, b.x), Math.max(a.y, b.y), 10); }
+    setZbox(false); return;
+  }
   if (d.kind === 'grip') {
     if (d.ghost && Math.hypot(ev.clientX - cv.getBoundingClientRect().left - d.sx, ev.clientY - cv.getBoundingClientRect().top - d.sy) > 2) {
       begin(); replaceEnt(d.e, { ...d.ghost, uid: d.e.uid }); commit();
@@ -1130,13 +1193,89 @@ cv.addEventListener('dblclick', (ev) => {
   const f = $('#props [data-p="text"], #props [data-p="name"]');
   if (f) { f.focus(); f.select?.(); }
 });
-cv.addEventListener('wheel', (ev) => {
+// タッチ画面（タブレット PC など）: 1本指ドラッグで画面移動、2本指でつまむと拡大縮小。タップはクリック
+let tch = null;
+const tpts = (ev) => { const r = cv.getBoundingClientRect(); return [...ev.touches].map((t) => ({ x: t.clientX - r.left, y: t.clientY - r.top })); };
+cv.addEventListener('touchstart', (ev) => {
+  const P = tpts(ev);
+  if (P.length >= 2) {
+    ev.preventDefault();
+    const c = { x: (P[0].x + P[1].x) / 2, y: (P[0].y + P[1].y) / 2 };
+    markView();
+    tch = { two: true, d: Math.hypot(P[0].x - P[1].x, P[0].y - P[1].y) || 1, s: view.s, w: toW(c.x, c.y) };
+  } else if (P.length === 1) tch = { two: false, sx: P[0].x, sy: P[0].y, vx: view.x, vy: view.y, moved: false };
+}, { passive: false });
+cv.addEventListener('touchmove', (ev) => {
+  if (!tch) return;
+  if (tch.dead) { ev.preventDefault(); return; } // 2本指から1本指に減ったときは指を離すまで何もしない
+  const P = tpts(ev);
+  if (tch.two && P.length >= 2) {
+    ev.preventDefault();
+    const c = { x: (P[0].x + P[1].x) / 2, y: (P[0].y + P[1].y) / 2 }, d = Math.hypot(P[0].x - P[1].x, P[0].y - P[1].y);
+    view.s = clamp(tch.s * d / tch.d, 1e-4, 1e6);
+    view.x = tch.w.x + (c.y - H / 2) / view.s; view.y = tch.w.y - (c.x - W / 2) / view.s;
+    baseDirty = true; draw(); return;
+  }
+  if (!tch.two && P.length === 1) {
+    if (!tch.moved && Math.hypot(P[0].x - tch.sx, P[0].y - tch.sy) > 8) { tch.moved = true; markView(); }
+    if (tch.moved) {
+      ev.preventDefault();
+      view.x = tch.vx + (P[0].y - tch.sy) / view.s; view.y = tch.vy - (P[0].x - tch.sx) / view.s;
+      baseDirty = true; draw();
+    }
+  }
+}, { passive: false });
+cv.addEventListener('touchend', (ev) => {
+  if (!tch) return;
+  if (tch.two || tch.moved) { ev.preventDefault(); autosave(); } // 動かしたときはクリック扱いにしない
+  if (ev.touches.length === 0) tch = null;
+  else if (tch.two) tch = { two: false, moved: true, sx: 0, sy: 0, vx: view.x, vy: view.y, dead: true };
+}, { passive: false });
+// Mac の Safari のピンチ（gesture イベント）
+let gsS = 0;
+cv.addEventListener('gesturestart', (ev) => { ev.preventDefault(); markView(); gsS = view.s; });
+cv.addEventListener('gesturechange', (ev) => {
   ev.preventDefault();
   const r = cv.getBoundingClientRect();
-  zoomAt(ev.clientX - r.left, ev.clientY - r.top, Math.pow(1.0015, -ev.deltaY));
+  zoomAt(ev.clientX - r.left, ev.clientY - r.top, (gsS * ev.scale) / view.s);
+});
+cv.addEventListener('gestureend', (ev) => ev.preventDefault());
+
+// ホイール: マウスは拡大縮小、タッチパッドの2本指は画面移動・ピンチは拡大縮小
+let padSeen = false, padTip = false;
+function isPadWheel(ev) {
+  if (ev.deltaMode !== 0) return false; // 行・ページ単位はマウス
+  if (ev.deltaX !== 0 && !ev.shiftKey) { padSeen = true; return true; } // 斜めに動く＝2本指
+  if (ev.wheelDeltaY && Math.abs(ev.wheelDeltaY) % 120 === 0 && Math.abs(ev.deltaY) >= 50) return false; // マウスの1目盛り
+  return padSeen || Math.abs(ev.deltaY) < 40 || !Number.isInteger(ev.deltaY);
+}
+cv.addEventListener('wheel', (ev) => {
+  ev.preventDefault();
+  const r = cv.getBoundingClientRect(), sx = ev.clientX - r.left, sy = ev.clientY - r.top;
+  const u = ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? H : 1;
+  const dx = ev.deltaX * u, dy = ev.deltaY * u;
+  if (ev.ctrlKey || ev.metaKey) { // ピンチ・Ctrl+ホイール
+    zoomAt(sx, sy, Math.abs(dy) >= 50 ? Math.pow(1.0015, -dy) : Math.exp(-dy * 0.01));
+    return;
+  }
+  const pan = prefs.wheel === 'pan' || (prefs.wheel === 'auto' && isPadWheel(ev));
+  if (pan) {
+    panBy(dx, dy);
+    if (!padTip && prefs.wheel === 'auto') { padTip = true; toast('タッチパッド: 2本指で画面移動、ピンチで拡大・縮小（右クリックメニューの「ホイールの動き」で変更可）', 5000); }
+    return;
+  }
+  if (ev.shiftKey) { panBy(dy || dx, 0); return; } // Shift+ホイール: 横に移動
+  zoomAt(sx, sy, Math.pow(1.0015, -dy));
 }, { passive: false });
 cv.addEventListener('mouseleave', () => { mouse = null; draw(); });
 
+document.addEventListener('keyup', (ev) => {
+  if (ev.key !== ' ' || !spaceDown) return;
+  spaceDown = false;
+  if (!spaceUsed && !drag && !document.querySelector('dialog[open]')) confirmCmd(); // ドラッグしなければ従来どおり確定
+  syncCursor();
+});
+window.addEventListener('blur', () => { if (spaceDown) { spaceDown = false; syncCursor(); } });
 function inEditable(t) { return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable); }
 document.addEventListener('keydown', (ev) => {
   if (document.querySelector('dialog[open]') || !$('#palette').hidden) return;
@@ -1153,8 +1292,17 @@ document.addEventListener('keydown', (ev) => {
   if (k === 'F8') { ev.preventDefault(); prefs.ortho = !prefs.ortho; savePrefs(); renderSnapBar(); toast(`直交モード ${prefs.ortho ? 'ON' : 'OFF'}`); return; }
   if (k === 'F3') { ev.preventDefault(); const on = !Object.values(prefs.snap).some(Boolean); for (const q of Object.keys(prefs.snap)) prefs.snap[q] = on && ['pt', 'end', 'mid', 'inter', 'cen'].includes(q); savePrefs(); renderSnapBar(); toast(`点スナップ ${on ? 'ON' : 'OFF'}`); return; }
   if (inEditable(ev.target)) return;
-  if (k === 'Escape') { ev.preventDefault(); if (!$('#ctxmenu').hidden) closeMenu(); else if (cmd) endCmd(); else { overlay = null; setSel([]); } return; }
-  if (k === 'Enter' || k === ' ') { ev.preventDefault(); confirmCmd(); return; }
+  if (k === 'Escape') { ev.preventDefault(); if (!$('#ctxmenu').hidden) closeMenu(); else if (handMode) setHand(false); else if (zboxMode) setZbox(false); else if (cmd) endCmd(); else { overlay = null; setSel([]); } return; }
+  if (k === ' ') { ev.preventDefault(); if (!ev.repeat) { spaceDown = true; spaceUsed = false; syncCursor(); } return; } // 押しながらドラッグで画面移動、離すと確定
+  if (k === 'Enter') { ev.preventDefault(); confirmCmd(); return; }
+  if (ev.altKey && k === 'ArrowLeft') { ev.preventDefault(); zoomPrev(); return; }
+  if (k.startsWith('Arrow')) {
+    ev.preventDefault();
+    const st = (ev.shiftKey ? 0.5 : 0.15) * Math.min(W, H);
+    const [dx, dy] = { ArrowLeft: [-st, 0], ArrowRight: [st, 0], ArrowUp: [0, -st], ArrowDown: [0, st] }[k];
+    panBy(dx, dy); return;
+  }
+  if (k === 'PageUp' || k === 'PageDown') { ev.preventDefault(); zoomAt(W / 2, H / 2, k === 'PageUp' ? 1.4 : 1 / 1.4); return; }
   if (k === 'Delete') { ev.preventDefault(); deleteSel(); return; }
   if (k === 'Backspace') { ev.preventDefault(); if (cmd?.onBack) { cmd.onBack(); afterCmd(); } return; }
   if (k === 'Home') { ev.preventDefault(); zoomAll(); return; }
@@ -1214,8 +1362,13 @@ function openCtxMenu(x, y) {
       { label: '貼り付け', key: 'Ctrl+V', icon: 'paste', disabled: !clip, fn: () => startCmd('paste') },
       '-',
       { label: '全体表示', key: 'Home', icon: 'zoomall', fn: zoomAll }, { label: '用紙全体を表示', icon: 'zoompaper', fn: zoomPaper },
+      { label: '前の表示に戻る', key: 'Alt+←', icon: 'zoomprev', disabled: !viewHist.length, fn: zoomPrev },
+      { label: '範囲を指定して拡大', icon: 'zoomwin', fn: () => setZbox(true) },
+      { label: '手のひら（画面移動）', icon: 'hand', fn: () => setHand(true) },
       { label: 'すべて選択', key: 'Ctrl+A', icon: 'selall', fn: () => setSel(visibleEnts()) },
       '-', ...snapItems(),
+      '-', { head: 'ホイール・タッチパッド2本指の動き' },
+      ...[['auto', '自動（マウスは拡大縮小・タッチパッドは移動）'], ['zoom', '拡大・縮小'], ['pan', '画面移動（拡大縮小は Ctrl+ホイール・ピンチ）']].map(([v, l]) => ({ label: l, checked: prefs.wheel === v, fn: () => { prefs.wheel = v; savePrefs(); } })),
     ];
   }
   openMenu(x, y, items);
@@ -2103,7 +2256,7 @@ function showHelp() {
       <h4>マウス</h4><ul>
       <li>左クリック: 点の指示・図形の選択。ドラッグで範囲選択（左→右: 囲んだ図形／右→左: かかった図形）</li>
       <li>右クリック: メニュー（確定・1つ戻る・終了・スナップ切替）</li>
-      <li>ホイール: 拡大縮小 ／ 中ボタンドラッグ: 画面移動 ／ 中ボタン2回: 全体表示</li></ul>
+      <li>ホイール: 拡大縮小 ／ 右ボタン・中ボタンのドラッグ、Space を押しながらドラッグ、矢印キー: 画面移動（Shift+矢印で大きく）／ PageUp・PageDown: 拡大縮小 ／ 中ボタン2回: 全体表示</li><li>タッチパッド: 2本指で画面移動、ピンチで拡大縮小（右クリックメニュー「ホイールの動き」で切り替え）／ 右下のボタン: 範囲拡大（作図中も使える）・前の表示に戻る（Alt+←）・手のひら（左ドラッグで画面移動）／ タッチ画面: 1本指で移動、2本指で拡大縮小</li></ul>
       <h4>点の指示</h4><ul>
       <li>カーソルが端点・中点・交点・中心・点に近づくと吸着します（下のステータスバーで切替）。</li>
       <li>キーボードで入力: <code>X,Y</code>（絶対座標）、<code>@ΔX,ΔY</code>（前の点から）、<code>@距離&lt;方向角</code>、<code>長さ</code>（カーソルの方向へ）、<code>点名</code></li>
@@ -2160,6 +2313,9 @@ const NAV = {
   all: [ICONS.zoomall, () => zoomAll()], paper: [ICONS.zoompaper, () => zoomPaper()],
   in: ['<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>', () => zoomAt(W / 2, H / 2, 1.4)],
   out: ['<svg viewBox="0 0 24 24"><path d="M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>', () => zoomAt(W / 2, H / 2, 1 / 1.4)],
+  hand: [ICONS.hand, () => setHand(!handMode)],
+  zbox: [ICONS.zoomwin, () => setZbox(!zboxMode)],
+  prev: [ICONS.zoomprev, () => zoomPrev()],
 };
 $$('.navbar button').forEach((b) => { b.innerHTML = NAV[b.dataset.nav][0]; b.addEventListener('click', () => { NAV[b.dataset.nav][1](); cv.focus(); }); });
 // 表示倍率（用紙に対して。96dpi 換算）
