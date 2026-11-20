@@ -23,6 +23,7 @@ export const ICONS = {
   selattr: S('<rect x="3" y="3" width="18" height="18" stroke-dasharray="3 2"/><path d="M7 8h10M7 12h6M7 16h8"/>'),
   selnone: S('<rect x="3" y="3" width="18" height="18" stroke-dasharray="3 2"/><path d="M8 8l8 8M16 8l-8 8"/>'),
   zoomall: S('<path d="M3 8V3h5M16 3h5v5M21 16v5h-5M8 21H3v-5"/><rect x="8" y="8" width="8" height="8"/>'),
+  zoomprev: S('<path d="M9 6L4 11l5 5"/><path d="M4 11h10a6 6 0 0 1 0 12h-3" transform="translate(0 -3)"/>'),
   hand: S('<path d="M8 13V5.5a1.5 1.5 0 0 1 3 0V12"/><path d="M11 11V4a1.5 1.5 0 0 1 3 0v7"/><path d="M14 11V5.5a1.5 1.5 0 0 1 3 0V13"/><path d="M17 9.5a1.5 1.5 0 0 1 3 0V15a6 6 0 0 1-6 6h-1.5a6 6 0 0 1-4.6-2.2L4.6 14.9a1.5 1.5 0 0 1 2.3-1.9L8 14.2"/>'),
   zoompaper: S('<rect x="4" y="5" width="16" height="12"/><path d="M14 12h4v3h-4z"/><path d="M8 21h8"/>'),
   zoomin: S('<circle cx="10" cy="10" r="6"/><path d="M15 15l6 6M7 10h6M10 7v6"/>'),

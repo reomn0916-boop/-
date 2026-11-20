@@ -192,9 +192,9 @@ export function buildPrims(cfg, L, info) {
 // ------------------------------------------------------------
 // Canvas への描画
 // ------------------------------------------------------------
-export function symbol(ctx, g, p, k = 1) {
+export function symbol(ctx, g, p, k = 1, lwk = 1) {
   ctx.save();
-  ctx.lineWidth = 0.2;
+  ctx.lineWidth = 0.2 * lwk;
   ctx.strokeStyle = GRP_COLOR[g] || '#000'; ctx.fillStyle = ctx.strokeStyle;
   const r = 1.1 * k;
   ctx.beginPath();
@@ -227,20 +227,21 @@ export function ptext(ctx, t, x, y, size, { align = 'left', bold = false, mono =
   ctx.restore();
 }
 
-export function drawPrims(ctx, prims) {
+/** lwk: 線の太さの倍率（画面で拡大したとき線が太くなりすぎないように縮める） */
+export function drawPrims(ctx, prims, lwk = 1) {
   for (const q of prims) {
     ctx.strokeStyle = '#000'; ctx.fillStyle = '#000';
     switch (q.t) {
-      case 'line': ctx.lineWidth = q.w; ctx.beginPath(); ctx.moveTo(q.a.x, q.a.y); ctx.lineTo(q.b.x, q.b.y); ctx.stroke(); break;
+      case 'line': ctx.lineWidth = q.w * lwk; ctx.beginPath(); ctx.moveTo(q.a.x, q.a.y); ctx.lineTo(q.b.x, q.b.y); ctx.stroke(); break;
       case 'rect':
         if (q.fill) { ctx.fillStyle = q.fill; ctx.fillRect(q.x, q.y, q.w, q.h); }
-        ctx.lineWidth = q.lw; ctx.strokeRect(q.x, q.y, q.w, q.h); break;
+        ctx.lineWidth = q.lw * lwk; ctx.strokeRect(q.x, q.y, q.w, q.h); break;
       case 'poly':
         ctx.beginPath(); q.pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y))); ctx.closePath();
         if (q.fill) { ctx.fillStyle = q.fill; ctx.fill(); }
-        ctx.lineWidth = q.lw; ctx.stroke(); break;
+        ctx.lineWidth = q.lw * lwk; ctx.stroke(); break;
       case 'text': ptext(ctx, q.text, q.p.x, q.p.y, q.s, q); break;
-      case 'sym': symbol(ctx, q.grp, q.p); break;
+      case 'sym': symbol(ctx, q.grp, q.p, 1, lwk); break;
     }
   }
 }
