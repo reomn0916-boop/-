@@ -1,12 +1,13 @@
 // ラク経費のオフライン対応と、Android の「共有」から画像を受け取る処理
 // ファイルを更新したら VERSION を上げる
-const VERSION = 'rakukeihi-v6';
+const VERSION = 'rakukeihi-v7';
 const FILES = [
   './', './index.html', './app.css', './manifest.webmanifest',
   './js/app.js', './js/db.js', './js/ocr.js', './js/parse.js', './js/report.js', './js/crop.js',
   './js/store.js', './js/pdfin.js', './js/books.js', './js/assets.js', './js/finance.js', './js/bank.js', './js/eml.js', './js/invoice.js',
   './js/exports.js', './js/aijournal.js', './js/share.js',
   './pc/', './pc/index.html', './pc/pc.css', './pc/pc.js', './pc/ui.js', './pc/editor.js', './pc/charts.js', './pc/features.js', './pc/manifest.webmanifest',
+  './guide/', './guide/index.html', './guide/img/m-edit.jpg', './guide/img/m-home-drafts.jpg', './guide/img/m-home-empty.jpg', './guide/img/m-list.jpg', './guide/img/m-report.jpg', './guide/img/m-settings-drive.jpg', './guide/img/m-settings-top.jpg', './guide/img/m-transit.jpg', './guide/img/p-books.jpg', './guide/img/p-detail.jpg', './guide/img/p-home.jpg', './guide/img/p-list.jpg', './guide/img/p-report.jpg', './guide/img/p-review.jpg', './guide/img/p-settings-sync.jpg', './guide/img/p-settings-who.jpg', './guide/img/p-statements.jpg',
   './vendor/anthropic-sdk.mjs', '../lib/gdrive.js', '../config.js',
   './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png',
 ];

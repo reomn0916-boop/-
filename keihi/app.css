@@ -359,3 +359,4 @@ body.modal .toast { bottom: calc(env(safe-area-inset-bottom) + 84px); }
 .drive-st small { color: inherit; opacity: .85; font-size: 12px; word-break: break-all; }
 .tabs [data-tab] { position: relative; }
 .tab-badge { position: absolute; top: 4px; right: calc(50% - 22px); min-width: 16px; height: 16px; border-radius: 99px; background: var(--warn); color: #fff; font: 700 11px/16px system-ui; font-style: normal; text-align: center; }
+.help .guide-link { display: flex; width: 100%; margin: 8px 0 4px; text-decoration: none; }

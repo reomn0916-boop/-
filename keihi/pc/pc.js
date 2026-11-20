@@ -944,6 +944,7 @@ function viewSettings() {
       <section class="card" id="set-keys"><h2>キーボード</h2>${shortcutsHTML()}</section>
 
       <section class="card" id="set-about"><h2>このアプリについて</h2>
+        <p><a class="btn" href="../guide/?from=pc">${ic('search')}使い方ガイドを開く（検索できます）</a></p>
         <p>ラク経費 パソコン版。スマホ版（<a href="../">../</a>）と同じデータを使います（同じブラウザの場合）。インストールすると、エクスプローラーや Finder から画像・PDF を「このアプリで開く」で取り込めます。</p>
         <p class="muted">読み取り結果は必ず確かめてください。電子帳簿保存法への対応は会社の決まりと税理士の指示に従ってください。</p>
       </section>
@@ -1173,6 +1174,7 @@ const COMMANDS = [
   ['ホーム', 'home', 'v:home', '1'], ['確認待ち', 'inbox', 'v:review', '2'], ['経費一覧', 'list', 'v:list', '3'], ['精算書を作る', 'doc', 'v:report', '4'], ['帳簿', 'layers', 'v:books', '5'], ['決算書', 'doc', 'v:statements', '6'], ['よく使う', 'star', 'v:templates', '7'], ['設定', 'sliders', 'v:settings', '8'],
   ['分析', 'chart', 'v:analysis', '7'], ['承認', 'stamp', 'v:approvals', '8'],
   ['請求書を作る', 'doc', 'invNew', ''], ['銀行・カードの明細を取り込む', 'bank', 'bankPick', ''], ['外注費を払った（源泉徴収）', 'pen', 'payoutNew', ''], ['固定資産を登録', 'box', 'assetNew', ''], ['文章で振替を入れる', 'spark', 'textJournal', ''],
+  ['使い方ガイド（検索できる）', 'search', 'guide', ''],
   ['今すぐ同期', 'sync', 'syncNow', ''], ['変更の履歴（電子帳簿保存法）', 'clock', 'histAll', ''],
   ['今月の経費を見る', 'calendar', 'listThis', ''], ['先月の経費を見る', 'calendar', 'listLast', ''], ['未精算の経費を見る', 'doc', 'listUnsettled', ''],
   ['バックアップを保存', 'download', 'backup', ''], ['表示の明るさを切り替える', 'sun', 'theme', ''], ['キーボードの操作', 'keyboard', 'shortcuts', '?'],
@@ -1310,6 +1312,7 @@ const ACTIONS = {
   palette: () => openPalette(),
   theme: () => cycleTheme(),
   shortcuts: () => showShortcuts(),
+  guide: () => { location.href = '../guide/?from=pc'; },
   backup: () => backupNow(),
   goReport: () => { P.rep.mode = 'unsettled'; go('report'); },
   goReviewFromReport: () => go('review'),

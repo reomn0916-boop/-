@@ -927,3 +927,4 @@ textarea#tjText:focus { border-color: var(--accent); outline: none; box-shadow: 
 .alt-sync { margin-top: 14px; } .alt-sync summary { cursor: pointer; font-size: 13px; color: var(--ink-2); font-weight: 650; }
 .alt-sync .btn { margin-top: 8px; }
 .sub-h { font-size: 13px; color: var(--ink-2); margin: 18px 0 0; }
+.guide-btn { text-decoration: none; }
