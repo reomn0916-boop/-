@@ -168,3 +168,9 @@ icons/                アイコン
 - Claude 版：`app/index.html`（説明は [`app/README.md`](app/README.md)）
 - Claude を使わない人も Google ログインで使える Firebase 版：`web/`（準備と公開の手順は [`web/README.md`](web/README.md)）
 - Firebase への公開は、Actions の「Firebase に公開」を手動で実行したときだけ行われます。公開されるのは案件ボードだけです。
+
+---
+
+## スイングボード（`swing/`）
+
+スイングトレード向けに、相場の地合い・材料ニュース・注目銘柄を毎日まとめるアプリも入っています。現場CAD・案件ボードとは独立しています（説明と使い始める手順は [`swing/README.md`](swing/README.md)）。データは Actions の「スイングデータ更新」が平日に自動で更新します。

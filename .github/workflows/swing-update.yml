@@ -1,0 +1,33 @@
+# スイングボード（swing/）のデータを更新する。
+# 平日の朝 7:07（JST）と大引け後 16:37（JST）に自動で動く。手動でも実行できる（Actions タブ → 「スイングデータ更新」 → Run workflow）。
+name: スイングデータ更新
+on:
+  schedule:
+    - cron: "7 22 * * 0-4"   # 月〜金 7:07 JST
+    - cron: "37 7 * * 1-5"   # 月〜金 16:37 JST
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: swing-update
+  cancel-in-progress: false
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 株価とニュースを集めて点数をつける
+        run: python3 swing/scripts/update.py
+      - name: 結果を保存する
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          git add swing/data
+          if git diff --cached --quiet; then echo "変更なし"; exit 0; fi
+          git commit -m "スイングデータ更新 $(TZ=Asia/Tokyo date '+%Y-%m-%d %H:%M')"
+          for i in 1 2 3; do git pull --rebase && git push && exit 0; sleep 5; done
+          exit 1

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#101820">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="スイング">
+  <title>スイングボード</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header id="top">
+    <div class="brand">
+      <b>スイングボード</b>
+      <small id="updated">読み込み中…</small>
+    </div>
+    <button id="btnReload" class="icon" aria-label="最新にする">
+      <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5"/></svg>
+    </button>
+  </header>
+
+  <div id="demoBar" hidden>サンプルデータを表示しています。GitHub Actions の「スイングデータ更新」が動くと本物のデータに変わります。</div>
+
+  <main id="views">
+    <section id="v-home" class="view"></section>
+    <section id="v-stocks" class="view" hidden></section>
+    <section id="v-news" class="view" hidden></section>
+    <section id="v-watch" class="view" hidden></section>
+  </main>
+
+  <nav id="tabs">
+    <button data-tab="home" class="on"><svg viewBox="0 0 24 24"><path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg><span>今日</span></button>
+    <button data-tab="stocks"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16M8 15l4-4 3 3 5-6"/></svg><span>銘柄</span></button>
+    <button data-tab="news"><svg viewBox="0 0 24 24"><path d="M5 4h11v16H6a2 2 0 0 1-2-2V5a1 1 0 0 1 1-1zM16 8h3a1 1 0 0 1 1 1v9a2 2 0 0 1-4 0M7 8h6M7 12h6M7 16h4"/></svg><span>ニュース</span></button>
+    <button data-tab="watch"><svg viewBox="0 0 24 24"><path d="M12 3l2.7 5.6 6.1.8-4.5 4.2 1.1 6-5.4-2.9-5.4 2.9 1.1-6-4.5-4.2 6.1-.8z"/></svg><span>ウォッチ</span></button>
+  </nav>
+
+  <div id="sheet" hidden>
+    <div class="sheet-head">
+      <button id="sheetBack" class="icon" aria-label="戻る"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+      <div class="sheet-title"><b id="sheetName"></b><small id="sheetSub"></small></div>
+      <button id="sheetStar" class="icon" aria-label="ウォッチに追加"><svg viewBox="0 0 24 24"><path d="M12 3l2.7 5.6 6.1.8-4.5 4.2 1.1 6-5.4-2.9-5.4 2.9 1.1-6-4.5-4.2 6.1-.8z"/></svg></button>
+    </div>
+    <div id="sheetBody"></div>
+  </div>
+
+  <div id="toast" role="status"></div>
+  <script src="app.js"></script>
+</body>
+</html>
