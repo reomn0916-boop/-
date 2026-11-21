@@ -56,11 +56,11 @@ def test_unit_prices(conn, pid):
     assert by[5].unit_price == 310 and by[5].how == "単価"
     # コード無し → 未設定
     assert by[2].how == "未設定" and by[2].amount == 0
-    # 施工パッケージ: 1250 × (0.3×42000/40000 + 0.4×20000/21000 + 0.1×4200/4000 + 0.2) = 1251.19 → 1251
-    assert by[6].how == "パッケージ" and by[6].unit_price == 1251 and by[6].amount == 375300
+    # 施工パッケージ: 1250 × (0.3×42000/40000 + 0.4×20000/21000 + 0.1×4200/4000 + 0.2) = 1251.19 → 1252（国交省：有効4桁・切り上げ）
+    assert by[6].how == "パッケージ" and by[6].unit_price == 1252 and by[6].amount == 375600
     # 共通仮設の積上げは直接工事費に入れない
     assert by[7].category == "共通仮設" and by[7].amount == 84000
-    assert res.summary.direct == 1022075 + 375300
+    assert res.summary.direct == 1022075 + 375600
     assert res.summary.common_temp_stacked == 84000
 
 
@@ -113,7 +113,7 @@ def test_pipeline_and_verify(conn, tmp_path):
     importer.import_reference(conn, res["project_id"], ref)
     checks = {c.key: c for c in pipeline.verify(conn, res["project_id"])}
     assert checks["1"].ok
-    assert not checks["直接工事費"].ok and checks["直接工事費"].diff == 397375
+    assert not checks["直接工事費"].ok and checks["直接工事費"].diff == 397675
 
 
 def test_threshold(conn, pid):

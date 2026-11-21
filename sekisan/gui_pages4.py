@@ -473,3 +473,182 @@ class SubmissionPageMixin:
         QMessageBox.information(self, "提出書類", "作りました：\n" + "\n".join(f"・{f.name}" for f in files)
                                 + "\n\n押印・提出のあと、「工事の設定」で「提出済にする（ロック）」を押してください。")
         open_path(out)
+
+
+# ====================================================================== 施工パッケージの標準単価（マスタの画面）
+class SekopkgMixin:
+    def _sekop_card(self):
+        c = Card("施工パッケージの標準単価（国交省）",
+                 "国交省が毎年公表する「施工パッケージ型積算方式 標準単価表」を取り込むと、金抜き設計書の施工パッケージ（施N号）に、"
+                 "条件と構成比の合う標準単価が自動で入ります。労務の東京の基準単価も入ります（機械・材料の東京の単価は、"
+                 "必要なら「単価表」で入れます）。PDFは800ページほどあり、読み込みに数分かかります。")
+        self.sk_status = QLabel()
+        self.sk_status.setObjectName("Muted")
+        c.lay.addWidget(self.sk_status)
+        h = QHBoxLayout()
+        b1 = QPushButton("国交省のサイトから取り込む")
+        b1.setObjectName("Primary")
+        b1.clicked.connect(lambda: self._sekop_import(None))
+        b2 = QPushButton("PDFを選んで取り込む…")
+        b2.clicked.connect(self._sekop_pick)
+        b3 = QPushButton("東京の労務単価（国交省の都道府県別PDF）…")
+        b3.clicked.connect(self._sekop_labor)
+        h.addWidget(b1)
+        h.addWidget(b2)
+        h.addWidget(b3)
+        h.addStretch(1)
+        c.lay.addLayout(h)
+        return c
+
+    def _refresh_sekop(self) -> None:
+        from . import sekopkg
+        if not hasattr(self, "sk_status"):
+            return
+        sekopkg._ensure(self.conn)
+        rows = list(self.conn.execute("SELECT fy, COUNT(*) n, COUNT(DISTINCT no) p, MAX(source) s FROM std_package GROUP BY fy"))
+        if rows:
+            self.sk_status.setText("取り込み済み：" + "　".join(f"{r['fy']}年度 {r['p']}パッケージ・{r['n']:,}行（{r['s']}）" for r in rows))
+        else:
+            self.sk_status.setText("まだ取り込んでいません。")
+
+    def _sekop_pick(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getOpenFileName(self, "施工パッケージ型積算方式 標準単価表（PDF）", "", "PDF (*.pdf)")
+        if path:
+            self._sekop_import(path)
+
+    def _sekop_import(self, path) -> None:
+        from pathlib import Path
+
+        from PySide6.QtWidgets import QApplication, QProgressDialog
+
+        from . import autofetch, sekopkg, settings
+        prog = QProgressDialog("標準単価表を読み取っています…", None, 0, 100, self)
+        prog.setWindowTitle("施工パッケージの標準単価")
+        prog.setWindowModality(Qt.WindowModal)
+        prog.setMinimumDuration(0)
+
+        def step(n, total):
+            prog.setMaximum(total)
+            prog.setValue(n)
+            QApplication.processEvents()
+        try:
+            if path is None:
+                prog.setLabelText("国交省のサイトで最新の標準単価表を探しています…")
+                QApplication.processEvents()
+                found = sekopkg.find_latest()
+                if not found:
+                    QMessageBox.warning(self, "施工パッケージ", "国交省のページで標準単価表が見つかりませんでした。PDFを選んで取り込んでください。")
+                    return
+                url, fy0 = found
+                prog.setLabelText(f"{fy0}年度の標準単価表をダウンロードしています…")
+                QApplication.processEvents()
+                path = sekopkg.download(url, Path(settings.db_path()).parent / "標準単価表")
+            prog.setLabelText("標準単価表を読み取っています…（数分かかります）")
+            fy, rows = sekopkg.parse(path, step)
+        except autofetch.SiteBusy as e:
+            QMessageBox.warning(self, "施工パッケージ", str(e))
+            return
+        except Exception as e:   # noqa: BLE001
+            QMessageBox.warning(self, "施工パッケージ", f"取り込めませんでした：{e}")
+            return
+        finally:
+            prog.close()
+        if not rows:
+            QMessageBox.warning(self, "施工パッケージ", "標準単価の表が読み取れませんでした。国交省の標準単価表のPDFか確かめてください。")
+            return
+        fy = fy or self.m_fy.text().strip() or "R8"
+        if self.guard(sekopkg.import_rows, self.conn, fy, rows, Path(path).name) is None:
+            return
+        res = sekopkg.apply(self.conn)
+        sekopkg.fill_bases(self.conn)
+        hit = sum(ok for *_x, ok in res)
+        miss = [f"・{n}：{r}" for n, r, ok in res if not ok]
+        self._refresh_sekop()
+        self.recalc()
+        QMessageBox.information(self, "施工パッケージ", f"{fy}年度の標準単価表 {len({r.no for r in rows})}パッケージ・{len(rows):,}行を取り込みました。\n"
+                                f"工事の施工パッケージ {hit} 件に標準単価を入れました。"
+                                + ("\n\n当たらなかったもの：\n" + "\n".join(miss[:10]) if miss else ""))
+
+    def _sekop_labor(self) -> None:
+        from pathlib import Path
+
+        from PySide6.QtWidgets import QFileDialog, QInputDialog
+
+        from . import sekopkg
+        path, _ = QFileDialog.getOpenFileName(self, "公共工事設計労務単価（国交省・都道府県別の表）", "", "PDF (*.pdf)")
+        if not path:
+            return
+        fy, ok = QInputDialog.getText(self, "どの年度の標準単価表に使うか",
+                                      "この労務単価を基準にする標準単価表の年度（例：令和7年3月の単価 → R8）", text="R9")
+        if not ok or not fy.strip():
+            return
+        ym, prices = sekopkg.parse_labor_table(path)
+        if not prices:
+            QMessageBox.warning(self, "東京の労務単価", "東京都の行が読み取れませんでした。")
+            return
+        if self.guard(sekopkg.import_labor_base, self.conn, fy.strip(), prices, Path(path).name):
+            n = sekopkg.fill_bases(self.conn)
+            self.recalc()
+            QMessageBox.information(self, "東京の労務単価", f"{ym} の東京都の労務単価 {len(prices)} 職種を {fy.strip()} 年度の基準にしました"
+                                    f"（施工パッケージ {n} 行に入れました）。")
+
+
+# ====================================================================== 公告・入札説明書を読む（スケジュールの画面）
+class KoukokuMixin:
+    def _read_koukoku(self) -> None:
+        from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFileDialog, QTableWidget, QTableWidgetItem, QVBoxLayout
+
+        from . import koukoku
+        from .gui import _style_table
+        if self.pid is None:
+            QMessageBox.information(self, "公告", "先に工事を選んでください。")
+            return
+        path, _ = QFileDialog.getOpenFileName(self, "入札公告・入札説明書", "", "PDF・テキスト・HTML (*.pdf *.txt *.htm *.html)")
+        if not path:
+            return
+        try:
+            nt = koukoku.parse(path)
+        except Exception as e:   # noqa: BLE001
+            QMessageBox.warning(self, "公告", f"読めませんでした：{e}")
+            return
+        if not nt.items:
+            QMessageBox.warning(self, "公告", "条件が見つかりませんでした（文字の入ったPDFか確かめてください。スキャン画像のPDFは読めません）。")
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("公告から読み取った条件")
+        dlg.resize(980, 560)
+        lay = QVBoxLayout(dlg)
+        note = QLabel("チェックを入れた項目を工事に入れます。右の「読んだところ」で、公告の文と合っているか確かめてください。")
+        note.setWordWrap(True)
+        lay.addWidget(note)
+        t = QTableWidget(len(nt.items), 3)
+        t.setHorizontalHeaderLabels(["項目", "読み取った値", "読んだところ"])
+        _style_table(t)
+        applicable = set(koukoku.SCHEDULE_KEYS) | {"工事番号", "工事場所", "予定価格（税抜）", "予定価格（税込）", "最低制限価格", "提出書類"}
+        for i, f in enumerate(nt.items):
+            a = QTableWidgetItem(f.key)
+            if f.key in applicable:
+                a.setFlags(a.flags() | Qt.ItemIsUserCheckable)
+                a.setCheckState(Qt.Checked)
+            else:
+                a.setText(f"{f.key}（参考）")
+            t.setItem(i, 0, a)
+            t.setItem(i, 1, QTableWidgetItem(f.value))
+            t.setItem(i, 2, QTableWidgetItem(f.source))
+        t.resizeColumnsToContents()
+        t.setColumnWidth(2, 460)
+        lay.addWidget(t, 1)
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.button(QDialogButtonBox.Ok).setText("工事に入れる")
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+        if not dlg.exec():
+            return
+        keys = {nt.items[i].key for i in range(t.rowCount())
+                if t.item(i, 0).flags() & Qt.ItemIsUserCheckable and t.item(i, 0).checkState() == Qt.Checked}
+        done = self.guard(koukoku.apply, self.conn, self.pid, nt, keys)
+        if done:
+            self.recalc()
+            QMessageBox.information(self, "公告", "入れました：\n" + "\n".join(f"・{d}" for d in done))

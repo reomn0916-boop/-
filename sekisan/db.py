@@ -428,5 +428,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     _add_column(conn, "project", "site_lon", "REAL")
     _add_column(conn, "project", "published_basis", "TEXT NOT NULL DEFAULT ''")   # 公表額の種類（予定価格など）
     _add_column(conn, "project", "published_amount", "INTEGER NOT NULL DEFAULT 0")
-    _add_column(conn, "project", "submit_info", "TEXT NOT NULL DEFAULT ''")   # 提出書類の宛先・工事番号など（JSON）
+    _add_column(conn, "project", "submit_info", "TEXT NOT NULL DEFAULT ''")
+    _add_column(conn, "package", "conditions", "TEXT NOT NULL DEFAULT ''")   # 金抜き設計書の条件（JSON）
+    _add_column(conn, "package", "std_ratios", "TEXT NOT NULL DEFAULT ''")   # 標準単価表の K・R・Z・S 合計（%）   # 提出書類の宛先・工事番号など（JSON）
     conn.commit()

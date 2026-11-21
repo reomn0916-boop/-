@@ -358,7 +358,10 @@ class Calculator:
 
     # -------------------------------------------------- 施工パッケージ
     def package_price(self, code: str, conds: tuple[str, ...] = ()) -> UnitPrice | None:
-        """積算単価 = 標準単価 × { Σ 構成比 × (当地の単価 ÷ 東京の基準単価) + (1 − Σ 構成比) }"""
+        """国交省の補正式：P′ = P × { Σ(K・R・Z・S) [代表規格の Σ 構成比×(当地÷東京) ÷ Σ 構成比] × 合計構成比 + (100 − 合計) } ÷ 100
+        合計構成比（K・R・Z・S）は標準単価表の値（なければ代表規格の構成比の合計）。東京の基準単価がない規格は補正しない（×1）。
+        積算単価は有効数字4桁、5桁目以降切り上げ。"""
+        import json as _json
         key = ("p", code, conds)
         if key in self._cache:
             return self._cache[key]
@@ -369,36 +372,59 @@ class Calculator:
         p0 = pk["std_price"]
         if not p0:
             self.warnings.append(f"施工パッケージ「{pk['name']}」（{code}）の標準単価が未入力です"
-                                 "（国の施工パッケージ型積算の標準単価表で確かめて「単価表」で入れてください）")
+                                 "（マスタで国交省の標準単価表を取り込むか、「単価表」で入れてください）")
+        group_of = {"機械": "K", "労務": "R", "材料": "Z", "市場単価": "S"}
+        totals = {}
+        if "std_ratios" in pk.keys() and pk["std_ratios"]:
+            totals = {k: v for k, v in _json.loads(pk["std_ratios"]).items() if v}
         lines: list[Line] = []
-        ratio_sum = 0.0
-        factor = 0.0
+        groups: dict[str, list[float]] = {}   # 群 → [Σ 構成比×比, Σ 構成比]
+        no_base = []
         for c in self.conn.execute(
             "SELECT * FROM package_component WHERE fy=? AND package_code=? ORDER BY seq", (self.fy, code)
         ):
+            g = group_of.get(c["kind"], "Z")
+            label = c["src"] if "src" in c.keys() and c["src"] else c["res_code"]
             if not c["res_code"]:
-                self.warnings.append(f"施工パッケージ {code} の「{c['src'] if 'src' in c.keys() else ''}」に単価が当たっていません")
+                self.warnings.append(f"施工パッケージ「{pk['name']}」の「{label}」に単価が当たっていないため、補正していません")
+                groups.setdefault(g, [0.0, 0.0])
+                groups[g][0] += c["ratio"]
+                groups[g][1] += c["ratio"]
                 continue
             local, name, unit, src = self.resource_price(c["kind"], c["res_code"])
-            if not c["base_price"]:
-                self.warnings.append(f"施工パッケージ {code} の {c['res_code']} に東京の基準単価がありません")
-                continue
             adj = self.factor(conds, c["kind"], code)
-            f = c["ratio"] * local * adj / c["base_price"]
-            ratio_sum += c["ratio"]
-            factor += f
-            lines.append(Line(c["kind"], c["res_code"], f"{name}（東京 {c['base_price']:,.0f}）", unit,
-                              c["ratio"], local, p0 * f, src, adj))
-        rest = max(0.0, 1 - ratio_sum)
+            if c["base_price"] and local:
+                rel = local * adj / c["base_price"]
+                shown = f"{name}（東京 {c['base_price']:,.0f}）"
+            elif c["base_price"]:   # 当地の単価がまだない：補正しない（0倍にしない）
+                rel = 1.0
+                no_base.append(f"{name}（当地の単価なし）")
+                shown = f"{name}（当地の単価なし・補正なし）"
+            else:
+                rel = 1.0
+                no_base.append(name)
+                shown = f"{name}（東京の基準単価なし・補正なし）"
+            groups.setdefault(g, [0.0, 0.0])
+            groups[g][0] += c["ratio"] * rel
+            groups[g][1] += c["ratio"]
+            lines.append(Line(c["kind"], c["res_code"], shown, unit, c["ratio"], local, p0 * c["ratio"] * rel, src, adj))
+        factor = 0.0
+        used = 0.0
+        for g, (num, den) in groups.items():
+            total = totals.get(g, den * 100) / 100   # 群の合計構成比
+            factor += (num / den if den else 1.0) * total
+            used += total
+        rest = max(0.0, 1 - used)
         factor += rest
-        lines.append(Line("その他", "", "補正しない分", "", rest, p0, p0 * rest, "設計"))
+        lines.append(Line("その他", "", "補正しない分（代表規格以外を含む）", "", rest, p0, p0 * rest, "設計"))
+        if no_base:
+            self.warnings.append(f"施工パッケージ「{pk['name']}」：{'・'.join(dict.fromkeys(no_base))} は東京の基準単価か当地の単価が"
+                                 "ないため、地域・時期の補正をしていません（目安。「単価表」「不明な単価」で入れると正確になります）")
         whole = self.factor(conds, "全体", code)
-        price = round_sig(p0 * factor * whole, int(self.rules["単価の有効桁数"]), self.rules["単価の端数処理"])
-        up = UnitPrice(pk["code"], f"{pk['name']}（施工パッケージ・標準単価 {p0:,.0f}）", pk["unit"], 1, lines, 0,
+        price = round_sig(p0 * factor * whole, 4, "切上げ") if p0 else 0.0
+        up = UnitPrice(pk["code"], f"{pk['name']}（施工パッケージ・標準単価 {p0:,g}）", pk["unit"], 1, lines, 0,
                        p0 * factor * whole, price, conds)
-        up.incomplete = (not p0 or any(l.source == "不明" for l in lines) or bool(self.conn.execute(
-            "SELECT 1 FROM package_component WHERE fy=? AND package_code=? AND (res_code='' OR base_price=0)",
-            (self.fy, code)).fetchone()))
+        up.incomplete = not p0
         self._cache[key] = up
         return up
 

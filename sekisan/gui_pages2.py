@@ -282,7 +282,15 @@ class PagesMixin2:
         sb = QPushButton("日程を保存")
         sb.setObjectName("Primary")
         sb.clicked.connect(self._save_schedule)
-        dc.lay.addWidget(sb, 0, Qt.AlignRight)
+        kb = QPushButton("公告・入札説明書を読む…")
+        kb.setToolTip("入札公告・入札説明書（PDF・テキスト・HTML）から、日程・工期・予定価格・最低制限価格・工事番号・"
+                      "提出書類を抜き出して入れます")
+        kb.clicked.connect(self._read_koukoku)
+        bh = QHBoxLayout()
+        bh.addWidget(kb)
+        bh.addStretch(1)
+        bh.addWidget(sb)
+        dc.lay.addLayout(bh)
         row.addWidget(dc, 2)
 
         cc = Card("提出物のチェックリスト", "チェックを付けると履歴に残ります。")

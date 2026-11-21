@@ -77,7 +77,7 @@ def test_machine_cost(conn):
 def test_excluded_from_rate_base(conn, pid):
     calc.set_category(conn, item_id(conn, pid, 5), calc.DIRECT_EXCLUDED)  # 区画線 124,000
     s = calc.calculate(conn, pid).summary
-    assert s.direct == 1397375 and s.direct_excluded == 124000
+    assert s.direct == 1397675 and s.direct_excluded == 124000
     base = s.direct - 124000
     assert s.common_temp_rate == round(30 * base ** -0.1, 2)
     assert s.common_temp_rated == int(base * s.common_temp_rate / 100)

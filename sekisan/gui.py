@@ -17,7 +17,7 @@ from . import audit, awards, calc, db, importer, pipeline, settings, theme
 from .gui_pages import AddItemDialog, PagesMixin
 from .gui_pages2 import BookPageMixin, PagesMixin2
 from .gui_pages3 import AutoFetchMixin, TablesPageMixin
-from .gui_pages4 import DisposalPageMixin, ReversePanelMixin, SubmissionPageMixin
+from .gui_pages4 import DisposalPageMixin, KoukokuMixin, ReversePanelMixin, SekopkgMixin, SubmissionPageMixin
 from . import kinnuki
 from . import backup
 from .export import breakdown_rows
@@ -101,7 +101,7 @@ class ItemFilter(QSortFilterProxyModel):
 
 
 class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, AutoFetchMixin, DisposalPageMixin, ReversePanelMixin,
-                 SubmissionPageMixin, QMainWindow):
+                 SubmissionPageMixin, SekopkgMixin, KoukokuMixin, QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("公共工事 積算アプリ")
@@ -268,6 +268,7 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, AutoFe
         if key == "master":
             self._load_master_overview()
             self._refresh_autofetch()
+            self._refresh_sekop()
             self._refresh_orderer_rules()
         if key == "new":
             self._load_recent()
@@ -1202,6 +1203,7 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, AutoFe
         row.addWidget(c2, 2)
         v.addLayout(row)
         v.addWidget(self._autofetch_card())
+        v.addWidget(self._sekop_card())
         v.addWidget(self._public_price_card())
         self.m_banner = Banner()
         v.addWidget(self.m_banner)

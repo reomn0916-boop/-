@@ -557,13 +557,16 @@ def import_doc(conn, path: str | Path, work_type: str | None = None, orderer: st
                     "SELECT price, month, src FROM table_price WHERE table_key=? AND cond_key=? AND region IN (?, '')"
                     " ORDER BY month DESC LIMIT 1", (tkey, _key(*tb.conditions), region)).fetchone()
                 if seen:  # 前に金入り設計書で同じ条件の施工パッケージの単価を見ている → その単価を使う
-                    conn.execute("INSERT OR REPLACE INTO package(fy, code, name, spec, unit, std_price, project_id, note)"
-                                 " VALUES (?,?,?,?,?,?,?,?)", (fy, code, tb.name, tb.spec, tb.unit, seen["price"], pid,
-                                                              f"{FROM_MEMORY}（{seen['src']} {seen['month'][:7]}）"))
+                    conn.execute("INSERT OR REPLACE INTO package(fy, code, name, spec, unit, std_price, project_id, note,"
+                                 " conditions) VALUES (?,?,?,?,?,?,?,?,?)",
+                                 (fy, code, tb.name, tb.spec, tb.unit, seen["price"], pid,
+                                  f"{FROM_MEMORY}（{seen['src']} {seen['month'][:7]}）",
+                                  json.dumps(tb.conditions, ensure_ascii=False)))
                     stats[FROM_MEMORY] += 1
                     continue
-                conn.execute("INSERT OR REPLACE INTO package(fy, code, name, spec, unit, std_price, project_id)"
-                             " VALUES (?,?,?,?,?,?,?)", (fy, code, tb.name, tb.spec, tb.unit, 0, pid))
+                conn.execute("INSERT OR REPLACE INTO package(fy, code, name, spec, unit, std_price, project_id, conditions)"
+                             " VALUES (?,?,?,?,?,?,?,?)", (fy, code, tb.name, tb.spec, tb.unit, 0, pid,
+                                                          json.dumps(tb.conditions, ensure_ascii=False)))
                 seq = 0
                 for ln in tb.lines:
                     if ln.ratio is None:
@@ -633,6 +636,10 @@ def import_doc(conn, path: str | Path, work_type: str | None = None, orderer: st
         audit.log(conn, pid, "金抜き設計書から作成",
                   f"{did} 明細{len(items)}行・単価表{stats['単価表']}・施工パッケージ{stats['施工パッケージ']}"
                   f"（数量を入れる {stats[NEED_QTY]}・単価を当てる {stats[NEED_RES]}）")
+    # 施工パッケージの標準単価（国交省の標準単価表を取り込んであれば）と、労務の東京の基準単価
+    from . import sekopkg
+    stats["標準単価表"] = sum(ok for _n, _r, ok in sekopkg.apply(conn, pid))
+    sekopkg.fill_bases(conn, pid)
     stats["project_id"] = pid
     stats["doc_id"] = did
     return stats
