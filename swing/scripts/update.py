@@ -76,7 +76,17 @@ INDICES = [
 ]
 
 # 適時開示（決算短信・業績修正・自社株買いなど）。やのしん TDnet WEB-API の RSS
-TDNET_FEED = ("適時開示", "https://webapi.yanoshin.jp/webapi/tdnet/list/recent.rss?limit=300")
+TDNET_BASE = "https://webapi.yanoshin.jp/webapi/tdnet/list/"
+
+
+def tdnet_urls() -> list[str]:
+    """直近4日分の開示をまとめて取る URL（だめなら直近の分だけ）。"""
+    today = datetime.now(JST).date()
+    span = f"{(today - timedelta(days=NEWS_KEEP_DAYS)).strftime('%Y%m%d')}-{today.strftime('%Y%m%d')}"
+    return [f"{TDNET_BASE}{span}.rss?limit=3000", f"{TDNET_BASE}recent.rss?limit=1000"]
+
+
+TDNET_FEED = ("適時開示", tdnet_urls()[0])
 
 MARKET_FEEDS = [
     ("NHK 経済", "https://www3.nhk.or.jp/rss/news/cat5.xml"),
@@ -282,7 +292,9 @@ def fetch_rss(url: str, source: str) -> list[dict]:
             item = {"title": title, "link": link, "source": src, "dt": dt}
             if source == "適時開示":
                 # 見出しやリンクに入っている証券コード（4桁。2024年からの英字入りも）
-                item["codes"] = sorted(set(re.findall(r"(?<![0-9A-Za-z])(\d{3}[0-9A-Z])(?![0-9A-Za-z])", title + " " + link)))
+                # 証券コード（4桁、または TDnet の5桁＝4桁＋末尾0。2024年からの英字入りも）
+                text = " ".join([title, link, it.findtext("description") or ""])
+                item["codes"] = sorted(set(re.findall(r"(?<![0-9A-Za-z])(\d{3}[0-9A-Z])0?(?![0-9A-Za-z年月期])", text)))
                 item["official"] = True
             items.append(item)
     return items
@@ -820,13 +832,13 @@ def analyze_news(raw: list[dict], stocks: list[dict]) -> tuple[list[dict], list[
         seen.add(key)
         rest = it["title"]
         codes = [c for c in it.get("codes", []) if c in sector_of]
-        if it.get("official") and not codes:
-            continue  # 対象外の銘柄の適時開示は捨てる
         for a, code in alias:
             if a in rest:
                 if code not in codes:
                     codes.append(code)
                 rest = rest.replace(a, "　" * len(a))
+        if it.get("official") and not codes:
+            continue  # 対象外の銘柄の適時開示は捨てる
         sc, tags = score_text(it["title"])
         themes, up, down = [], set(), set()
         for th in THEMES:
@@ -1171,7 +1183,13 @@ def main() -> int:
             feeds.append(("Google ニュース*", "https://news.google.com/rss/search?q=" + urllib.parse.quote(q) + "&hl=ja&gl=JP&ceid=JP:ja"))
         for (src, _), items in zip(feeds, pmap(lambda f: fetch_rss(f[1], f[0].rstrip("*")), feeds, workers=4)):
             if src == TDNET_FEED[0]:
-                items = [it for it in items if it.get("codes")]
+                if not items:
+                    items = fetch_rss(tdnet_urls()[1], TDNET_FEED[0])
+                names = {s["name"] for s in stocks} | {a for s in stocks for a in s.get("aliases", [])}
+                hit = [it for it in items if set(it.get("codes", [])) & set(by_code) or any(n in it["title"] for n in names)]
+                print(f"適時開示: {len(items)} 件取得・対象銘柄 {len(hit)} 件")
+                for it in items[:2]:
+                    print(f"  例: {it['title'][:60]} / コード {it.get('codes')}")
             elif src.endswith("*"):
                 items = items[:8]  # 銘柄ごとの検索は新しい8件まで
             raw += items

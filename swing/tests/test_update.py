@@ -143,3 +143,29 @@ class LooseRules(unittest.TestCase):
             self.assertTrue(el["checks"][0]["ok"])
             el2 = u.evaluate(ind, i, 0, mkt_up={"up": False, "above": False}, rules=u.RULESETS["loose"])
             self.assertFalse(el2["rule_ok"])
+
+
+class Tdnet(unittest.TestCase):
+    STOCKS = [{"code": "7203", "name": "トヨタ自動車", "aliases": ["トヨタ"], "sector": "自動車"},
+              {"code": "8058", "name": "三菱商事", "sector": "商社"}]
+
+    def _rss(self, items):
+        body = "".join(f"<item><title>{t}</title><link>{l}</link><pubDate>{u.email.utils.format_datetime(u.datetime.now(u.JST))}</pubDate></item>"
+                       for t, l in items)
+        return f'<?xml version="1.0"?><rss><channel>{body}</channel></rss>'.encode()
+
+    def test_five_digit_code_and_name(self):
+        orig = u.http_get
+        u.http_get = lambda url, **k: self._rss([
+            ("[72030] 2026年3月期 第2四半期決算短信", "https://example.com/a.pdf"),       # 5桁コード
+            ("三菱商事 自己株式取得に係る事項の決定に関するお知らせ", "https://example.com/b.pdf"),  # 名前だけ
+            ("[99990] 対象外の会社 お知らせ", "https://example.com/c.pdf"),                 # 対象外
+        ])
+        try:
+            items = u.fetch_rss("x", "適時開示")
+        finally:
+            u.http_get = orig
+        news, _ = u.analyze_news(items, self.STOCKS)
+        got = sorted(c for n in news for c in n["codes"])
+        self.assertEqual(got, ["7203", "8058"])
+        self.assertTrue(all("適時開示" in n["tags"] for n in news))
