@@ -32,14 +32,24 @@ def site(tmp_path):
     other = root / "documents" / "22312"
     other.mkdir(parents=True)
     _nara_pdf(other / "20260317193550.pdf", False, "土木工事設計資材単価表（令和８年９月１日より適用）")
+    # 県のサイトが断ったときに返すページ（拡張子は .pdf でも中身は HTML）
+    (docs / "busy.pdf").write_text(
+        "<html><title>エラー</title><body>このページは表示できません。インシデント ID: 1。</body></html>", encoding="utf-8")
     (root / "list.html").write_text(
         '<html><body><a href="documents/8708/r0811nara_materialprice.pdf">資材単価（令和8年11月）</a>'
         '<a href="/documents/22312/20260317193550.pdf">土木工事設計資材単価表（令和８年９月１日以降適用）（PDF：2MB）</a>'
+        '<a href="documents/8708/r0811nara_materialprice_teiseizengo.pdf">令和8年11月改定 土木工事設計資材単価表訂正前後（PDF：300KB）</a>'
         '<a href="documents/8708/other.pdf">関係のない資料</a><a href="https://example.com/x.pdf">外のサイト</a>'
         '</body></html>', encoding="utf-8")
     class Quiet(http.server.SimpleHTTPRequestHandler):
         def log_message(self, *a, **k):
             pass
+
+        def do_GET(self):
+            if "/slow/" in self.path:
+                self.send_error(408)
+            else:
+                super().do_GET()
     handler = functools.partial(Quiet, directory=str(root))
     srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -62,6 +72,7 @@ HOST = ("127.0.0.1",)
 def no_real_site(monkeypatch):
     # 試験では本物の県のサイトには行かない
     monkeypatch.setattr(autofetch, "DEFAULT_PAGES", ())
+    monkeypatch.setattr(autofetch, "PACE_SECONDS", 0)
 
 
 def test_names_and_fiscal_year():
@@ -81,7 +92,8 @@ def test_names_and_fiscal_year():
 
 def test_scan_page_and_probe(site, conn):
     found = autofetch.scan_page(site + "list.html", HOST)
-    # 関係のない資料・外のサイトは拾わない。日時の数字のファイル名は、リンクの文字（全角）から種類と年月を読む
+    # 関係のない資料・外のサイト・訂正前後（変わったところだけの資料）は拾わない。
+    # 日時の数字のファイル名は、リンクの文字（全角）から種類と年月を読む
     assert [(f.kind, f.yymm) for f in found] == [("資材単価", "0811"), ("資材単価", "0809")]
     hits = autofetch.probe(date(2026, 11, 21), back=4, bases=(site + "documents/8708/",), extra_hosts=HOST)
     assert sorted(f.yymm for f in hits) == ["0808", "0811"]
@@ -92,7 +104,8 @@ def test_scan_page_and_probe(site, conn):
 def test_check_download_import(site, conn, tmp_path):
     found, errors = autofetch.check(conn, [site + "list.html"], today=date(2026, 11, 21),
                                     bases=(site + "documents/8708/",), extra_hosts=HOST)
-    assert not errors and {f.yymm for f in found} == {"0808", "0809", "0811"}
+    # 一覧ページが読めたので、ファイル名の決まりからは確かめない（0808 は一覧にないので見つからない）
+    assert not errors and {f.yymm for f in found} == {"0809", "0811"}
     assert all(f.status == "新しい" for f in found) and autofetch.last_checked(conn)
     new = next(f for f in found if f.yymm == "0811")
     path = autofetch.download(conn, new.url, tmp_path / "dl", HOST)
@@ -103,9 +116,9 @@ def test_check_download_import(site, conn, tmp_path):
                         ).fetchone()[0] == 28000
     assert conn.execute("SELECT COUNT(*) FROM price_revision WHERE fy='R8' AND valid_from='2026-11-01'").fetchone()[0] == 1
     st = {f.yymm: f.status for f in autofetch.list_found(conn)}
-    assert st == {"0811": "取り込み済み", "0809": "新しい", "0808": "新しい"}
+    assert st == {"0811": "取り込み済み", "0809": "新しい"}
     # 古い月を後から取り込んでも、年度の単価は新しい月のまま（単価改定としてだけ残る）
-    old = next(f for f in found if f.yymm == "0808")
+    old = next(f for f in found if f.yymm == "0809")
     r2 = autofetch.import_file(conn, autofetch.download(conn, old.url, tmp_path / "dl", HOST), old.url)
     assert "単価改定として残しました" in r2["result"]
     assert conn.execute("SELECT price FROM master_price WHERE fy='R8' AND code='Z002010012' AND region='2地区'"
@@ -130,3 +143,26 @@ def test_month_from_cover_when_unknown(site, conn, tmp_path):
     r = autofetch.import_file(conn, autofetch.download(conn, url, tmp_path / "dl", HOST), url)
     assert r["valid_from"] == "2026-09-01" and r["fy"] == "R8"
     assert conn.execute("SELECT yymm FROM fetched_doc WHERE url=?", (url,)).fetchone()[0] == "0809"
+
+
+def test_site_busy(site, conn, tmp_path):
+    """県のサイトが断ったら、はっきり伝えて、続けて取りに行かない。"""
+    with pytest.raises(autofetch.SiteBusy, match="1時間ほどおいて"):
+        autofetch.download(conn, site + "documents/8708/busy.pdf", tmp_path / "dl", HOST)
+    with pytest.raises(autofetch.SiteBusy):
+        autofetch.download(conn, site + "slow/r0811nara_materialprice.pdf", tmp_path / "dl", HOST)
+    found, errors = autofetch.check(conn, [site + "slow/list.html"], bases=(site + "documents/8708/",),
+                                    today=date(2026, 11, 21), extra_hosts=HOST)
+    # 一覧ページで断られたら、ファイル名の決まりから何十回も確かめには行かない
+    assert found == [] and len(errors) == 1 and "受け付けていません" in errors[0]
+
+
+def test_pace(monkeypatch):
+    """県のサイトへは間をあけて行く。"""
+    import time
+    monkeypatch.setattr(autofetch, "PACE_SECONDS", 0.3)
+    ticks = []
+    autofetch._pace()
+    t = time.monotonic()
+    autofetch._pace(lambda: ticks.append(1))
+    assert time.monotonic() - t >= 0.25 and ticks

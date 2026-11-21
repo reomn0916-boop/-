@@ -2,7 +2,8 @@
 
 見つけ方は2通り。
 1. 単価資料の一覧ページ（設定で登録）にある PDF のリンクを読む
-2. 県のファイル名の決まり（r0811nara_materialprice.pdf など）から、最近の月の PDF があるか確かめる
+2. 一覧ページが読めないときだけ、県のファイル名の決まり（r0811nara_materialprice.pdf など）から最近の月の PDF を確かめる
+県のサイトは短い間に何度も取りに行くと受け付けなくなるので、間をあけて行き、断られたらそこでやめる。
 見つけた PDF はダウンロードして、取り込むまで「新しい単価資料」として控える。
 取り込むと、年度の単価を最新にしたうえで、その月の単価を「単価改定」（適用日つき）としても残す。
 単価の適用日を入れた工事は、その時点の単価で計算される。
@@ -14,13 +15,33 @@ import re
 import sqlite3
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date, datetime
 from html.parser import HTMLParser
 from pathlib import Path
 
 from . import audit, publicprice
+
+
+class SiteBusy(Exception):
+    """県のサイトが受け付けなかった（混雑・短い間の取りすぎなど）。続けて取りに行かない。"""
+
+    def __init__(self, url: str = "") -> None:
+        super().__init__("県のサイトが今は受け付けていません（混んでいるか、短い間に何度も取りに行ったため）。"
+                         "1時間ほどおいて「取り込む」をもう一度押してください。"
+                         "急ぐときは、ブラウザで PDF を保存して、この画面にドロップすれば取り込めます。")
+        self.url = url
+
+
+def _pace(tick=None) -> None:
+    """前に県のサイトへ行ってから PACE_SECONDS たつまで待つ（tick は待つ間に画面を動かすため）。"""
+    import time
+    global _last_request
+    while (rest := _last_request + PACE_SECONDS - time.monotonic()) > 0:
+        if tick:
+            tick()
+        time.sleep(min(rest, 0.1))
+    _last_request = time.monotonic()
 
 ALLOWED_HOSTS = ("www.pref.nara.lg.jp", "www.pref.nara.jp")
 EXTRA_HOSTS: tuple[str, ...] = ()   # 試験用（手元のサーバー）。ふだんは空
@@ -37,7 +58,12 @@ NAME_PATTERNS = {
 }
 KIND_WORDS = {"materialprice": "資材単価", "roumuprice": "労務単価", "recycleprice": "再生資材単価",
               "soilprice": "土砂受入単価", "再生資材": "再生資材単価", "土砂": "土砂受入単価",
-              "資材単価": "資材単価", "労務単価": "労務単価", "設計単価": "資材単価"}
+              "再生材": "再生資材単価", "資材単価": "資材単価", "労務単価": "労務単価", "設計単価": "資材単価"}
+# 「訂正前後」は変わったところだけを並べた資料なので取り込まない（「訂正後」が本体）
+SKIP_RE = re.compile(r"訂正前後|teiseizengo", re.I)
+# 県のサイトに続けて取りに行かない間隔（秒）。短い間に何度も取りに行くと、県のサイトが受け付けなくなる
+PACE_SECONDS = 3.0
+_last_request = 0.0
 FILE_RE = re.compile(r"r(\d{1,2})(\d{2})(?:nara)?_?(materialprice|roumuprice|recycleprice|soilprice)\.pdf$", re.I)
 USER_AGENT = "SekisanApp/1.0 (public price collector)"
 
@@ -63,9 +89,25 @@ def _allowed(url: str, extra_hosts: tuple[str, ...] = ()) -> bool:
     return u.scheme in ("https", "http") and (u.hostname or "") in ALLOWED_HOSTS + EXTRA_HOSTS + extra_hosts
 
 
-def _open(url: str, method: str = "GET", timeout: float = 15):
+BUSY_CODES = (403, 408, 429, 503)
+
+
+def _open(url: str, method: str = "GET", timeout: float = 15, tick=None):
+    import urllib.error
+    _pace(tick)
     req = urllib.request.Request(url, method=method, headers={"User-Agent": USER_AGENT})
-    return urllib.request.urlopen(req, timeout=timeout)
+    try:
+        return urllib.request.urlopen(req, timeout=timeout)
+    except urllib.error.HTTPError as e:
+        if e.code in BUSY_CODES:
+            raise SiteBusy(url) from e
+        raise
+
+
+def _is_block_page(data: bytes) -> bool:
+    """県のサイトが断ったときに返すページ（「このページは表示できません」）"""
+    head = data[:3000].decode("utf-8", errors="ignore")
+    return "表示できません" in head or "インシデント" in head
 
 
 def exists(url: str, timeout: float = 10) -> bool:
@@ -73,6 +115,8 @@ def exists(url: str, timeout: float = 10) -> bool:
     try:
         with _open(url, "HEAD", timeout) as r:
             return 200 <= r.status < 300
+    except SiteBusy:
+        raise
     except urllib.error.HTTPError as e:
         if e.code not in (403, 405, 501):  # 404 などは「ない」
             return False
@@ -81,6 +125,8 @@ def exists(url: str, timeout: float = 10) -> bool:
     try:  # HEAD を受け付けないサーバーは、先頭だけ読んで PDF か確かめる
         with _open(url, "GET", timeout) as r:
             return r.read(4) == b"%PDF"
+    except SiteBusy:
+        raise
     except Exception:
         return False
 
@@ -135,13 +181,18 @@ def scan_page(url: str, extra_hosts: tuple[str, ...] = ()) -> list[Found]:
     if not _allowed(url, extra_hosts):
         raise ValueError(f"奈良県のサイト以外は見に行きません: {url}")
     with _open(url) as r:
-        html = r.read().decode(r.headers.get_content_charset() or "utf-8", errors="replace")
+        raw = r.read()
+        html = raw.decode(r.headers.get_content_charset() or "utf-8", errors="replace")
+    if _is_block_page(raw) and ".pdf" not in html.lower():
+        raise SiteBusy(url)
     p = _Links()
     p.feed(html)
     out = []
     for href, text in p.links:
         full = urllib.parse.urljoin(url, href)
         if not full.lower().split("?")[0].endswith(".pdf") or not _allowed(full, extra_hosts):
+            continue
+        if SKIP_RE.search(urllib.parse.unquote(full)) or SKIP_RE.search(_nfkc(text)):
             continue
         k = kind_of(full, text)
         if k:
@@ -162,7 +213,7 @@ def recent_months(today: date, back: int = 12) -> list[tuple[int, int]]:
 
 
 def probe(today: date | None = None, back: int = 12, bases: tuple[str, ...] | None = None,
-          kinds: tuple[str, ...] = tuple(NAME_PATTERNS), workers: int = 8,
+          kinds: tuple[str, ...] = tuple(NAME_PATTERNS),
           extra_hosts: tuple[str, ...] = ()) -> list[Found]:
     """県のファイル名の決まりから、最近の月の PDF があるかを確かめる。"""
     today = today or date.today()
@@ -173,9 +224,8 @@ def probe(today: date | None = None, back: int = 12, bases: tuple[str, ...] | No
                 url = base + NAME_PATTERNS[k].format(yy=yy, mm=mm)
                 if _allowed(url, extra_hosts):
                     cands.append(Found(url, k, f"{yy:02d}{mm:02d}"))
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        ok = list(ex.map(lambda f: exists(f.url), cands))
-    return [f for f, hit in zip(cands, ok) if hit]
+    # 県のサイトに負担をかけないよう、1つずつ間をあけて確かめる
+    return [f for f in cands if exists(f.url)]
 
 
 # ------------------------------------------------------------------ 控え
@@ -194,16 +244,24 @@ def check(conn: sqlite3.Connection, pages: list[str] | None = None, use_probe: b
     _ensure(conn)
     found: dict[str, Found] = {}
     errors: list[str] = []
+    busy = False
     for page in dict.fromkeys(list(DEFAULT_PAGES) + list(pages or [])):
         try:
             for f in scan_page(page, extra_hosts):
                 found.setdefault(f.url, f)
+        except SiteBusy as e:
+            errors.append(str(e))
+            busy = True
+            break
         except Exception as e:
             errors.append(f"{page}: {e}")
-    if use_probe:
+    # ファイル名の決まりから確かめるのは、一覧ページが読めなかったときだけ（何十回も取りに行くため）
+    if use_probe and not found and not busy:
         try:
             for f in probe(today, bases=bases, extra_hosts=extra_hosts):
                 found.setdefault(f.url, f)
+        except SiteBusy as e:
+            errors.append(str(e))
         except Exception as e:
             errors.append(f"ファイル名の決まりから確かめる: {e}")
     with conn:
@@ -220,6 +278,8 @@ def list_found(conn: sqlite3.Connection) -> list[Found]:
     _ensure(conn)
     out = []
     for r in conn.execute("SELECT * FROM fetched_doc ORDER BY yymm DESC, kind"):
+        if SKIP_RE.search(urllib.parse.unquote(r["url"])) and not r["imported_at"]:
+            continue
         st = "取り込み済み" if r["imported_at"] else ("ダウンロード済み" if r["file"] else "新しい")
         out.append(Found(r["url"], r["kind"], r["yymm"], st, r["file"]))
     return out
@@ -230,15 +290,18 @@ def last_checked(conn: sqlite3.Connection) -> str:
     return r["value"] if r else ""
 
 
-def download(conn: sqlite3.Connection, url: str, dest: str | Path, extra_hosts: tuple[str, ...] = ()) -> Path:
+def download(conn: sqlite3.Connection, url: str, dest: str | Path, extra_hosts: tuple[str, ...] = (),
+             tick=None) -> Path:
     if not _allowed(url, extra_hosts):
         raise ValueError(f"奈良県のサイト以外からはダウンロードしません: {url}")
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)
     name = urllib.parse.unquote(url.rsplit("/", 1)[-1]) or "単価資料.pdf"
     path = dest / name
-    with _open(url, timeout=60) as r:
+    with _open(url, timeout=120, tick=tick) as r:
         data = r.read()
+    if not data.startswith(b"%PDF") and _is_block_page(data):
+        raise SiteBusy(url)
     if not data.startswith(b"%PDF"):
         raise ValueError(f"PDF ではありませんでした: {url}")
     path.write_bytes(data)

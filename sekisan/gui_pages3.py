@@ -375,7 +375,7 @@ class AutoFetchMixin:
         c.lay.addWidget(dl)
         c.lay.addWidget(self.af_pages)
         oh = QHBoxLayout()
-        self.af_probe = QCheckBox("県のファイル名の決まりから最近12か月を確かめる")
+        self.af_probe = QCheckBox("一覧ページが読めないときは、県のファイル名の決まりから最近12か月を確かめる")
         self.af_probe.setChecked(s.get("price_probe", True))
         self.af_auto = QCheckBox("起動したとき週1回確かめる")
         self.af_auto.setChecked(s.get("price_auto_check", True))
@@ -492,9 +492,15 @@ class AutoFetchMixin:
                 prog.setValue(k)
                 QApplication.processEvents()
                 try:
-                    path = Path(f.file) if f.file and Path(f.file).exists() else autofetch.download(self.conn, f.url, dest)
+                    path = (Path(f.file) if f.file and Path(f.file).exists()
+                            else autofetch.download(self.conn, f.url, dest, tick=QApplication.processEvents))
                     r = autofetch.import_file(self.conn, path, f.url, progress=lambda *_: QApplication.processEvents())
                     done.append(f"{f.kind} {f.label} → {r['fy']}：{r['result']}")
+                except autofetch.SiteBusy as e:
+                    # 断られたら続けて取りに行かない（残りは「新しい」のまま、次に押したときに取り込む）
+                    rest = len(targets) - k
+                    failed.append(f"{e}\n（残り {rest} 件はまだ取り込んでいません）")
+                    break
                 except Exception as e:
                     failed.append(f"{f.kind} {f.label}：{e}")
         finally:
