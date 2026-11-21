@@ -24,6 +24,8 @@ from . import audit, publicprice
 
 ALLOWED_HOSTS = ("www.pref.nara.lg.jp", "www.pref.nara.jp")
 EXTRA_HOSTS: tuple[str, ...] = ()   # 試験用（手元のサーバー）。ふだんは空
+# 奈良県 県土マネジメント部の「土木工事設計単価資料」の一覧ページ（いつも最初に見る）
+DEFAULT_PAGES = ("https://www.pref.nara.lg.jp/n134/66514.html",)
 # 県のサイトで単価資料が置かれている場所（ファイル名の決まりから確かめるときに使う）
 PROBE_BASES = ("https://www.pref.nara.lg.jp/documents/8708/",)
 # ファイル名の決まり：r + 令和の年2桁 + 月2桁 + 種類
@@ -34,7 +36,8 @@ NAME_PATTERNS = {
     "土砂受入単価": "r{yy:02d}{mm:02d}nara_soilprice.pdf",
 }
 KIND_WORDS = {"materialprice": "資材単価", "roumuprice": "労務単価", "recycleprice": "再生資材単価",
-              "soilprice": "土砂受入単価", "資材単価": "資材単価", "労務単価": "労務単価", "設計単価": "資材単価"}
+              "soilprice": "土砂受入単価", "再生資材": "再生資材単価", "土砂": "土砂受入単価",
+              "資材単価": "資材単価", "労務単価": "労務単価", "設計単価": "資材単価"}
 FILE_RE = re.compile(r"r(\d{1,2})(\d{2})(?:nara)?_?(materialprice|roumuprice|recycleprice|soilprice)\.pdf$", re.I)
 USER_AGENT = "SekisanApp/1.0 (public price collector)"
 
@@ -104,10 +107,17 @@ class _Links(HTMLParser):
             self._href = None
 
 
+def _nfkc(s: str) -> str:
+    import unicodedata
+    return unicodedata.normalize("NFKC", s or "")
+
+
 def kind_of(url: str, text: str = "") -> str:
+    """ファイル名かリンクの文字から種類を決める（県の新しいサイトはファイル名が日時の数字のことがある）。"""
     name = urllib.parse.unquote(url.rsplit("/", 1)[-1]).lower()
+    t = _nfkc(text)
     for w, k in KIND_WORDS.items():
-        if w.lower() in name or w in text:
+        if w.lower() in name or w in t:
             return k
     return ""
 
@@ -116,7 +126,7 @@ def yymm_of(url: str, text: str = "") -> str:
     m = FILE_RE.search(urllib.parse.unquote(url))
     if m:
         return f"{int(m.group(1)):02d}{m.group(2)}"
-    m = re.search(r"令和\s*(\d+)\s*年\s*(\d+)\s*月", text)
+    m = re.search(r"令和\s*(\d+)\s*年\s*(\d+)\s*月", _nfkc(text))
     return f"{int(m.group(1)):02d}{int(m.group(2)):02d}" if m else ""
 
 
@@ -184,7 +194,7 @@ def check(conn: sqlite3.Connection, pages: list[str] | None = None, use_probe: b
     _ensure(conn)
     found: dict[str, Found] = {}
     errors: list[str] = []
-    for page in pages or []:
+    for page in dict.fromkeys(list(DEFAULT_PAGES) + list(pages or [])):
         try:
             for f in scan_page(page, extra_hosts):
                 found.setdefault(f.url, f)
@@ -289,6 +299,11 @@ def import_file(conn: sqlite3.Connection, path: str | Path, url: str = "", fy: s
             conn.executemany(
                 "INSERT OR REPLACE INTO price_revision(fy, kind, code, region, valid_from, price) VALUES (?,?,?,?,?,?)",
                 [(fy, x.kind, x.code, x.region, valid, x.price) for x in rows if x.price is not None])
+    if url and valid:  # 年月がわからなかった資料（ファイル名が日時の数字など）は、表紙の適用日で埋める
+        _ensure(conn)
+        with conn:
+            conn.execute("UPDATE fetched_doc SET yymm=? WHERE url=? AND yymm=''",
+                         (f"{int(valid[:4]) - 2018:02d}{valid[5:7]}", url))
     result = (f"単価 {n}件（新しい月の単価があるため、{valid} からの単価改定として残しました）" if older else
               f"単価 {n}件（新規・更新 {sum(x.status in ('新規', '更新') for x in rows)}件）")
     if url:

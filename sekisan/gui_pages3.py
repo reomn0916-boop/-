@@ -367,7 +367,12 @@ class AutoFetchMixin:
                  "（単価の適用日を入れた工事は、その時点の単価で計算されます）。")
         s = settings.load()
         self.af_pages = QLineEdit(s.get("price_pages", ""))
-        self.af_pages.setPlaceholderText("単価資料の一覧ページのアドレス（任意・複数は空白で区切る）")
+        self.af_pages.setPlaceholderText("ほかに見る一覧ページのアドレス（任意・複数は空白で区切る）")
+        from . import autofetch as _af
+        dl = QLabel("いつも見るページ：" + "　".join(_af.DEFAULT_PAGES))
+        dl.setObjectName("Muted")
+        dl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        c.lay.addWidget(dl)
         c.lay.addWidget(self.af_pages)
         oh = QHBoxLayout()
         self.af_probe = QCheckBox("県のファイル名の決まりから最近12か月を確かめる")
