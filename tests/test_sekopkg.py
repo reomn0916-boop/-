@@ -156,3 +156,15 @@ def test_orderer_from_cover():
     from sekisan import kinnuki
     assert kinnuki.orderer_of({"事務所名": "御所市 都市建設部 土木課"}) == "御所市"
     assert kinnuki.orderer_of({"事務所名": "奈良県総務部知事公室防災統括室"}) == ""
+
+
+def test_nara_threshold(conn):
+    """奈良県：(直接×0.97＋共通仮設×0.90＋現場管理×0.90＋一般管理×0.68) を予定価格の7.5/10〜9.2/10に収め、千円未満切捨て。"""
+    c = calc.Calculator(conn, "R8", orderer="奈良県")
+    for direct in (3_000_000, 30_000_000, 300_000_000):
+        s = c.summary(direct, "道路改良工事")
+        raw = s.direct * 0.97 + s.common_temp * 0.90 + s.site_mgmt * 0.90 + s.general * 0.68
+        want = min(max(raw, s.price * 0.75), s.price * 0.92)
+        assert s.threshold == int(want) // 1000 * 1000 and s.threshold % 1000 == 0
+    # 税込は千円未満を切り捨てたあとに消費税を加算する
+    assert c.rules["基準価格の端数単位"] == "1000"
