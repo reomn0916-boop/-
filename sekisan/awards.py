@@ -10,15 +10,20 @@ from . import audit
 from .importer import _to_float, read_csv_rows
 
 FIELDS = ("date", "orderer", "name", "work_type", "planned", "threshold", "award_price", "winner", "our_bid",
-          "our_estimate", "note")
+          "our_estimate", "note", "our_threshold", "tie_count", "lottery", "publish", "project_id")
 CSV_COLS = {"日付": "date", "発注者": "orderer", "工事名": "name", "工種区分": "work_type", "予定価格": "planned",
             "基準価格": "threshold", "落札額": "award_price", "落札者": "winner", "自社入札額": "our_bid",
-            "自社積算額": "our_estimate", "備考": "note"}
-NUMS = {"planned", "threshold", "award_price", "our_bid", "our_estimate"}
+            "自社積算額": "our_estimate", "備考": "note", "自社試算の基準価格": "our_threshold", "同額者数": "tie_count",
+            "くじ": "lottery", "公表": "publish"}
+NUMS = {"planned", "threshold", "award_price", "our_bid", "our_estimate", "our_threshold", "tie_count"}
+LOTTERY = ("", "当たり", "外れ")
 
 
 def add(conn: sqlite3.Connection, **kw) -> int:
     data = {k: kw.get(k, 0 if k in NUMS else "") for k in FIELDS}
+    data["project_id"] = kw.get("project_id") or None
+    if data["lottery"] not in LOTTERY:
+        raise ValueError("くじは「当たり」「外れ」か空欄にしてください")
     audit.require(conn, "edit")
     if not data["name"]:
         raise ValueError("工事名を入れてください")
@@ -66,6 +71,15 @@ class Stats:
     accuracy: float | None         # 自社積算 ÷ 予定価格 の平均（1より小さい＝自社が低く見ている）
     accuracy_sd: float | None
     win_count: int
+    th_n: int = 0                    # 最低制限価格を試算して比べられた件数
+    th_exact: int = 0                # 1円も違わず当てた件数
+    th_mae: float | None = None      # ずれの大きさの平均（円）
+    th_bias: float | None = None     # ずれの平均（＋＝自社が高い）
+    th_max: float | None = None      # いちばん大きなずれ（円）
+    th_errors: list[float] | None = None
+    tie_avg: float | None = None     # 同額の会社数の平均
+    lottery_n: int = 0               # くじになった件数（自社が参加したもの）
+    lottery_wins: int = 0
 
     def predict_planned(self, our_estimate: float) -> float | None:
         """自社の積算額から、過去の傾向で補正した予定価格の見込み。"""
@@ -79,6 +93,12 @@ def stats(conn: sqlite3.Connection, orderer: str = "", work_type: str = "", our_
     ar = [r["award_price"] / r["planned"] for r in rs if r["planned"] and r["award_price"]]
     tr = [r["threshold"] / r["planned"] for r in rs if r["planned"] and r["threshold"]]
     ac = [r["our_estimate"] / r["planned"] for r in rs if r["planned"] and r["our_estimate"]]
-    wins = sum(1 for r in rs if r["winner"] == our_name)
+    wins = sum(1 for r in rs if r["winner"] == our_name or r["lottery"] == "当たり")
+    errs = [r["our_threshold"] - r["threshold"] for r in rs if r["our_threshold"] and r["threshold"]]
+    ties = [r["tie_count"] for r in rs if r["tie_count"]]
+    lots = [r for r in rs if r["lottery"]]
     return Stats(len(rs), mean(ar) if ar else None, mean(tr) if tr else None, mean(ac) if ac else None,
-                 pstdev(ac) if len(ac) > 1 else None, wins)
+                 pstdev(ac) if len(ac) > 1 else None, wins,
+                 len(errs), sum(1 for e in errs if abs(e) < 1), mean(abs(e) for e in errs) if errs else None,
+                 mean(errs) if errs else None, max((abs(e) for e in errs), default=None), errs,
+                 mean(ties) if ties else None, len(lots), sum(1 for r in lots if r["lottery"] == "当たり"))

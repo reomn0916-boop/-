@@ -333,7 +333,9 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, QMainW
         self.k_direct.set(f"¥{yen(s.direct)}", f"明細 {len(d.items)} 行")
         self.k_price.set(f"¥{yen(s.price)}", f"税込 ¥{yen(s.total)}")
         pct = s.threshold / s.price * 100 if s.price else 0
-        self.k_threshold.set(f"¥{yen(s.threshold)}", f"予定価格の {pct:.2f}%")
+        ast = awards.stats(self.conn, p["orderer"] if p else "")
+        past = f"・過去のずれ 平均±{yen(ast.th_mae)}円" if ast.th_n else ""
+        self.k_threshold.set(f"¥{yen(s.threshold)}", f"予定価格の {pct:.2f}%{past}")
         cost = c.summary.direct + s.common_temp + s.site_mgmt
         self.k_cost.set(f"¥{yen(cost)}", "自社単価＋設計の間接費",
                         "bad" if cost > s.threshold else "")
@@ -476,6 +478,7 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, QMainW
                 self.run_banner.show_msg("このPDFは金抜き設計書（実施設計書）の形ではないようです。", "warn")
                 return
             self.kin_doc = doc
+            self.kin_priced = doc.priced
             m = doc.meta
             self.n_name.setText(m.get("工事名", Path(path).stem))
             if doc.fy:
@@ -491,7 +494,9 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, QMainW
                 f"<b>金抜き設計書です。</b>　{m.get('工事番号', '')}　{m.get('工事箇所', '')}<br>"
                 f"明細 {len(doc.items)} 行・単価表 {len(doc.tables) - pkg} 個・施工パッケージ {pkg} 個を読み取りました"
                 f"（単価適用 {doc.price_date[:7]}・{m.get('単価地区', '')}・{m.get('適用工種', '')}）。<br>"
-                f"伏せてある歩掛の数量が {hidden} か所あります。取り込んだあと「単価表」で入れます。", "info")
+                + (f"<b>金入り（答えつき）です。</b>工事価格 ¥{yen(doc.totals.get('工事価格', 0))}。"
+                   "積算を実行すると、数量・諸雑費率・物価資料の単価を覚え、答え合わせまで行います。" if doc.priced else
+                   f"伏せてある歩掛の数量が {hidden} か所あります。取り込んだあと「単価表」で入れます。"), "info")
             return
         if not self.n_name.text():
             self.n_name.setText(Path(path).stem)
@@ -511,7 +516,16 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, QMainW
         QApplication.setOverrideCursor(Qt.WaitCursor)
         kin = None
         try:
-            if getattr(self, "kin_doc", None) and self.drop.path.lower().endswith(".pdf"):
+            if getattr(self, "kin_doc", None) and getattr(self, "kin_priced", False) \
+                    and self.drop.path.lower().endswith(".pdf"):
+                pr = kinnuki.import_priced(self.conn, self.drop.path, work_type=self.n_work.currentText().strip() or None,
+                                           orderer=self.n_orderer.currentText().strip() or "奈良県")
+                kin = pr["import"] or {"単価表": 0, "施工パッケージ": 0, "数量を入れる": 0, "単価を当てる": 0,
+                                       "諸雑費率を入れる": 0, "前回の値": 0, "project_id": pr["project_id"]}
+                kin["priced"] = pr
+                res = pipeline.run(self.conn, pr["project_id"], self.n_out.text())
+                res["project_id"] = pr["project_id"]
+            elif getattr(self, "kin_doc", None) and self.drop.path.lower().endswith(".pdf"):
                 kin = kinnuki.import_doc(self.conn, self.drop.path, work_type=self.n_work.currentText().strip() or None,
                                          orderer=self.n_orderer.currentText().strip() or "奈良県")
                 calc.set_project_fields(self.conn, kin["project_id"], name=self.n_name.text().strip() or "無題",
@@ -533,7 +547,9 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, QMainW
         n = len(d.unresolved)
         msg = (f"<b>積算が終わりました。</b>　工事価格 ¥{yen(d.summary.price)}（税込 ¥{yen(d.summary.total)}）"
                f"<br>積算結果・実行予算・電子入札用内訳書を {self.n_out.text()} に出力しました。")
-        if kin:
+        if kin and kin.get("priced"):
+            msg += "<br>" + self._priced_message(kin["priced"]) + "。「照合・答え合わせ」で項目ごとに見られます。"
+        elif kin:
             msg += (f"<br>金抜き設計書から単価表 {kin['単価表']} 個・施工パッケージ {kin['施工パッケージ']} 個を作りました。"
                     f"入れるもの：伏せてある数量 <b>{kin['数量を入れる']}</b>・単価が当たらない資源 <b>{kin['単価を当てる']}</b>"
                     f"・諸雑費率 <b>{kin['諸雑費率を入れる']}</b>"
@@ -1017,11 +1033,18 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, QMainW
         self.v_diff = Kpi("工事価格の差")
         top.addWidget(self.v_rate)
         top.addWidget(self.v_diff)
-        imp = Card("過去の積算結果", "CSV（項目,金額）。項目は明細の番号か合計名。")
-        b = QPushButton("CSVを選ぶ…")
-        b.setObjectName("Primary")
+        imp = Card("答え（金入り設計書・過去の積算結果）", "金入り設計書のPDFなら、答えを覚えて答え合わせまで行います。"
+                   "CSV（項目,金額）も使えます。")
+        bh = QHBoxLayout()
+        b0 = QPushButton("金入り設計書…")
+        b0.setObjectName("Primary")
+        b0.clicked.connect(self._do_priced)
+        b = QPushButton("CSV…")
         b.clicked.connect(self._do_reference)
-        imp.lay.addWidget(b, 0, Qt.AlignLeft)
+        bh.addWidget(b0)
+        bh.addWidget(b)
+        bh.addStretch(1)
+        imp.lay.addLayout(bh)
         top.addWidget(imp, 2)
         self.v_pdf = Kpi("PDFと一致した明細")
         self.v_pdf.set("—", "PDFを選ぶと照合します")
@@ -1041,6 +1064,33 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, QMainW
         split.addWidget(b2)
         v.addWidget(split, 1)
         return w
+
+    def _do_priced(self, path: str = "") -> None:
+        if not path:
+            path, _ = QFileDialog.getOpenFileName(self, "金入り設計書", "", "PDF (*.pdf)")
+        if not path:
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            r = self.guard(kinnuki.import_priced, self.conn, path)
+        finally:
+            QApplication.restoreOverrideCursor()
+        if not r or r is True:
+            return
+        self._load_projects(select=r["project_id"])
+        self.go("verify")
+        self.status.showMessage(self._priced_message(r), 15000)
+
+    def _priced_message(self, r: dict) -> str:
+        lr = r["learned"]
+        cs = pipeline.verify(self.conn, r["project_id"])
+        ok = sum(c.ok for c in cs)
+        price = next((c for c in cs if c.key == "工事価格"), None)
+        msg = (f"金入り設計書から覚えました：数量 {lr['数量']}・諸雑費率 {lr['諸雑費率']}・設計書の単価 {lr['単価（設計書実績）']}・"
+               f"単価表の単価 {lr['単価表の単価']}。答え合わせ {ok}/{len(cs)} 一致")
+        if price:
+            msg += f"（工事価格の差 {price.diff:+,.0f}円）"
+        return msg
 
     def _do_reference(self) -> None:
         if self.pid is None:
@@ -1062,6 +1112,13 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, QMainW
             return
         cs = pipeline.verify(self.conn, self.pid, self.design)
         names = {str(i.seq): f"{i.seq}. {i.name} {i.spec}" for i in (self.design.items if self.design else [])}
+        p = self._project_row()
+        if p:  # 単価表（単1・施1 …）は名称を添えて出す
+            for t in self.conn.execute("SELECT code, name, spec FROM bukake WHERE fy=? AND project_id=? "
+                                       "UNION ALL SELECT code, name, spec FROM package WHERE fy=? AND project_id=?",
+                                       (p["fy"], self.pid, p["fy"], self.pid)):
+                ref = t["code"].split("/")[-1]
+                names[ref] = f"単価表 {ref}号 {t['name'].split('（')[0]} {t['spec']}（1単位あたり）"
         self.checks.setRowCount(len(cs))
         for r, ch in enumerate(cs):
             vals = [names.get(ch.key, ch.key), yen(ch.ours), yen(ch.reference),

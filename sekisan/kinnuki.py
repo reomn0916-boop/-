@@ -47,6 +47,22 @@ def _text(ws) -> str:
     return " ".join(w["text"] for w in ws).strip()
 
 
+def _center(w) -> float:
+    return (w["x0"] + w["x1"]) / 2
+
+
+def _classify(words, centers: dict[str, float]) -> dict[str, float]:
+    """数字の語を、見出しの中心にいちばん近い列（数量・単価・金額…）に振り分ける。"""
+    out: dict[str, float] = {}
+    for w in words:
+        v = _num(w["text"])
+        if v is None or re.fullmatch(r"\(.*\)", _n(w["text"])):
+            continue
+        col = min(centers, key=lambda k: abs(centers[k] - _center(w)))
+        out.setdefault(col, v)
+    return out
+
+
 def _ref(ws) -> str:
     """「単 13 号」「施 1 号」→ 単13 / 施1"""
     t = [w["text"] for w in ws]
@@ -72,6 +88,8 @@ class DocItem:
     qty: float
     ref: str            # 単1 など
     category: str       # 直接 / 共通仮設 / 現場管理
+    price: float | None = None    # 金入り設計書の単価
+    amount: float | None = None   # 金入り設計書の金額
 
 
 @dataclass
@@ -84,6 +102,8 @@ class TableLine:
     ref: str            # 単13 / 施1（ほかの単価表を使う行）
     ratio: float | None = None   # 構成比（施工パッケージ、%）
     std_name: str = ""           # 構成比の「標準」名称
+    price: float | None = None   # 金入り設計書の単価
+    amount: float | None = None  # 金入り設計書の金額
 
 
 @dataclass
@@ -96,6 +116,8 @@ class UnitTable:
     per_qty: float
     lines: list[TableLine] = field(default_factory=list)
     conditions: list[str] = field(default_factory=list)  # J01 時間的制約の有無 無し など
+    unit_price: float | None = None  # 金入り設計書のこの単価表の単価（1単位あたり）
+    total: float | None = None       # 金入り設計書の「計」
 
 
 @dataclass
@@ -103,6 +125,12 @@ class KinnukiDoc:
     meta: dict[str, str]
     items: list[DocItem]
     tables: dict[str, UnitTable]
+    totals: dict[str, float] = field(default_factory=dict)  # 金入り：直接工事費〜工事費
+
+    @property
+    def priced(self) -> bool:
+        """金入り設計書（単価・金額が入っている）か"""
+        return any(i.amount for i in self.items) or bool(self.totals)
 
     @property
     def fy(self) -> str:
@@ -166,6 +194,8 @@ def _breakdown(lines: list[list[dict]], state: dict) -> list[DocItem]:
     if head is None:
         return []
     hx = {w["text"]: w["x0"] for w in lines[head]}
+    hc = {w["text"]: _center(w) for w in lines[head]}
+    centers = {"qty": hc.get("数量", 417), "price": hc.get("単価", 492), "amount": hc.get("金額", 575)}
     spec_x = hx.get("規格", 267) - 70          # 規格の列の左端（見出しは中央寄せ）
     unit_x = hx.get("単位", 359) - 15
     qty_x = hx.get("数量", 409) - 20
@@ -179,6 +209,7 @@ def _breakdown(lines: list[list[dict]], state: dict) -> list[DocItem]:
         if not cur:
             return
         name, spec, marker, unit, qty = cur["name"], cur["spec"], cur["marker"], cur["unit"], cur["qty"]
+        price, amount = cur["price"], cur["amount"]
         cur = None
         if not name:
             return
@@ -188,26 +219,31 @@ def _breakdown(lines: list[list[dict]], state: dict) -> list[DocItem]:
             state["levels"] = state["levels"][:k - 1] + [name]
             if k == 1:
                 state["category"] = ("共通仮設" if "共通仮設" in name else "現場管理" if "現場管理" in name else "直接")
+                if state["category"] != "直接" and amount is not None:
+                    state["totals"][f"{state['category']}費"] = amount
             return
         if name in TOTAL_NAMES or "率計上" in name:
+            if amount is not None:
+                state["totals"]["共通仮設費（率計上）" if "率計上" in name else name] = amount
             if name == "直接工事費":
                 state["levels"] = []
             return
         lv3 = (state["levels"] + ["", "", ""])[:3]
-        items.append(DocItem(lv3[0], lv3[1], lv3[2], name, spec, unit, qty or 0.0, marker or "", state["category"]))
+        items.append(DocItem(lv3[0], lv3[1], lv3[2], name, spec, unit, qty or 0.0, marker or "", state["category"],
+                             price, amount))
 
     for ln in lines[head + 1:]:
         txt = _text(ln)
         if re.match(r"R\d\d-[A-Z]\d+-\d+", txt) or "奈良県" in txt and "頁" in txt:
             break  # ページ下の設計書番号から先は読まない
         left = [w for w in ln if w["x0"] < unit_x]
-        mid = [w for w in ln if unit_x <= w["x0"] < price_x]
+        mid = [w for w in ln if unit_x <= w["x0"] < marker_x]
         right = [w for w in ln if w["x0"] >= marker_x]
         if left:
             if cur and (cur["marker"] or cur["unit"]):
                 close()
             if not cur:
-                cur = {"name": "", "spec": "", "marker": "", "unit": "", "qty": None}
+                cur = {"name": "", "spec": "", "marker": "", "unit": "", "qty": None, "price": None, "amount": None}
             nm = " ".join(w["text"] for w in left if w["x0"] < spec_x)
             sp = " ".join(w["text"] for w in left if w["x0"] >= spec_x)
             cur["name"] = (cur["name"] + " " + nm).strip() if nm else cur["name"]
@@ -217,12 +253,16 @@ def _breakdown(lines: list[list[dict]], state: dict) -> list[DocItem]:
             m = re.fullmatch(r"レベル\s*(\d)", t)
             cur["marker"] = f"レベル{m.group(1)}" if m else (_ref(right) or cur["marker"])
         if mid and cur is not None:
-            u = [w["text"] for w in mid if w["x0"] < qty_x]
-            q = [w["text"] for w in mid if w["x0"] >= qty_x]
+            u = [w["text"] for w in mid if w["x0"] < qty_x and _num(w["text"]) is None]
+            vals = _classify([w for w in mid if w["x0"] >= qty_x - 30], centers)
             if u:
                 cur["unit"] = u[0]
-            if q:
-                cur["qty"] = _num(q[0])
+            if "qty" in vals:
+                cur["qty"] = vals["qty"]
+            if "price" in vals:
+                cur["price"] = vals["price"]
+            if "amount" in vals:
+                cur["amount"] = vals["amount"]
             if cur["unit"]:
                 close()
     close()
@@ -249,6 +289,7 @@ def _tables(lines: list[list[dict]]) -> list[UnitTable]:
             name = " ".join(w["text"] for w in rest if w["x0"] < 260)
             spec = " ".join(w["text"] for w in rest if w["x0"] >= 260)
             unit, per = "", 1.0
+            table_price = None
             # 見出しと同じ行・次の数行に「単位 本 割戻数量 … 100」
             j = i
             col_head = None
@@ -256,20 +297,33 @@ def _tables(lines: list[list[dict]]) -> list[UnitTable]:
                 tx = [w["text"] for w in lines[j]]
                 if "単位" in tx and "割戻数量" in tx:
                     ux = next(w for w in lines[j] if w["text"] == "単位")["x1"]
-                    rx = next(w for w in lines[j] if w["text"] == "割戻数量")["x0"]
+                    rw = next(w for w in lines[j] if w["text"] == "割戻数量")
+                    rx = rw["x0"]
+                    pw = next((w for w in lines[j] if w["text"] == "単価" and w["x0"] > rx), None)
                     unit = next((w["text"] for w in lines[j] if ux < w["x0"] < rx and w["text"] not in ("単価",)), unit)
-                    nums = [w for w in lines[j] if w["x0"] > rx and _num(w["text"]) is not None]
-                    if nums:
-                        per = _num(nums[0]["text"]) or 1.0
-                    elif j + 1 < len(lines):
-                        nx = [w for w in lines[j + 1] if _num(w["text"]) is not None]
-                        if nx and len(lines[j + 1]) == 1:
-                            per = _num(nx[0]["text"]) or 1.0
+                    # 「割戻数量 100　単価 1,234」の並び：単価の見出しより左の数字が割戻数量、右が単価
+                    px = pw["x0"] if pw else 10_000
+
+                    def pick(ws, vals):
+                        for w in ws:
+                            v = _num(w["text"])
+                            if v is None or w["x0"] <= rx:
+                                continue
+                            vals.setdefault("per" if w["x1"] <= px else "price", v)
+                    vals: dict[str, float] = {}
+                    pick(lines[j], vals)
+                    if j + 1 < len(lines) and not any(w["text"] == "名称・規格" for w in lines[j + 1]):
+                        nxt = lines[j + 1]
+                        if all(_num(w["text"]) is not None for w in nxt):  # 数字だけの次の行（割戻数量・単価の値）
+                            pick(nxt, vals)
+                    per = vals.get("per") or 1.0
+                    table_price = vals.get("price")
                 if "名称・規格" in tx:
                     col_head = j
                     break
                 j += 1
             tb = UnitTable(ref, order, name, spec, unit, per)
+            tb.unit_price = table_price
             if col_head is not None:
                 i = _table_body(lines, col_head, tb)
                 out.append(tb)
@@ -280,7 +334,10 @@ def _tables(lines: list[list[dict]]) -> list[UnitTable]:
 
 def _table_body(lines: list[list[dict]], head: int, tb: UnitTable) -> int:
     hx = {w["text"]: w["x0"] for w in lines[head]}
+    hc = {w["text"]: _center(w) for w in lines[head]}
     package = "構成比" in hx
+    centers = ({"price": hc.get("単価", 612), "amount": hc.get("金額", 690)} if package else
+               {"qty": hc.get("数量", 496), "price": hc.get("単価", 568), "amount": hc.get("金額", 658)})
     cond_x = 268 if not package else 10_000
     std_x = hx.get("標準", 322) - 75 if package else 10_000
     unit_x = (hx.get("単位", 432) - 12) if not package else hx.get("標準", 322) + 140
@@ -292,7 +349,7 @@ def _table_body(lines: list[list[dict]], head: int, tb: UnitTable) -> int:
         nonlocal cur
         if cur and cur["name"]:
             tb.lines.append(TableLine(cur["name"], cur["spec"].strip(), cur["cond"].strip(), cur["unit"], cur["qty"],
-                                      cur["ref"], cur["ratio"], cur["std"].strip()))
+                                      cur["ref"], cur["ratio"], cur["std"].strip(), cur["price"], cur["amount"]))
         cur = None
 
     i = head + 1
@@ -300,8 +357,18 @@ def _table_body(lines: list[list[dict]], head: int, tb: UnitTable) -> int:
         ln = lines[i]
         t = _text(ln)
         tt = re.sub(r"\s+", "", t)
-        if tt in ("計",) or tt.startswith("単価") and len(ln) <= 2 or re.fullmatch(r"円/\S+", tt):
+        if tt.startswith("計") and (tt == "計" or _num(tt[1:].replace(",", "")) is not None):
             close()
+            nums = [_num(w["text"]) for w in ln if _num(w["text"]) is not None]
+            if nums:
+                tb.total = nums[-1]
+            i += 1
+            continue
+        if (tt.startswith("単価") and len(ln) <= 3) or re.match(r"^[\d,.]*円/\S+$", tt):
+            close()
+            nums = [_num(w["text"]) for w in ln if _num(w["text"]) is not None]
+            if nums:
+                tb.unit_price = nums[-1]
             i += 1
             continue
         if re.match(r"^J\d\d", tt):
@@ -323,7 +390,7 @@ def _table_body(lines: list[list[dict]], head: int, tb: UnitTable) -> int:
                 close()
             if not cur:
                 cur = {"name": "", "spec": "", "cond": "", "unit": "", "qty": None, "ref": "", "ratio": None,
-                       "std": "", "done": False}
+                       "std": "", "done": False, "price": None, "amount": None}
                 cur["name"] = left[0]["text"]
                 cur["spec"] = " ".join(w["text"] for w in left[1:])
             else:
@@ -342,12 +409,16 @@ def _table_body(lines: list[list[dict]], head: int, tb: UnitTable) -> int:
             ratio = next((w for w in words if re.fullmatch(r"\(\d+(\.\d+)?\)", _n(w["text"]))), None)
             if ratio:
                 cur["ratio"] = _num(ratio["text"])
-            u = [w["text"] for w in words if w["x0"] < qty_x and w is not ratio]
-            q = [w["text"] for w in words if w["x0"] >= qty_x and w is not ratio and _num(w["text"]) is not None]
+            u = [w["text"] for w in words if w["x0"] < qty_x and w is not ratio and _num(w["text"]) is None]
+            vals = _classify([w for w in words if w is not ratio and w["x0"] >= qty_x - 30], centers)
             if u and not cur["unit"]:
                 cur["unit"] = u[0]
-            if q:
-                cur["qty"] = _num(q[0])
+            if "qty" in vals:
+                cur["qty"] = vals["qty"]
+            if "price" in vals:
+                cur["price"] = vals["price"]
+            if "amount" in vals:
+                cur["amount"] = vals["amount"]
             if u and (not package or cur["ratio"] is not None or cur["unit"]):
                 # 単位が出た行で1項目が終わる（構成比は「標 単位 (比率)」の次の行にもう一度単位が出る）
                 if not package or (package and cur["ratio"] is not None and len(u) == 1 and not ratio):
@@ -375,7 +446,7 @@ def parse(path: str | Path) -> KinnukiDoc:
         texts = [re.sub(r"\s+", "", p.extract_text() or "") for p in pdf.pages]
     meta = _meta(pages)
     items: list[DocItem] = []
-    state = {"levels": [], "category": "直接"}
+    state = {"levels": [], "category": "直接", "totals": {}}
     tables: dict[str, UnitTable] = {}
     for lines, flat in zip(pages, texts):
         if "設計内訳書" in flat:
@@ -395,7 +466,7 @@ def parse(path: str | Path) -> KinnukiDoc:
                     tables[tb.ref] = tb
     if meta.get("_内訳工事名"):
         meta["工事名"] = meta.pop("_内訳工事名")
-    return KinnukiDoc(meta, items, tables)
+    return KinnukiDoc(meta, items, tables, state["totals"])
 
 
 # ====================================================================== データベースへ取り込む
@@ -457,24 +528,40 @@ def import_doc(conn, path: str | Path, work_type: str | None = None, orderer: st
     region = re.sub(r"\s+", "", _n(doc.meta.get("単価地区", "")))
     stats = {"単価表": 0, "施工パッケージ": 0, "資源": 0, NEED_QTY: 0, NEED_RES: 0, NEED_MISC: 0, FROM_MEMORY: 0}
 
+    name = doc.meta.get("工事名") or Path(path).stem
+    pid = importer.create_project(conn, name, fy, [], region, work_type or doc.meta.get("適用工種", ""),
+                                  str(path), orderer)
+
     def code_of(ref: str) -> str:
-        return f"{did}/{ref}"
+        # 工事ごとに別のコードにする（同じ設計書を2回取り込んでも、前の工事の単価表を書き換えない）
+        return f"{did}#{pid}/{ref}"
 
     items = [importer.DesignItem(k + 1, it.level1, it.level2, it.level3, it.name, it.spec, it.unit, it.qty,
                                  code_of(it.ref) if it.ref else "", it.category)
              for k, it in enumerate(doc.items)]
-    name = doc.meta.get("工事名") or Path(path).stem
-    pid = importer.create_project(conn, name, fy, items, region, work_type or doc.meta.get("適用工種", ""),
-                                  str(path), orderer)
+    conn.executemany(
+        "INSERT INTO project_item(project_id, seq, level1, level2, level3, name, spec, unit, qty, bukake_code, category)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        [(pid, i.seq, i.level1, i.level2, i.level3, i.name, i.spec, i.unit, i.qty, i.bukake_code, i.category)
+         for i in items])
     with conn:
         conn.execute("UPDATE project SET price_date=?, doc_meta=? WHERE id=?",
-                     (doc.price_date, json.dumps(doc.meta, ensure_ascii=False), pid))
+                     (doc.price_date, json.dumps({**doc.meta, "設計書番号": did}, ensure_ascii=False), pid))
         for ref, tb in doc.tables.items():
             code = code_of(ref)
             tkey = _key(tb.name, tb.spec, tb.unit)
             if ref.startswith("施"):
                 stats["施工パッケージ"] += 1
                 conn.execute("DELETE FROM package_component WHERE fy=? AND package_code=?", (fy, code))
+                seen = conn.execute(
+                    "SELECT price, month, src FROM table_price WHERE table_key=? AND cond_key=? AND region IN (?, '')"
+                    " ORDER BY month DESC LIMIT 1", (tkey, _key(*tb.conditions), region)).fetchone()
+                if seen:  # 前に金入り設計書で同じ条件の施工パッケージの単価を見ている → その単価を使う
+                    conn.execute("INSERT OR REPLACE INTO package(fy, code, name, spec, unit, std_price, project_id, note)"
+                                 " VALUES (?,?,?,?,?,?,?,?)", (fy, code, tb.name, tb.spec, tb.unit, seen["price"], pid,
+                                                              f"{FROM_MEMORY}（{seen['src']} {seen['month'][:7]}）"))
+                    stats[FROM_MEMORY] += 1
+                    continue
                 conn.execute("INSERT OR REPLACE INTO package(fy, code, name, spec, unit, std_price, project_id)"
                              " VALUES (?,?,?,?,?,?,?)", (fy, code, tb.name, tb.spec, tb.unit, 0, pid))
                 seq = 0
@@ -490,12 +577,23 @@ def import_doc(conn, path: str | Path, work_type: str | None = None, orderer: st
                 continue
             stats["単価表"] += 1
             notes = []
+            misc_rate = 0.0
             conn.execute("DELETE FROM bukake_component WHERE fy=? AND bukake_code=?", (fy, code))
             seq = 0
             for ln in tb.lines:
                 if ln.name.startswith("諸雑費"):
-                    notes.append(f"{ln.name}は率が伏せてあります（{NEED_MISC}）")
-                    stats[NEED_MISC] += 1
+                    known = _misc_rate_of(tb)
+                    mem = conn.execute("SELECT qty FROM bukake_memory WHERE table_key=? AND line_key=?",
+                                       (tkey, MISC_KEY)).fetchone()
+                    if known is not None:
+                        misc_rate = known
+                    elif mem and mem["qty"] is not None:
+                        misc_rate = mem["qty"]
+                        notes.append(f"{ln.name}は{FROM_MEMORY}（{misc_rate:g}%）")
+                        stats[FROM_MEMORY] += 1
+                    else:
+                        notes.append(f"{ln.name}は率が伏せてあります（{NEED_MISC}）")
+                        stats[NEED_MISC] += 1
                     continue
                 seq += 1
                 lkey = _key(ln.name, ln.spec, ln.unit)
@@ -530,13 +628,186 @@ def import_doc(conn, path: str | Path, work_type: str | None = None, orderer: st
                 notes.append("条件: " + " / ".join(tb.conditions))
             conn.execute("INSERT OR REPLACE INTO bukake(fy, code, name, spec, unit, per_qty, misc_rate, note, project_id)"
                          " VALUES (?,?,?,?,?,?,?,?,?)",
-                         (fy, code, f"{tb.name}（{ref}号）", tb.spec, tb.unit, tb.per_qty or 1, 0, "\n".join(notes), pid))
+                         (fy, code, f"{tb.name}（{ref}号）", tb.spec, tb.unit, tb.per_qty or 1, misc_rate,
+                          "\n".join(notes), pid))
         audit.log(conn, pid, "金抜き設計書から作成",
                   f"{did} 明細{len(items)}行・単価表{stats['単価表']}・施工パッケージ{stats['施工パッケージ']}"
                   f"（数量を入れる {stats[NEED_QTY]}・単価を当てる {stats[NEED_RES]}）")
     stats["project_id"] = pid
     stats["doc_id"] = did
     return stats
+
+
+MISC_KEY = "__諸雑費率__"
+
+
+def _misc_rate_of(tb: UnitTable) -> float | None:
+    """金入りの単価表から諸雑費率（%）を割り出す：諸雑費の金額 ÷ ほかの行の金額の合計。"""
+    misc = [l for l in tb.lines if l.name.startswith("諸雑費") and l.amount is not None]
+    base = sum(l.amount for l in tb.lines if not l.name.startswith("諸雑費") and l.amount)
+    if not misc or not base:
+        return None
+    return round(sum(l.amount for l in misc) / base * 100, 2)
+
+
+def learn(conn, doc: KinnukiDoc, src: str = "") -> dict:
+    """金入り設計書から「答え」を覚える。
+    - 単価表の各行の数量と当てた資源（次の金抜き設計書で「前回の値」として入る）
+    - 単価表ごとの諸雑費率
+    - 物価資料などで年度の単価がない品目の単価（設計書実績として計算に使う）
+    - 単価表・施工パッケージの1単位あたりの単価（答え合わせ用、施工パッケージは次から単価として使う）"""
+    from . import audit
+    audit.require(conn, "edit")
+    fy = doc.fy or "R8"
+    region = re.sub(r"\s+", "", _n(doc.meta.get("単価地区", "")))
+    month = doc.price_date
+    st = {"数量": 0, "諸雑費率": 0, "単価（設計書実績）": 0, "単価表の単価": 0}
+    with conn:
+        for ref, tb in doc.tables.items():
+            tkey = _key(tb.name, tb.spec, tb.unit)
+            if tb.unit_price:
+                conn.execute("INSERT OR REPLACE INTO table_price(table_key, cond_key, region, month, price, src)"
+                             " VALUES (?,?,?,?,?,?)", (tkey, _key(*tb.conditions), region, month, tb.unit_price, src))
+                st["単価表の単価"] += 1
+            if ref.startswith("施"):
+                continue
+            rate = _misc_rate_of(tb)
+            if rate is not None:
+                conn.execute("INSERT OR REPLACE INTO bukake_memory(table_key, line_key, kind, res_code, qty, updated_at)"
+                             " VALUES (?,?,?,?,?,datetime('now','localtime'))", (tkey, MISC_KEY, "", "", rate))
+                st["諸雑費率"] += 1
+            for ln in tb.lines:
+                if ln.name.startswith("諸雑費"):
+                    continue
+                lkey = _key(ln.name, ln.spec, ln.unit)
+                old = conn.execute("SELECT * FROM bukake_memory WHERE table_key=? AND line_key=?", (tkey, lkey)).fetchone()
+                kind, res = (old["kind"], old["res_code"]) if old else ("", "")
+                m = None if ln.ref else _match_resource(conn, fy, ln)
+                if m and not res:
+                    kind, res = m[0], m[1]
+                if not res and not ln.ref and ln.price:
+                    # 年度の単価表に同じものがない資源も、設計書の単価がわかれば「設計書実績」の資源として使う
+                    kind, res = _guess_kind(ln.unit), "実績:" + re.sub(r"\s+", " ", _n(f"{ln.name} {ln.spec}")).strip()
+                if ln.qty is not None:
+                    conn.execute("INSERT OR REPLACE INTO bukake_memory(table_key, line_key, kind, res_code, qty, updated_at)"
+                                 " VALUES (?,?,?,?,?,datetime('now','localtime'))", (tkey, lkey, kind, res, ln.qty))
+                    st["数量"] += 1
+                if ln.price and not ln.ref and res:
+                    has = conn.execute("SELECT 1 FROM master_price WHERE fy=? AND code=? AND region IN (?, '')",
+                                       (fy, res, region)).fetchone()
+                    if not has:  # 年度の単価がない（物価資料の○など）ものだけ、設計書の単価を控える
+                        reg = region if conn.execute("SELECT 1 FROM public_item WHERE fy=? AND code=? AND region=?",
+                                                     (fy, res, region)).fetchone() else ""
+                        conn.execute("INSERT OR REPLACE INTO observed_price(fy, code, region, month, price, name, spec, unit, src)"
+                                     " VALUES (?,?,?,?,?,?,?,?,?)",
+                                     (fy, res, reg, month, ln.price, ln.name, ln.spec, ln.unit, src))
+                        st["単価（設計書実績）"] += 1
+        audit.log(conn, None, "金入り設計書から覚えた", f"{src} " + "、".join(f"{k}{v}件" for k, v in st.items()))
+    return st
+
+
+TOTAL_KEYS = {"直接工事費": "直接工事費", "共通仮設費": "共通仮設費", "純工事費": "純工事費", "現場管理費": "現場管理費",
+              "工事原価": "工事原価", "一般管理費等": "一般管理費等", "工事価格": "工事価格", "消費税相当額": "消費税相当額",
+              "工事費": "工事費計"}
+
+
+def attach_answers(conn, project_id: int, doc: KinnukiDoc) -> int:
+    """金入り設計書の金額を、その工事の答え合わせ（過去の積算結果）に入れる。"""
+    rows = []
+    for k, it in enumerate(doc.items, 1):
+        if it.amount is not None:
+            rows.append((project_id, str(k), it.amount))
+    for name, key in TOTAL_KEYS.items():
+        if name in doc.totals:
+            rows.append((project_id, key, doc.totals[name]))
+    for ref, tb in doc.tables.items():
+        if tb.unit_price is not None:
+            rows.append((project_id, ref, tb.unit_price))
+    with conn:
+        conn.execute("DELETE FROM reference_result WHERE project_id=?", (project_id,))
+        conn.executemany("INSERT OR REPLACE INTO reference_result(project_id, key, amount) VALUES (?,?,?)", rows)
+    return len(rows)
+
+
+def _line_key_from_src(src: str) -> str:
+    m = re.match(r"(.*?)(?: 〔.*〕)? \((.*)\)$", src or "")
+    body, unit = (m.group(1), m.group(2)) if m else (src or "", "")
+    parts = body.split(" ", 1)
+    return _key(parts[0], parts[1] if len(parts) > 1 else "", unit)
+
+
+def apply_memory(conn, project_id: int) -> int:
+    """覚えている数量・資源・諸雑費率・施工パッケージの単価を、すでにある工事の単価表に入れる
+    （「数量を入れる」「単価を当てる」「諸雑費率を入れる」の印が残っているところだけ）。入れた数を返す。"""
+    p = conn.execute("SELECT fy, region FROM project WHERE id=?", (project_id,)).fetchone()
+    fy, region = p["fy"], p["region"]
+    n = 0
+    with conn:
+        for b in list(conn.execute("SELECT * FROM bukake WHERE fy=? AND project_id=?", (fy, project_id))):
+            tkey = _key(re.sub(r"（[単施]\d+号）$", "", b["name"]), b["spec"], b["unit"])
+            for c in list(conn.execute("SELECT * FROM bukake_component WHERE fy=? AND bukake_code=?", (fy, b["code"]))):
+                note = c["note"] or ""
+                if NEED_QTY not in note and NEED_RES not in note:
+                    continue
+                mem = conn.execute("SELECT * FROM bukake_memory WHERE table_key=? AND line_key=?",
+                                   (tkey, _line_key_from_src(c["src"]))).fetchone()
+                if not mem:
+                    continue
+                notes = [x for x in note.split("・") if x]
+                qty, res, kind = c["qty"], c["res_code"], c["kind"]
+                if NEED_QTY in notes and mem["qty"] is not None:
+                    qty = mem["qty"]
+                    notes = [x for x in notes if x != NEED_QTY] + [FROM_MEMORY]
+                if NEED_RES in notes and mem["res_code"]:
+                    res, kind = mem["res_code"], mem["kind"] or kind
+                    notes = [x for x in notes if x != NEED_RES]
+                if (qty, res) != (c["qty"], c["res_code"]):
+                    conn.execute("UPDATE bukake_component SET qty=?, res_code=?, kind=?, note=? WHERE fy=? AND "
+                                 "bukake_code=? AND seq=?", (qty, res, kind, "・".join(dict.fromkeys(notes)), fy,
+                                                             b["code"], c["seq"]))
+                    n += 1
+            if NEED_MISC in (b["note"] or ""):
+                mem = conn.execute("SELECT qty FROM bukake_memory WHERE table_key=? AND line_key=?",
+                                   (tkey, MISC_KEY)).fetchone()
+                if mem and mem["qty"] is not None:
+                    note = "\n".join(l for l in (b["note"] or "").split("\n") if NEED_MISC not in l)
+                    conn.execute("UPDATE bukake SET misc_rate=?, note=? WHERE fy=? AND code=?",
+                                 (mem["qty"], note + f"\n諸雑費率は{FROM_MEMORY}（{mem['qty']:g}%）", fy, b["code"]))
+                    n += 1
+        for k in list(conn.execute("SELECT * FROM package WHERE fy=? AND project_id=? AND std_price=0", (fy, project_id))):
+            tkey = _key(k["name"], k["spec"], k["unit"])
+            seen = conn.execute("SELECT price, month, src FROM table_price WHERE table_key=? AND region IN (?, '')"
+                                " ORDER BY month DESC LIMIT 1", (tkey, region)).fetchone()
+            if seen:
+                conn.execute("DELETE FROM package_component WHERE fy=? AND package_code=?", (fy, k["code"]))
+                conn.execute("UPDATE package SET std_price=?, note=? WHERE fy=? AND code=?",
+                             (seen["price"], f"{FROM_MEMORY}（{seen['src']}）", fy, k["code"]))
+                n += 1
+    return n
+
+
+def find_project(conn, did: str) -> int | None:
+    r = conn.execute("SELECT id FROM project WHERE doc_meta LIKE ? ORDER BY id DESC LIMIT 1", (f"%{did}%",)).fetchone()
+    return r["id"] if r else None
+
+
+def import_priced(conn, path: str | Path, work_type: str | None = None, orderer: str = "奈良県") -> dict:
+    """金入り設計書：答えを覚え、同じ設計書の工事があれば答え合わせに金額を入れる（なければ工事を作ってから入れる）。"""
+    doc = parse(path)
+    if not doc.priced:
+        raise ValueError("金額が読み取れませんでした。金入りの設計書ではないようです。")
+    did = doc_id(path)
+    learned = learn(conn, doc, did)
+    pid = find_project(conn, did)
+    created = pid is None
+    st: dict = {}
+    if created:
+        st = import_doc(conn, path, work_type, orderer)
+        pid = st["project_id"]
+    filled = 0 if created else apply_memory(conn, pid)
+    n = attach_answers(conn, pid, doc)
+    return {"project_id": pid, "created": created, "learned": learned, "answers": n, "import": st, "doc_id": did,
+            "filled": filled}
 
 
 def remember(conn, fy: str, bukake_code: str, seq: int) -> None:

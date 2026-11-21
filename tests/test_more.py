@@ -288,13 +288,16 @@ def test_nara_pdf_uniform_and_book_items(tmp_path, conn, pid):
 
 
 # ---------------------------------------------------------------- 金抜き設計書（実施設計書）PDF
-def _kinnuki_pdf(path):
+def _kinnuki_pdf(path, priced=False):
     rl = pytest.importorskip("reportlab.pdfgen.canvas")
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.cidfonts import UnicodeCIDFont
     pdfmetrics.registerFont(UnicodeCIDFont("HeiseiKakuGo-W5"))
     H = 595
     c = rl.Canvas(str(path), pagesize=(842, H))
+
+    def P(words, extra):  # 金入りのときだけ単価・金額を足す
+        return words + extra if priced else words
 
     def page(rows, size=6):
         c.setFont("HeiseiKakuGo-W5", size)
@@ -317,29 +320,30 @@ def _kinnuki_pdf(path):
           (157, [(30, "基盤整備")]), (160, [(765, "レベル1")]), (178, [(365, "式"), (425, "1")]),
           (192, [(35, "樹木伐採工")]), (196, [(765, "レベル2")]), (213, [(365, "式"), (425, "1")]),
           (263, [(45, "樹木伐採"), (205, "幹周30cm未満")]), (266, [(765, "単"), (788, "1"), (797, "号")]),
-          (284, [(365, "本"), (421, "30")]),
-          (298, [(45, "伐木処分")]), (302, [(765, "単"), (788, "3"), (797, "号")]), (320, [(365, "m3"), (416, "14.0")]),
-          (334, [(45, "直接工事費")]), (355, [(365, "式"), (425, "1")])])
+          (284, P([(365, "本"), (421, "30")], [(484, "900"), (567, "27,000")])),
+          (298, [(45, "伐木処分")]), (302, [(765, "単"), (788, "3"), (797, "号")]), (320, P([(365, "m3"), (416, "14.0")], [(484, "1,500"), (567, "21,000")])),
+          (334, [(45, "直接工事費")]), (355, P([(365, "式"), (425, "1")], [(567, "48,000")]))])
     page([(48, [(235, "1"), (259, "次"), (295, "単"), (331, "価"), (367, "表")]),
           (80, [(31, "単"), (49, "1号"), (102, "樹木伐採"), (270, "幹周30cm未満")]),
-          (86, [(431, "単位"), (495, "本"), (553, "割戻数量"), (707, "単価")]), (95, [(669, "100")]),
+          (86, [(431, "単位"), (495, "本"), (553, "割戻数量"), (707, "単価")]), (95, P([(669, "100")], [(740, "900")])),
           (108, [(124, "名称・規格"), (334, "条件"), (432, "単位"), (488, "数量"), (560, "単価"), (650, "金額"), (750, "摘要")]),
-          (119, [(30, "普通作業員")]), (143, [(453, "人")]),
-          (156, [(30, "ﾁｪｰﾝｿｰ運転"), (707, "単"), (730, "2"), (744, "号")]), (179, [(453, "日")]),
-          (191, [(58, "計")]), (252, [(707, "円/本")]),
+          (119, [(30, "普通作業員")]), (143, P([(453, "人")], [(495, "3"), (556, "20,000"), (645, "60,000")])),
+          (156, [(30, "ﾁｪｰﾝｿｰ運転"), (707, "単"), (730, "2"), (744, "号")]),
+          (179, P([(453, "日")], [(495, "1.5"), (556, "20,000"), (645, "30,000")])),
+          (191, P([(58, "計")], [(645, "90,000")])), (252, [(707, "円/本")]),
           (299, [(174, "2"), (198, "次"), (234, "単"), (270, "価"), (306, "表(参考資料)")]),
           (331, [(31, "単"), (49, "2号"), (102, "ﾁｪｰﾝｿｰ運転")]),
           (338, [(431, "単位"), (495, "日"), (553, "割戻数量"), (707, "単価")]), (346, [(669, "1")]),
           (359, [(124, "名称・規格"), (334, "条件"), (432, "単位"), (488, "数量"), (560, "単価"), (650, "金額")]),
-          (370, [(30, "普通作業員")]), (395, [(453, "人")]),
-          (406, [(30, "軽油")]), (431, [(453, "L"), (505, "2.7")]),
-          (442, [(30, "諸雑費（率）"), (334, "率")]), (466, [(453, "式"), (505, "1")]),
+          (370, [(30, "普通作業員")]), (395, P([(453, "人")], [(495, "1"), (556, "20,000"), (645, "20,000")])),
+          (406, [(30, "軽油")]), (431, P([(453, "L"), (505, "2.7")], [(556, "150"), (645, "405")])),
+          (442, [(30, "諸雑費（率）"), (334, "率")]), (466, P([(453, "式"), (505, "1")], [(645, "408")])),
           (478, [(58, "計")])])
     page([(48, [(235, "1"), (259, "次"), (295, "単"), (331, "価"), (367, "表")]),
           (80, [(31, "単"), (49, "3号"), (102, "伐木処分")]),
           (86, [(431, "単位"), (495, "m3"), (553, "割戻数量"), (707, "単価")]), (95, [(669, "1")]),
           (108, [(124, "名称・規格"), (334, "条件"), (432, "単位"), (488, "数量"), (560, "単価")]),
-          (119, [(30, "処分費"), (80, "伐木")]), (143, [(453, "m3"), (505, "1")]),
+          (119, [(30, "処分費"), (80, "伐木")]), (143, P([(453, "m3"), (505, "1")], [(556, "1,500"), (645, "1,500")])),
           (191, [(58, "計")])])
     c.save()
 
@@ -365,9 +369,12 @@ def test_kinnuki_parse_and_import(tmp_path, conn):
     proj = conn.execute("SELECT * FROM project WHERE id=?", (pid,)).fetchone()
     assert (proj["region"], proj["work_type"], proj["price_date"]) == ("4地区", "公園工事", "2026-08-01")
     fy = "R8"
-    code1, code2 = "R08-K999999-00001/単1", "R08-K999999-00001/単2"
+    code1, code2 = f"R08-K999999-00001#{pid}/単1", f"R08-K999999-00001#{pid}/単2"
     comp = {r["seq"]: r for r in conn.execute("SELECT * FROM bukake_component WHERE bukake_code=?", (code1,))}
     assert comp[1]["res_code"] == "L01" and comp[2]["kind"] == "歩掛" and comp[2]["res_code"] == code2
+    # 同じ設計書を2回取り込んでも、前の工事の単価表はそのまま
+    other = kinnuki.import_doc(conn, p)["project_id"]
+    assert conn.execute("SELECT project_id FROM bukake WHERE code=?", (code1,)).fetchone()[0] == pid != other
     # 伏せてある数量を入れると単価が出る：単2（1日）= 普通作業員1人×20000 + 軽油2.7L×0（軽油は未登録）
     kinnuki.set_component(conn, fy, code2, 1, qty=1.0)
     kinnuki.set_component(conn, fy, code1, 1, qty=3.0)   # 100本あたり 3人
@@ -380,4 +387,68 @@ def test_kinnuki_parse_and_import(tmp_path, conn):
     # 同じ単価表が出てくる次の金抜き設計書では、入れた数量が自動で入る
     st2 = kinnuki.import_doc(conn, p)
     assert st2["前回の値"] == 3 and st2["数量を入れる"] == 0
+    st2 = {**st2}
     assert calc.calculate(conn, st2["project_id"]).items[0].unit_price == item.unit_price
+
+
+def test_kinnuki_priced_learn_and_answers(tmp_path, conn):
+    """金入り設計書から答え（数量・諸雑費率・物価資料の単価・単価表の単価）を覚え、答え合わせに入れる。"""
+    from sekisan import kinnuki, pipeline
+    kin, pri = tmp_path / "k.pdf", tmp_path / "p.pdf"
+    _kinnuki_pdf(kin)
+    _kinnuki_pdf(pri, priced=True)
+    d = kinnuki.parse(pri)
+    assert d.priced and not kinnuki.parse(kin).priced
+    assert (d.items[0].price, d.items[0].amount) == (900, 27000)
+    assert d.totals["直接工事費"] == 48000
+    t1, t2 = d.tables["単1"], d.tables["単2"]
+    assert (t1.per_qty, t1.unit_price, t1.total) == (100, 900, 90000)
+    assert [(l.qty, l.price, l.amount) for l in t1.lines] == [(3, 20000, 60000), (1.5, 20000, 30000)]
+    assert kinnuki._misc_rate_of(t2) == 2.0          # 408 ÷ (20,000 + 405)
+
+    # 処分費は県の資料で○（物価資料）の品目として控えてある
+    conn.execute("INSERT INTO public_item(fy, kind, code, name, spec, unit, region, source) "
+                 "VALUES ('R8','材料','Z9999','処分費','伐木','m3','','物価資料')")
+    conn.commit()
+    # 先に金抜きで工事を作る（数量は伏せてある）
+    st0 = kinnuki.import_doc(conn, kin)
+    assert st0["数量を入れる"] == 3
+    # 金入りを取り込むと：覚えて、同じ設計書番号の工事の答え合わせに金額が入る（工事は増えない）
+    r = kinnuki.import_priced(conn, pri)
+    assert r["project_id"] == st0["project_id"] and not r["created"]
+    assert r["filled"] >= 4   # 先に作ってあった工事の単価表にも、覚えた数量・諸雑費率が入る
+    c1 = [(x["qty"], x["note"]) for x in conn.execute(
+        "SELECT qty, note FROM bukake_component WHERE bukake_code=? ORDER BY seq",
+        (f"R08-K999999-00001#{st0['project_id']}/単1",))]
+    assert [q for q, _ in c1] == [3, 1.5] and all("数量を入れる" not in n for _, n in c1)
+    assert r["learned"]["数量"] >= 4 and r["learned"]["諸雑費率"] == 1 and r["learned"]["単価（設計書実績）"] == 2  # 処分費（○の品目）と軽油（単価表に同じ規格がない）
+    checks = {c.key: c for c in pipeline.verify(conn, r["project_id"])}
+    assert {"1", "2", "直接工事費", "単1"} <= set(checks)
+    assert checks["直接工事費"].reference == 48000 and checks["単1"].reference == 900
+
+    # 次の金抜き設計書では、覚えた数量・諸雑費率・物価資料の単価が自動で入る
+    st2 = kinnuki.import_doc(conn, kin)
+    assert st2["数量を入れる"] == 0 and st2["諸雑費率を入れる"] == 0 and st2["前回の値"] >= 4
+    res = calc.calculate(conn, st2["project_id"])
+    disposal = res.items[1]
+    assert disposal.unit_price == 1500 and disposal.how == "歩掛"
+    assert any(l.source == "設計書実績" for l in disposal.detail.lines)
+    code2 = f"R08-K999999-00001#{st2['project_id']}/単2"
+    assert conn.execute("SELECT misc_rate FROM bukake WHERE code=? AND project_id=?",
+                        (code2, st2["project_id"])).fetchone()[0] == 2.0
+
+
+def test_award_threshold_accuracy(conn):
+    from sekisan import awards
+    awards.add(conn, name="A", planned=10_000_000, threshold=9_000_000, our_threshold=9_000_000, tie_count=5,
+               lottery="外れ", award_price=9_000_000, winner="B建設")
+    awards.add(conn, name="B", planned=20_000_000, threshold=18_000_000, our_threshold=18_000_350, tie_count=3,
+               lottery="当たり", award_price=18_000_000, winner="自社")
+    awards.add(conn, name="C", planned=5_000_000, threshold=4_500_000, our_threshold=4_499_000)
+    st = awards.stats(conn)
+    assert (st.th_n, st.th_exact) == (3, 1)
+    assert st.th_mae == pytest.approx((0 + 350 + 1000) / 3) and st.th_max == 1000
+    assert st.th_bias == pytest.approx((0 + 350 - 1000) / 3)
+    assert (st.tie_avg, st.lottery_n, st.lottery_wins) == (4, 2, 1)
+    with pytest.raises(ValueError):
+        awards.add(conn, name="D", lottery="まだ")

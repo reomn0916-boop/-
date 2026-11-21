@@ -222,7 +222,9 @@ def book_items_for(conn: sqlite3.Connection, project_id: int) -> list[BookItem]:
     out = []
     for code, used in want.items():
         has = conn.execute("SELECT 1 FROM master_price WHERE fy=? AND code=? AND region IN (?, '')",
-                           (p["fy"], code, p["region"])).fetchone()
+                           (p["fy"], code, p["region"])).fetchone() or conn.execute(
+            "SELECT 1 FROM observed_price WHERE fy=? AND code=? AND region IN (?, '')",
+            (p["fy"], code, p["region"])).fetchone()
         if has:
             continue
         r = conn.execute("SELECT * FROM public_item WHERE fy=? AND code=? AND region IN (?, '') AND price IS NULL"

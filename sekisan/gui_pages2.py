@@ -362,12 +362,15 @@ class PagesMixin2:
         dates = schedule.get(self.conn, self.pid)
         vals = {"date": dates.get("開札日", QDate.currentDate().toString("yyyy-MM-dd")), "orderer": p["orderer"],
                 "name": p["name"], "work_type": p["work_type"], "our_bid": yen(p["bid_price"]) if p["bid_price"] else "",
-                "our_estimate": str(self.design.summary.price)}
+                "our_estimate": str(self.design.summary.price), "our_threshold": str(self.design.summary.threshold),
+                "publish": ""}
         self.go("awards")
+        self.a_project_id = self.pid
         for k, e in self.a_in.items():
             e.setText(str(vals.get(k, "")).replace(",", "") if k in vals else "")
         self.a_in["planned"].setFocus()
-        self.status.showMessage("工事の情報を入れました。予定価格・落札額・落札者を入れて「登録」を押してください。", 8000)
+        self.status.showMessage("工事の情報と自社の試算を入れました。公表された予定価格・最低制限価格・落札額・落札者・"
+                                "同額の社数・くじの結果を入れて「登録」を押してください。", 10000)
 
     def _deadline_card(self) -> Card:
         c = Card("近い締切（30日以内）")

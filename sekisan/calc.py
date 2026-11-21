@@ -243,6 +243,11 @@ class Calculator:
                 return rv["price"], base["name"] if base else code, base["unit"] if base else "", "改定"
         if base:
             return base["price"], base["name"], base["unit"], "設計"
+        obs = self.conn.execute(
+            "SELECT * FROM observed_price WHERE fy=? AND code=? AND region IN (?, '') AND (?='' OR month<=?)"
+            " ORDER BY region DESC, month DESC LIMIT 1", (self.fy, code, self.region, self.as_of, self.as_of)).fetchone()
+        if obs:
+            return obs["price"], f"{obs['name']} {obs['spec']}".strip() or code, obs["unit"], "設計書実績"
         if kind == "機械":
             m = self.machine_price(code, _depth)
             if m is not None:

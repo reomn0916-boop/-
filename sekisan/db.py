@@ -242,6 +242,31 @@ CREATE TABLE IF NOT EXISTS bukake_memory (
     PRIMARY KEY (table_key, line_key)
 );
 
+-- 金入り設計書に載っていた単価（物価資料の品目など、年度の単価がないときに使う）
+CREATE TABLE IF NOT EXISTS observed_price (
+    fy TEXT NOT NULL,
+    code TEXT NOT NULL,
+    region TEXT NOT NULL DEFAULT '',
+    month TEXT NOT NULL DEFAULT '',    -- 単価適用年月（YYYY-MM-01）
+    price REAL NOT NULL,
+    name TEXT NOT NULL DEFAULT '',
+    spec TEXT NOT NULL DEFAULT '',
+    unit TEXT NOT NULL DEFAULT '',
+    src TEXT NOT NULL DEFAULT '',      -- どの設計書から
+    PRIMARY KEY (fy, code, region, month)
+);
+
+-- 金入り設計書に載っていた単価表・施工パッケージの単価（答え合わせと、施工パッケージの単価に使う）
+CREATE TABLE IF NOT EXISTS table_price (
+    table_key TEXT NOT NULL,
+    cond_key TEXT NOT NULL DEFAULT '',  -- 条件（J01〜）
+    region TEXT NOT NULL DEFAULT '',
+    month TEXT NOT NULL DEFAULT '',
+    price REAL NOT NULL,
+    src TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (table_key, cond_key, region, month)
+);
+
 -- 県の単価資料に載っている品目（単価が○＝物価資料、空欄のものも含めて控える）
 CREATE TABLE IF NOT EXISTS public_item (
     fy TEXT NOT NULL,
@@ -360,4 +385,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
     _add_column(conn, "bukake_component", "note", "TEXT NOT NULL DEFAULT ''") # 数量を入れる・単価を当てる など
     _add_column(conn, "package", "project_id", "INTEGER")
     _add_column(conn, "package_component", "src", "TEXT NOT NULL DEFAULT ''")
+    _add_column(conn, "package", "note", "TEXT NOT NULL DEFAULT ''")
+    # 落札実績：最低制限価格の試算のずれ・同額・くじ
+    _add_column(conn, "award", "our_threshold", "REAL NOT NULL DEFAULT 0")   # 自社が試算した最低制限価格
+    _add_column(conn, "award", "tie_count", "INTEGER NOT NULL DEFAULT 0")    # 落札額と同額だった会社の数
+    _add_column(conn, "award", "lottery", "TEXT NOT NULL DEFAULT ''")        # くじ：当たり / 外れ / （空欄＝くじなし）
+    _add_column(conn, "award", "publish", "TEXT NOT NULL DEFAULT ''")        # 最低制限価格の公表：事前 / 事後
+    _add_column(conn, "award", "project_id", "INTEGER")
     conn.commit()

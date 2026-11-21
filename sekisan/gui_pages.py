@@ -686,9 +686,9 @@ class PagesMixin:
         krow.setSpacing(12)
         self.a_kc = Kpi("件数")
         self.a_kr = Kpi("平均の落札率")
-        self.a_kt = Kpi("基準価格 ÷ 予定価格（平均）")
+        self.a_kt = Kpi("最低制限価格の試算のずれ")
         self.a_ka = Kpi("自社積算 ÷ 予定価格（精度）")
-        self.a_kw = Kpi("自社の受注")
+        self.a_kw = Kpi("自社の受注・くじ")
         for k in (self.a_kc, self.a_kr, self.a_kt, self.a_ka, self.a_kw):
             krow.addWidget(k)
         v.addLayout(krow)
@@ -710,8 +710,8 @@ class PagesMixin:
         bar.addWidget(ib)
         bar.addWidget(db_)
         v.addLayout(bar)
-        self.a_table = _table(["日付", "発注者", "工事名", "工種区分", "予定価格", "基準価格", "落札額", "落札率", "落札者",
-                               "自社入札", "自社積算", "精度"], 2)
+        self.a_table = _table(["日付", "発注者", "工事名", "工種区分", "予定価格", "基準価格", "自社の試算", "ずれ",
+                               "落札額", "落札率", "同額", "くじ", "落札者", "自社入札", "自社積算", "精度"], 2)
         v.addWidget(self.a_table, 1)
 
         add = Card("落札結果を登録")
@@ -719,7 +719,9 @@ class PagesMixin:
         g.setHorizontalSpacing(8)
         self.a_in = {}
         fields = [("date", "日付"), ("orderer", "発注者"), ("name", "工事名"), ("work_type", "工種区分"),
-                  ("planned", "予定価格"), ("threshold", "基準価格"), ("award_price", "落札額"), ("winner", "落札者"),
+                  ("planned", "予定価格（税抜）"), ("threshold", "最低制限・基準価格（公表）"),
+                  ("our_threshold", "自社が試算した基準価格"), ("award_price", "落札額"), ("winner", "落札者"),
+                  ("tie_count", "落札額と同額の社数"), ("lottery", "くじ（当たり/外れ）"), ("publish", "公表（事前/事後）"),
                   ("our_bid", "自社入札額"), ("our_estimate", "自社積算額")]
         for i, (k, lab) in enumerate(fields):
             e = QLineEdit()
@@ -760,24 +762,39 @@ class PagesMixin:
         for i, r in enumerate(rs):
             ratio = f"{r['award_price'] / r['planned'] * 100:.2f}%" if r["planned"] and r["award_price"] else ""
             acc = f"{r['our_estimate'] / r['planned'] * 100:.1f}%" if r["planned"] and r["our_estimate"] else ""
+            err = (r["our_threshold"] - r["threshold"]) if r["our_threshold"] and r["threshold"] else None
+            err_t = "" if err is None else ("的中" if abs(err) < 1 else f"{'+' if err > 0 else '−'}{yen(abs(err))}")
+            won = r["winner"] == "自社" or r["lottery"] == "当たり"
             _set_row(self.a_table, i, [r["date"], r["orderer"], r["name"], r["work_type"], yen(r["planned"]),
-                                       yen(r["threshold"]), yen(r["award_price"]), ratio, r["winner"],
-                                       yen(r["our_bid"]), yen(r["our_estimate"]), acc],
-                     right={4, 5, 6, 7, 9, 10, 11}, tone="ok" if r["winner"] == "自社" else "", tone_col=8)
+                                       yen(r["threshold"]), yen(r["our_threshold"]) if r["our_threshold"] else "", err_t,
+                                       yen(r["award_price"]), ratio, f"{r['tie_count']}社" if r["tie_count"] else "",
+                                       r["lottery"], r["winner"], yen(r["our_bid"]), yen(r["our_estimate"]), acc],
+                     right={4, 5, 6, 7, 8, 9, 10, 13, 14, 15}, tone="ok" if won else "", tone_col=12)
+            if err is not None:
+                cell = self.a_table.item(i, 7)
+                cell.setForeground(QBrush(color("ok" if abs(err) < 1 else "bad")))
             self.a_table.item(i, 0).setData(Qt.UserRole, r["id"])
-        for c, wd in enumerate([90, 120, 200, 110, 100, 100, 100, 70, 90, 100, 100, 60]):
+        for c, wd in enumerate([86, 110, 180, 100, 96, 96, 96, 76, 96, 62, 50, 50, 80, 96, 96, 54]):
             self.a_table.setColumnWidth(c, wd)
         st = awards.stats(self.conn, o, wk)
         self.a_kc.set(f"{st.count} 件")
         self.a_kr.set("—" if st.award_ratio is None else f"{st.award_ratio * 100:.2f}%")
-        self.a_kt.set("—" if st.threshold_ratio is None else f"{st.threshold_ratio * 100:.2f}%")
+        if st.th_n:
+            bias = "自社が高め" if (st.th_bias or 0) > 0 else ("自社が低め" if (st.th_bias or 0) < 0 else "片寄りなし")
+            self.a_kt.set(f"的中 {st.th_exact} / {st.th_n}",
+                          f"平均 ±{yen(st.th_mae)}円・最大 {yen(st.th_max)}円・{bias}",
+                          "ok" if st.th_exact == st.th_n else "warn")
+        else:
+            self.a_kt.set("—", "「自社が試算した基準価格」を入れると出ます")
         if st.accuracy is None:
             self.a_ka.set("—", "自社積算額の入った結果が必要です")
         else:
             sd = f"ばらつき ±{st.accuracy_sd * 100:.1f}%" if st.accuracy_sd is not None else ""
             self.a_ka.set(f"{st.accuracy * 100:.1f}%", ("自社が低めに見ている " if st.accuracy < 1 else "自社が高めに見ている ")
                           + sd, "warn" if abs(st.accuracy - 1) > 0.03 else "ok")
-        self.a_kw.set(f"{st.win_count} 件", f"{st.win_count / st.count * 100:.0f}%" if st.count else "")
+        lot = f"くじ {st.lottery_wins}/{st.lottery_n} 勝" if st.lottery_n else "くじなし"
+        tie = f"・同額 平均{st.tie_avg:.1f}社" if st.tie_avg else ""
+        self.a_kw.set(f"{st.win_count} 件", lot + tie)
 
     def _add_award(self) -> None:
         kw = {}
@@ -791,8 +808,10 @@ class PagesMixin:
                     return
             else:
                 kw[k] = t
+        kw["project_id"] = getattr(self, "a_project_id", None)
         if self.guard(awards.add, self.conn, **kw) is None:
             return
+        self.a_project_id = None
         for k, e in self.a_in.items():
             if k != "date":
                 e.clear()

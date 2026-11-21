@@ -28,6 +28,18 @@ def verify(conn: sqlite3.Connection, project_id: int, res: calc.Result | None = 
     res = res or calc.calculate(conn, project_id)
     ours: dict[str, float] = {str(i.seq): i.amount for i in res.items}
     ours.update({n: a for n, _, a in res.summary.as_rows()})
+    # 金抜き設計書から作った単価表（単1・施1 …）の1単位あたりの単価
+    p = conn.execute("SELECT * FROM project WHERE id=?", (project_id,)).fetchone()
+    cl = calc.Calculator(conn, p["fy"], p["region"], calc.DESIGN, calc.project_conditions(conn, project_id),
+                         p["orderer"], p["price_date"])
+    for b in conn.execute("SELECT code FROM bukake WHERE fy=? AND project_id=?", (p["fy"], project_id)):
+        up = cl.unit_price(b["code"])
+        if up:
+            ours[b["code"].split("/")[-1]] = up.price
+    for k in conn.execute("SELECT code FROM package WHERE fy=? AND project_id=?", (p["fy"], project_id)):
+        up = cl.package_price(k["code"])
+        if up:
+            ours[k["code"].split("/")[-1]] = up.price
     checks = []
     for r in conn.execute("SELECT key, amount FROM reference_result WHERE project_id=? ORDER BY rowid", (project_id,)):
         checks.append(Check(r["key"], ours.get(r["key"], 0.0), r["amount"]))
