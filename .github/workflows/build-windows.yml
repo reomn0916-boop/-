@@ -5,11 +5,16 @@ on:
     branches: ["**"]
   workflow_dispatch:
 
+permissions:
+  contents: write   # 「最新版」（自動更新用）を公開するため
+
 jobs:
   build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 20   # 変更内容（コミットの見出し）を更新の案内に出すため
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -17,6 +22,12 @@ jobs:
         run: pip install -r requirements.txt pytest pyinstaller==6.11.1
       - name: テスト
         run: python -m pytest -q
+      - name: 版の番号を入れる
+        shell: pwsh
+        run: |
+          $v = (Get-Date).ToUniversalTime().AddHours(9).ToString("yyyy.MM.dd.HHmm") + "-" + "${{ github.sha }}".Substring(0, 7)
+          "VERSION = `"$v`"`nCOMMIT = `"${{ github.sha }}`"`n" | Out-File -Encoding utf8 sekisan/_version.py
+          "APP_VERSION=$v" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
       - name: exeを作る
         run: pyinstaller --noconfirm --windowed --name 積算アプリ --collect-data reportlab --collect-submodules reportlab launcher.py
       - name: 見本データを同梱
@@ -26,3 +37,19 @@ jobs:
         with:
           name: 積算アプリ-windows
           path: dist/積算アプリ
+      - name: 「最新版」として公開（ソフトの自動更新用）
+        if: github.ref_name == 'claude/dazzling-volta-wgnbkn' || github.ref_name == 'main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          Compress-Archive -Path dist/積算アプリ -DestinationPath sekisan-windows.zip
+          $notes = @(git log -8 --pretty=format:%s)
+          $info = [ordered]@{ version = $env:APP_VERSION; commit = "${{ github.sha }}";
+                              built_at = (Get-Date).ToUniversalTime().ToString("o"); notes = $notes }
+          $info | ConvertTo-Json | Out-File -Encoding utf8 version.json
+          gh release view latest *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create latest --title "最新版（自動更新用）" --notes "積算アプリの最新版です。ソフトはここから自動で更新します。" --latest
+          }
+          gh release upload latest sekisan-windows.zip version.json --clobber

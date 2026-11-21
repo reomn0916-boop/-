@@ -6,3 +6,4 @@ dist/
 *.spec
 *.sqlite
 出力/
+sekisan/_version.py

@@ -376,3 +376,124 @@ class StandardsPageMixin:
         self._refresh_standards()
         self.recalc()
         self.status.showMessage(msg + "（開いている工事を計算し直しました）", 8000)
+
+
+# ====================================================================== ソフトの更新（設定の画面・起動時）
+from PySide6.QtCore import QThread, Signal  # noqa: E402
+
+
+class _UpdateCheck(QThread):
+    done = Signal(object, list)
+
+    def run(self):  # noqa: D401
+        from . import updater
+        try:
+            rel, errors = updater.check()
+        except Exception as e:   # noqa: BLE001
+            rel, errors = None, [str(e)]
+        self.done.emit(rel, errors)
+
+
+class UpdateMixin:
+    def _update_card(self) -> Card:
+        from PySide6.QtWidgets import QCheckBox
+
+        from . import settings, updater
+        c = Card("ソフトの更新", "変更があるたびに新しい版が公開されます。起動したときに確かめ、「更新する」を押すと、"
+                 "取ってきて入れ替え、起動し直します（データファイルと設定はそのまま）。取ってきた版は共有フォルダの「更新」にも置くので、"
+                 "ほかのパソコンはそこから更新できます。")
+        self.up_ver = QLabel(f"いまの版：{updater.current_version()}")
+        c.lay.addWidget(self.up_ver)
+        s = settings.load()
+        self.up_auto_check = QCheckBox("起動したときに新しい版を確かめる")
+        self.up_auto_check.setChecked(s.get("update_check", True))
+        self.up_silent = QCheckBox("新しい版があれば、聞かずに更新する")
+        self.up_silent.setChecked(s.get("update_silent", False))
+        for cb in (self.up_auto_check, self.up_silent):
+            cb.toggled.connect(self._save_update_settings)
+            c.lay.addWidget(cb)
+        h = QHBoxLayout()
+        b = QPushButton("今すぐ確かめる")
+        b.clicked.connect(lambda: self._check_update(manual=True))
+        h.addWidget(b)
+        h.addStretch(1)
+        c.lay.addLayout(h)
+        return c
+
+    def _save_update_settings(self, *_):
+        from . import settings
+        s = settings.load()
+        s["update_check"] = self.up_auto_check.isChecked()
+        s["update_silent"] = self.up_silent.isChecked()
+        settings.save(s)
+
+    def _update_on_start(self) -> None:
+        from . import settings, updater
+        if not updater.is_frozen() or not settings.load().get("update_check", True):
+            return
+        self._check_update(manual=False)
+
+    def _check_update(self, manual: bool = False) -> None:
+        if getattr(self, "_up_worker", None) and self._up_worker.isRunning():
+            return
+        self._up_manual = manual
+        self._up_worker = _UpdateCheck()
+        self._up_worker.done.connect(self._update_checked)
+        self._up_worker.start()
+        if manual:
+            self.status.showMessage("新しい版を確かめています…", 5000)
+
+    def _update_checked(self, rel, errors) -> None:
+        from . import settings, updater
+        cur = updater.current_version()
+        if not rel:
+            if self._up_manual:
+                QMessageBox.warning(self, "ソフトの更新", "新しい版を確かめられませんでした。\n" + "\n".join(errors[:3]))
+            return
+        if not rel.newer_than(cur):
+            if self._up_manual:
+                QMessageBox.information(self, "ソフトの更新", f"いまの版（{cur}）が最新です。"
+                                        + ("\n（開発用に Python で動かしているときは更新しません）" if cur == "開発版" else ""))
+            return
+        notes = "\n".join(f"・{n}" for n in rel.notes[:8])
+        silent = settings.load().get("update_silent", False) and not self._up_manual
+        if not silent and QMessageBox.question(
+                self, "ソフトの更新", f"新しい版があります。\n\nいまの版：{cur}\n新しい版：{rel.version}（{rel.source}）\n\n"
+                f"主な変更：\n{notes}\n\n今すぐ更新しますか？（ソフトを閉じて入れ替え、起動し直します）") != QMessageBox.Yes:
+            return
+        self._do_update(rel)
+
+    def _do_update(self, rel) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from PySide6.QtWidgets import QApplication, QProgressDialog
+
+        from . import updater
+        prog = QProgressDialog("新しい版を取ってきています…", None, 0, 100, self)
+        prog.setWindowTitle("ソフトの更新")
+        prog.setWindowModality(Qt.WindowModal)
+        prog.setMinimumDuration(0)
+
+        def step(got, total):
+            if total:
+                prog.setMaximum(total)
+                prog.setValue(got)
+            QApplication.processEvents()
+        try:
+            zp = updater.download(rel, Path(tempfile.gettempdir()) / "積算アプリ_更新", step)
+            prog.setLabelText("入れ替えの準備をしています…")
+            QApplication.processEvents()
+            updater.apply(zp)
+        except Exception as e:   # noqa: BLE001
+            prog.close()
+            QMessageBox.warning(self, "ソフトの更新", f"更新できませんでした：{e}\n（今の版のまま使えます）")
+            return
+        prog.close()
+        try:
+            from . import audit
+            audit.log(self.conn, None, "ソフトを更新", f"{updater.current_version()} → {rel.version}")
+        except Exception:   # noqa: BLE001
+            pass
+        QMessageBox.information(self, "ソフトの更新", "ソフトを閉じて入れ替えます。数秒後に新しい版が起動します。")
+        QApplication.quit()

@@ -17,7 +17,7 @@ from . import audit, awards, calc, db, importer, pipeline, settings, theme
 from .gui_pages import AddItemDialog, PagesMixin
 from .gui_pages2 import BookPageMixin, PagesMixin2
 from .gui_pages3 import AutoFetchMixin, TablesPageMixin
-from .gui_pages5 import StandardsPageMixin
+from .gui_pages5 import StandardsPageMixin, UpdateMixin
 from .gui_pages4 import DisposalPageMixin, KoukokuMixin, ReversePanelMixin, SekopkgMixin, SubmissionPageMixin
 from . import kinnuki
 from . import backup
@@ -103,7 +103,8 @@ class ItemFilter(QSortFilterProxyModel):
 
 
 class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, AutoFetchMixin, DisposalPageMixin, ReversePanelMixin,
-                 SubmissionPageMixin, SekopkgMixin, KoukokuMixin, StandardsPageMixin, QMainWindow):
+                 SubmissionPageMixin, SekopkgMixin, KoukokuMixin, StandardsPageMixin, UpdateMixin,
+                 QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("公共工事 積算アプリ")
@@ -164,6 +165,7 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, AutoFe
         self.go("items" if self.pid is not None else "new")
         self._refresh_autofetch()
         QTimer.singleShot(1500, self._autofetch_on_start)  # 画面が出てから、週1回だけ県のサイトを確かめる
+        QTimer.singleShot(3000, self._update_on_start)     # 新しい版があるか確かめる
 
     # ================================================================ 骨組み
     def _sidebar(self) -> QWidget:
@@ -1292,6 +1294,7 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, AutoFe
         row2 = QHBoxLayout()
         row2.setSpacing(16)
         row2.addWidget(u, 1)
+        v.addWidget(self._update_card())
         k = Card("ショートカット")
         k.lay.addWidget(QLabel("Ctrl+F　明細を絞り込む　／　F5　再計算\n明細の「コード」欄をダブルクリック　候補から選んで当てる"))
         row2.addWidget(k, 1)
