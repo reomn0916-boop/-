@@ -36,6 +36,13 @@ PER_STOCK_NEWS = 25       # 個別にニュースを検索する銘柄の数（�
 NEWS_KEEP_DAYS = 4        # これより古いニュースは捨てる
 HOLD_DAYS = 15            # 検証で最長何営業日持つか
 TRACK_DAYS = 60           # 注目銘柄の成績を何日分追うか
+# ---- 自分の売買ルール（ルール一覧.xlsx）から決めた数値 ----
+MIN_TURNOVER_OKU = 3      # 売買代金が少なすぎる銘柄は避ける（1日 数億円以上）
+MIN_RR = 2.0              # 利確幅は損切り幅の2倍以上
+SR_LOOKBACK = 120         # 支持線・抵抗線を探す日数（日足の3〜6か月）
+PIVOT_W = 3               # 前後この日数でいちばん安い（高い）日を「反発した日」とみなす
+MIN_TOUCHES = 2           # 支持線・抵抗線とみなす反発の回数
+EARNINGS_WINDOW_DAYS = 21 # 決算をまたがない：この日数（約15営業日）以内に決算があれば買わない
 
 INDICES = [
     {"sym": "^N225", "name": "日経平均", "kind": "jp"},
@@ -145,6 +152,45 @@ def fetch_daily(sym: str) -> dict | None:
             print(f"  ! {sym} ({host}): {e}", file=sys.stderr)
         time.sleep(0.5)
     return None
+
+
+class YahooCal:
+    """決算発表日を Yahoo Finance から取る（取れない銘柄は None。アプリでは「要確認」）。"""
+
+    def __init__(self):
+        import http.cookiejar
+        self.op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        self.op.addheaders = [("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36")]
+        self.crumb = None
+        try:
+            try:
+                self.op.open("https://fc.yahoo.com", timeout=15)
+            except Exception:  # noqa: BLE001  404 でもクッキーは付く
+                pass
+            self.crumb = self.op.open("https://query1.finance.yahoo.com/v1/test/getcrumb", timeout=15).read().decode().strip()
+        except Exception as e:  # noqa: BLE001
+            print(f"  ! 決算日の準備に失敗: {e}", file=sys.stderr)
+
+    def earnings(self, sym: str) -> str | None:
+        if not self.crumb:
+            return None
+        url = (f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{urllib.parse.quote(sym)}"
+               f"?modules=calendarEvents&crumb={urllib.parse.quote(self.crumb)}")
+        try:
+            data = json.loads(self.op.open(url, timeout=15).read())
+            dates = data["quoteSummary"]["result"][0]["calendarEvents"]["earnings"]["earningsDate"]
+            today = datetime.now(JST).date()
+            ds = sorted(datetime.fromtimestamp(d["raw"], JST).date() for d in dates if d.get("raw"))
+            ds = [d for d in ds if d >= today - timedelta(days=1)]
+            return ds[0].isoformat() if ds else None
+        except Exception:  # noqa: BLE001
+            return None
+
+
+def days_until(date_s: str | None) -> int | None:
+    if not date_s:
+        return None
+    return (datetime.fromisoformat(date_s).date() - datetime.now(JST).date()).days
 
 
 def fetch_rss(url: str, source: str) -> list[dict]:
@@ -265,12 +311,40 @@ def indicators(px: dict) -> dict:
         "rsi": rsi(c), "atr": atr(h, l, c),
         "hist": [m - s for m, s in zip(macd, sig)],
         "vma20": sma(v, 20),
+        "ma65": sma(c, 65),  # 13週線のかわり（週足の大きな流れ）
         "tv": [ci * vi for ci, vi in zip(c, v)],
+        "piv_lo": [k for k in range(PIVOT_W, len(c) - PIVOT_W) if l[k] == min(l[k - PIVOT_W:k + PIVOT_W + 1])],
+        "piv_hi": [k for k in range(PIVOT_W, len(c) - PIVOT_W) if h[k] == max(h[k - PIVOT_W:k + PIVOT_W + 1])],
     }
 
 
-def evaluate(ind: dict, i: int, bench_ret20: float | None) -> dict:
-    """i 日目の終値の時点で、型・点数・売買の目安を判定する。"""
+def levels(prices: list[float], tol: float) -> list[tuple[float, int]]:
+    """近い値段どうしをまとめて (水準, 反発の回数) にする。"""
+    out, grp = [], []
+    for p in sorted(prices):
+        if grp and p - grp[0] > tol:
+            out.append((sum(grp) / len(grp), len(grp)))
+            grp = []
+        grp.append(p)
+    if grp:
+        out.append((sum(grp) / len(grp), len(grp)))
+    return out
+
+
+def support_resistance(ind: dict, i: int, atr_now: float) -> tuple[list, list]:
+    """i 日目の時点で確定している（未来を見ない）反発の安値・高値から、支持線と抵抗線を出す。"""
+    lo_k = [k for k in ind["piv_lo"] if i - SR_LOOKBACK <= k <= i - PIVOT_W]
+    hi_k = [k for k in ind["piv_hi"] if i - SR_LOOKBACK <= k <= i - PIVOT_W]
+    tol = max(0.5 * atr_now, ind["c"][i] * 0.012)
+    sup = [(lv, n) for lv, n in levels([ind["l"][k] for k in lo_k], tol) if n >= MIN_TOUCHES]
+    res = [(lv, n) for lv, n in levels([ind["h"][k] for k in hi_k], tol) if n >= MIN_TOUCHES]
+    return sup, res
+
+
+def evaluate(ind: dict, i: int, bench_ret20: float | None, mkt_up: bool | None = None,
+             earn_days: int | None = None) -> dict:
+    """i 日目の終値の時点で、型・点数・売買の目安と、自分のルールに合うかを判定する。
+    mkt_up: 日経平均の25日線が上向きか / earn_days: 次の決算まであと何日か（不明なら None）"""
     c, h, l, v = ind["c"], ind["h"], ind["l"], ind["v"]
     ma25, ma75, hist = ind["ma25"], ind["ma75"], ind["hist"]
     last, prev = c[i], c[i - 1]
@@ -299,16 +373,24 @@ def evaluate(ind: dict, i: int, bench_ret20: float | None) -> dict:
 
     # --- 型の判定 ---
     setup = "none"
-    if up_trend and -3.0 <= dev25 <= 2.5 and 35 <= rsi_now <= 58:
+    # ルール：上昇トレンド中の押し目（支持線・25日線付近）で、陽線で反発したのを確認してから買う
+    ma_up = bool(m25 and m25_prev5 and m25 > m25_prev5)
+    recent_low = min(l[max(0, i - 2):i + 1])
+    sup, res = support_resistance(ind, i, atr_now)
+    near_sup = next((lv for lv, n in sorted(sup, reverse=True) if lv <= last and recent_low <= lv + 0.6 * atr_now), None)
+    touched = bool(m25 and recent_low <= m25 * 1.012) or near_sup is not None
+    bull = last > ind["o"][i] and last > prev
+    if ma_up and m25 and last > m25 and dev25 <= 4 and touched and bull and rsi_now < 65:
         setup = "pullback"
-        score += 18
-        reasons.append(f"上昇トレンド中に25日線（{m25:,.0f}円）付近まで押している（乖離 {dev25:+.1f}%）")
-        if last > prev:
-            score += 4
-            reasons.append("前日比プラスで、押し目から切り返しの動き")
+        score += 22
+        where = "支持線" if near_sup is not None and not (recent_low <= m25 * 1.012) else "25日線"
+        reasons.append(f"上昇トレンド中に{where}付近まで押し、陽線で反発（25日線から {dev25:+.1f}%）")
         if lower_wick > 0.5:
             score += 2
             reasons.append("下ヒゲが出て、下値で買いが入っている")
+        if vol_ratio >= 1.0 and v[i] > v[i - 1]:
+            score += 4
+            reasons.append(f"反発の日に出来高が増えた（{vol_ratio:.1f}倍）。信頼度アップ")
     elif last > hi20_prev and vol_ratio >= 1.3 and rsi_now < 80:
         setup = "breakout"
         score += 16 + min(6, (vol_ratio - 1.3) * 4)
@@ -359,9 +441,14 @@ def evaluate(ind: dict, i: int, bench_ret20: float | None) -> dict:
     if 1.2 <= vol_ratio and last > prev and setup != "breakout":
         score += 3
 
-    # --- 売買の目安（ATR ベース） ---
+    # --- 売買の目安 ---
+    # ルール：損切りは支持線の少し下、利確の目安は抵抗線、利確幅は損切り幅の2倍以上
     entry = last
-    if setup == "pullback":
+    sup_used = next(((lv, n) for lv, n in sorted(sup, reverse=True) if lv <= last and lv >= last - 2.5 * atr_now), None)
+    res_used = next(((lv, n) for lv, n in sorted(res) if lv > last + 0.3 * atr_now), None)
+    if setup == "pullback" and sup_used:
+        stop = sup_used[0] - max(0.25 * atr_now, sup_used[0] * 0.01)
+    elif setup == "pullback":
         stop = min(last - 1.5 * atr_now, (m25 or last) - 1.0 * atr_now)
     elif setup == "breakout":
         stop = max(hi20_prev - 1.0 * atr_now, last - 2.0 * atr_now)
@@ -371,8 +458,9 @@ def evaluate(ind: dict, i: int, bench_ret20: float | None) -> dict:
         stop = last - 2.0 * atr_now
     risk = max(entry - stop, last * 0.01)
     target = entry + 2.0 * risk
-    if setup == "pullback" and hi20_prev > entry + risk:
-        target = max(target, hi20_prev)
+    if setup == "pullback":
+        # 抵抗線の少し手前で売る。上に抵抗線がなければ損切り幅の2倍
+        target = res_used[0] * 0.995 if res_used else entry + MIN_RR * risk
     if setup == "rebound" and m25 and m25 > entry + risk:
         target = min(target, m25)
     # 翌日これより高く寄ったら追いかけない（損切りまでの幅が広がり、リスク:リワードが崩れる）
@@ -380,8 +468,35 @@ def evaluate(ind: dict, i: int, bench_ret20: float | None) -> dict:
     # 押し目は少し下で指値を置く案も出す
     limit = max(stop + 0.5 * risk, min(entry, (m25 or entry) + 0.2 * atr_now)) if setup == "pullback" else None
 
+    rr = (target - entry) / risk
+    gap3 = max(pct(ind["o"][k], c[k - 1]) for k in range(max(1, i - 2), i + 1))
+    up_w = bool(ind["ma65"][i] and i >= 5 and ind["ma65"][i - 5] and ind["ma65"][i] > ind["ma65"][i - 5] and last > ind["ma65"][i])
+    checks = [
+        {"id": "market", "label": "日経平均が上向き（25日線が上向き）", "ok": mkt_up},
+        {"id": "trend", "label": "25日線が上向きで、株価がその上", "ok": bool(ma_up and m25 and last > m25),
+         "detail": f"25日線 {m25:,.0f}円・乖離 {dev25:+.1f}%" if m25 else ""},
+        {"id": "weekly", "label": "週足でも上向き（13週線）", "ok": up_w},
+        {"id": "liquidity", "label": f"売買代金が {MIN_TURNOVER_OKU}億円/日 以上", "ok": turnover >= MIN_TURNOVER_OKU,
+         "detail": f"約 {turnover:,.0f}億円"},
+        {"id": "nochase", "label": "急に上がった株を高値で追いかけていない", "ok": ret5 < 10 and gap3 < 5 and dev25 < 8,
+         "detail": f"5日で {ret5:+.1f}%・窓 {gap3:+.1f}%"},
+        {"id": "pullback", "label": "押し目（支持線・25日線付近）で陽線の反発", "ok": setup == "pullback"},
+        {"id": "support", "label": f"{MIN_TOUCHES}回以上跳ね返った支持線がある", "ok": sup_used is not None,
+         "detail": f"{sup_used[0]:,.0f}円で{sup_used[1]}回" if sup_used else "見つからない"},
+        {"id": "rr", "label": f"利確幅が損切り幅の{MIN_RR:g}倍以上", "ok": setup == "pullback" and rr >= MIN_RR - 1e-9,
+         "detail": f"1:{rr:.2f}"},
+        {"id": "earnings", "label": "持っている間（約3週間）に決算がない",
+         "ok": None if earn_days is None else not (0 <= earn_days <= EARNINGS_WINDOW_DAYS),
+         "detail": "決算日が不明。自分で確認" if earn_days is None else f"決算まで {earn_days}日"},
+    ]
+    # 決算日が不明（None）は「要確認」として通すが、ほかが None・False なら不合格
+    rule_ok = all(ch["ok"] for ch in checks if ch["id"] != "earnings") and checks[-1]["ok"] is not False
+    fails = [ch["id"] for ch in checks if ch["ok"] is False]
+
     return {
         "setup": setup, "score": score, "reasons": reasons, "cautions": cautions,
+        "checks": checks, "rule_ok": rule_ok, "fails": fails,
+        "support": sup_used, "resistance": res_used,
         "close": last, "prev": prev, "entry": entry, "stop": stop, "target": target, "risk": risk,
         "chase": chase, "limit": limit, "rsi": rsi_now, "atr": atr_now, "vol_ratio": vol_ratio,
         "dev25": dev25, "ret5": ret5, "ret20": ret20, "rs": rs, "turnover": turnover, "hi52": hi52,
@@ -411,15 +526,18 @@ def simulate_trade(ind: dict, i: int, stop: float, target: float, hold: int = HO
     return {"ret": pct(c[last_j], entry), "days": last_j - i, "result": "timeout" if done else "open", "exit_i": last_j}
 
 
-def backtest(ind: dict, bench_by_date: dict, min_score: float) -> list[dict]:
-    """過去のシグナルをすべて試す（同じ銘柄で取引中は次のシグナルを取らない）。"""
+def backtest(ind: dict, bench_by_date: dict, mkt_by_date: dict | None) -> list[dict]:
+    """過去に自分のルールに合った日をすべて試す（同じ銘柄で取引中は次を取らない）。
+    mkt_by_date=None のときは「日経平均が上向き」の条件を外して試す（ルールの効き目を比べる用）。
+    決算日は過去の分が取れないので、検証では決算のルールは使わない。"""
     trades, busy_until = [], -1
     start = 80
     for i in range(start, ind["n"] - 1):
         if i <= busy_until:
             continue
-        ev = evaluate(ind, i, bench_by_date.get(ind["d"][i]))
-        if ev["setup"] in ("none", "trend") or ev["score"] < min_score:
+        d = ind["d"][i]
+        ev = evaluate(ind, i, bench_by_date.get(d), True if mkt_by_date is None else mkt_by_date.get(d))
+        if not ev["rule_ok"]:
             continue
         t = simulate_trade(ind, i, ev["stop"], ev["target"])
         if not t or t["result"] == "open":
@@ -480,6 +598,12 @@ def stock_record(stock: dict, ind: dict, ev: dict) -> dict:
         "limit": tick_round(ev["limit"]) if ev["limit"] else None,
         "rr": round((ev["target"] - ev["entry"]) / ev["risk"], 2),
         "exit_warn": exit_warnings(ind, i, ev),
+        "checks": ev["checks"],
+        "rule_ok": ev["rule_ok"],
+        "fails": ev["fails"],
+        "support": [px_round(ev["support"][0]), ev["support"][1]] if ev["support"] else None,
+        "resistance": [px_round(ev["resistance"][0]), ev["resistance"][1]] if ev["resistance"] else None,
+        "trail_stop": trail_stop(ind, i, ev["atr"]),
         "reasons": ev["reasons"],
         "cautions": ev["cautions"],
         "date": ind["d"][i],
@@ -494,6 +618,15 @@ def stock_record(stock: dict, ind: dict, ev: dict) -> dict:
             "ma75": [px_round(x) for x in ind["ma75"][k0:]],
         },
     }
+
+
+def trail_stop(ind: dict, i: int, atr_now: float) -> float | None:
+    """トレーリングストップの案：いちばん新しい「反発した安値」の少し下。"""
+    ks = [k for k in ind["piv_lo"] if i - 30 <= k <= i - PIVOT_W]
+    if not ks:
+        return None
+    lv = ind["l"][ks[-1]]
+    return tick_round(lv - max(0.25 * atr_now, lv * 0.01))
 
 
 def exit_warnings(ind: dict, i: int, ev: dict) -> list[str]:
@@ -564,8 +697,7 @@ def market_regime(idx: dict[str, dict], breadth: float | None = None) -> dict:
     else:
         label, text = "向かい風", "全体が弱い。新規の買いは控えめに。反発狙いは短期で。"
     # 地合いが悪いほど、注目銘柄に出す基準を厳しくし、数を絞る
-    min_score, max_picks = (60, 10) if s >= 1 else (63, 8) if s >= -1 else (68, 5)
-    return {"label": label, "score": s, "text": text, "notes": notes, "min_score": min_score, "max_picks": max_picks}
+    return {"label": label, "score": s, "text": text, "notes": notes}
 
 
 # ---- ニュースの分析 ---------------------------------------------------------
@@ -685,6 +817,8 @@ def demo_prices(seed: str, start: float, days: int = 260, drift: float = 0.0004,
             dr = 0.02
         elif shape == "rebound":
             dr = -0.003 if left > 25 else (-0.012 if left > 1 else 0.025)
+        elif shape == "uptrend" and left <= 30:
+            dr = 0.006
         elif shape == "hot" and left <= 15:
             dr = 0.012
         ret = dr + rnd.gauss(0, vol)
@@ -720,11 +854,12 @@ def demo_news(stocks: list[dict]) -> list[dict]:
     return out
 
 
-PICKABLE = ("pullback", "breakout", "rebound")
+PICKABLE = ("pullback",)
 
 
-def select_picks(records: list[dict], min_score: float, max_picks: int) -> list[str]:
-    ok = [r for r in records if r["setup"] in PICKABLE and r["score"] >= min_score]
+def select_picks(records: list[dict], max_picks: int = 10) -> list[str]:
+    """自分のルールにすべて合う銘柄だけを、点数の高い順に。"""
+    ok = [r for r in records if r["rule_ok"]]
     ok.sort(key=lambda r: -r["score"])
     return [r["code"] for r in ok[:max_picks]]
 
@@ -753,7 +888,8 @@ def load_history(path: Path) -> list[dict]:
         return []
 
 
-def bootstrap_history(inds: dict, stocks_by_code: dict, bench_by_date: dict, days: int = 20) -> list[dict]:
+def bootstrap_history(inds: dict, stocks_by_code: dict, bench_by_date: dict, mkt_by_date: dict,
+                      days: int = 20) -> list[dict]:
     """記録がまだ無いとき、直近の営業日にこのアプリが選んだはずの銘柄を再現して記録の種にする。"""
     any_ind = max(inds.values(), key=lambda x: x["n"])
     dates = any_ind["d"][-(days + 1):-1]
@@ -767,9 +903,9 @@ def bootstrap_history(inds: dict, stocks_by_code: dict, bench_by_date: dict, day
                 continue
             if i < 80:
                 continue
-            ev = evaluate(ind, i, bench_by_date.get(d))
-            recs.append({"code": code, "setup": ev["setup"], "score": ev["score"], "ev": ev})
-        for code in select_picks(recs, 60, 10):
+            ev = evaluate(ind, i, bench_by_date.get(d), mkt_by_date.get(d))
+            recs.append({"code": code, "setup": ev["setup"], "score": ev["score"], "rule_ok": ev["rule_ok"], "ev": ev})
+        for code in select_picks(recs):
             ev = next(r["ev"] for r in recs if r["code"] == code)
             hist.append({"date": d, "code": code, "name": stocks_by_code[code]["name"], "setup": ev["setup"],
                          "score": round(ev["score"], 1), "entry": tick_round(ev["entry"]),
@@ -823,8 +959,8 @@ def main() -> int:
         if args.demo:
             base = {"^N225": 38000, "1306.T": 2800, "^GSPC": 5900, "^IXIC": 19000, "^SOX": 5200,
                     "JPY=X": 150, "^VIX": 16, "^TNX": 4.3}[ix["sym"]]
-            px = demo_prices(ix["sym"], base, days=500, drift=0.0003 if ix["kind"] != "vol" else 0.0,
-                             vol=0.009 if ix["kind"] != "vol" else 0.03)
+            px = demo_prices(ix["sym"], base, days=500, drift=(0.0015 if ix["sym"] == "^N225" else 0.0006) if ix["kind"] != "vol" else 0.0,
+                             vol=0.009 if ix["kind"] != "vol" else 0.03, shape="uptrend" if ix["sym"] == "^N225" else "")
         else:
             px = fetch_daily(ix["sym"])
             time.sleep(0.4)
@@ -837,6 +973,15 @@ def main() -> int:
         for k in range(20, len(nk["c"])):
             bench_by_date[nk["d"][k]] = pct(nk["c"][k], nk["c"][k - 20])
     bench_ret20 = pct(nk["c"][-1], nk["c"][-21]) if nk and len(nk["c"]) > 21 else None
+    # ルール：日経平均が下向きの時は買わない（25日線が5営業日前より上がっているかで判断）
+    mkt_by_date = {}
+    if nk:
+        nm25 = sma(nk["c"], 25)
+        for k in range(30, len(nk["c"])):
+            mkt_by_date[nk["d"][k]] = bool(nm25[k] and nm25[k - 5] and nm25[k] > nm25[k - 5])
+    mkt_up = mkt_by_date[nk["d"][-1]] if nk and nk["d"][-1] in mkt_by_date else None
+    print(f"日経平均の25日線: {'上向き' if mkt_up else '下向き' if mkt_up is False else '不明'}")
+    cal = None if args.demo else YahooCal()
 
     # 個別株
     shapes = ["pullback", "breakout", "rebound", "hot", "", "", "", ""]
@@ -852,11 +997,19 @@ def main() -> int:
         if not px or len(px["c"]) < 80:
             failed.append(s["code"])
             continue
+        if args.demo:
+            earn = (datetime.now(JST).date() + timedelta(days=random.Random(s["code"] + "e").randint(-20, 90))).isoformat() \
+                if k % 3 else None
+        else:
+            earn = cal.earnings(s["code"] + ".T") if cal else None
         try:
             ind = indicators(px)
-            ev = evaluate(ind, ind["n"] - 1, bench_ret20)
+            ev = evaluate(ind, ind["n"] - 1, bench_ret20, mkt_up, days_until(earn))
             inds[s["code"]] = ind
-            records.append(stock_record(s, ind, ev))
+            rec = stock_record(s, ind, ev)
+            rec["earnings"] = earn
+            rec["earnings_days"] = days_until(earn)
+            records.append(rec)
         except Exception as e:  # noqa: BLE001
             print(f"  ! analyze {s['code']}: {e}", file=sys.stderr)
             failed.append(s["code"])
@@ -867,10 +1020,11 @@ def main() -> int:
         return 1
 
     # 検証（過去2年で、同じルールで売買していたらどうだったか）
-    all_trades, per_stock = [], {}
+    all_trades, per_stock, nomkt = [], {}, []
     base_rets = []
     for code, ind in inds.items():
-        tr = backtest(ind, bench_by_date, min_score=60)
+        nomkt += backtest(ind, bench_by_date, None)
+        tr = backtest(ind, bench_by_date, mkt_by_date)
         for t in tr:
             t["code"] = code
         all_trades += tr
@@ -881,9 +1035,9 @@ def main() -> int:
         "hold_days": HOLD_DAYS,
         "period": [min((t["date"] for t in all_trades), default=None), max((t["date"] for t in all_trades), default=None)],
         "all": trade_stats(all_trades),
-        "by_setup": {st: trade_stats([t for t in all_trades if t["setup"] == st]) for st in PICKABLE},
+        "nomkt": trade_stats(nomkt),
         "by_score": [{"label": lb, **trade_stats([t for t in all_trades if lo <= t["score"] < hi])}
-                     for lb, lo, hi in (("60〜69点", 60, 70), ("70〜79点", 70, 80), ("80点以上", 80, 999))],
+                     for lb, lo, hi in (("〜69点", 0, 70), ("70〜79点", 70, 80), ("80点以上", 80, 999))],
         "baseline_avg_ret": round(sum(base_rets) / len(base_rets), 2) if base_rets else None,
     }
     print(f"検証: {bt['all']}  比較（いつでも買う）平均 {bt['baseline_avg_ret']}%")
@@ -927,13 +1081,21 @@ def main() -> int:
     breadth = sum(r["above25"] for r in records) / len(records) * 100
     regime = market_regime(idx_sum, breadth)
     regime["breadth"] = round(breadth)
-    picks = select_picks(records, regime["min_score"], regime["max_picks"])
+    regime["nikkei_up"] = mkt_up
+    if mkt_up is False:
+        regime["notes"].insert(0, "日経平均の25日線が下向き")
+        regime["label"] = "買わない日"
+        regime["text"] = "ルール「日経平均が下向きの時は買わない」により、今日は新しく買いません。保有中の銘柄の管理だけ行います。"
+    picks = select_picks(records)
+    # あと1つだけ条件が足りない銘柄（日経平均の条件で外れた銘柄も含む）
+    almost = [r["code"] for r in records if not r["rule_ok"] and len(r["fails"]) == 1
+              and r["setup"] == "pullback" or (not r["rule_ok"] and r["fails"] == ["market"])][:8]
 
     # 注目銘柄の記録と成績
     # サンプルのときは記録ファイルを読み書きしない（本物の記録に混ざらないように）
     hist = [] if args.demo else [h for h in load_history(hist_path) if h.get("src") != "demo"]
     if not hist:
-        hist = bootstrap_history(inds, by_code, bench_by_date)
+        hist = bootstrap_history(inds, by_code, bench_by_date, mkt_by_date)
     prev_dates = sorted({h["date"] for h in hist})
     prev_picks = {h["code"] for h in hist if prev_dates and h["date"] == prev_dates[-1]}
     have = {(h["date"], h["code"]) for h in hist}
@@ -958,6 +1120,7 @@ def main() -> int:
         "sectors": sector_strength(records),
         "themes": hot,
         "picks": picks,
+        "almost": almost,
         "stocks": records,
         "news": [{k: v for k, v in n.items() if k != "weight"} for n in news[:150]],
         "backtest": bt,

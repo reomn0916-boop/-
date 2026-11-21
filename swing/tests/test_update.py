@@ -77,3 +77,45 @@ class News(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Rules(unittest.TestCase):
+    def test_levels_cluster(self):
+        lv = u.levels([100, 101, 100.5, 120, 121, 150], tol=2)
+        self.assertEqual([n for _, n in lv], [3, 2, 1])
+        self.assertAlmostEqual(lv[0][0], 100.5)
+
+    def _demo_ind(self):
+        px = u.demo_prices("b", 1000, days=500, drift=0.0012, vol=0.015, shape="")
+        return u.indicators(px)
+
+    def test_market_down_never_ok(self):
+        ind = self._demo_ind()
+        for i in range(100, ind["n"]):
+            self.assertFalse(u.evaluate(ind, i, 0, mkt_up=False)["rule_ok"])
+
+    def test_earnings_soon_never_ok(self):
+        ind = self._demo_ind()
+        for i in range(100, ind["n"]):
+            ev = u.evaluate(ind, i, 0, mkt_up=True, earn_days=5)
+            self.assertFalse(ev["rule_ok"])
+
+    def test_rule_ok_plan_is_consistent(self):
+        """ルールに合った日は、損切り < 終値 < 利確 で、利確幅が損切り幅の2倍以上。未来のデータを使わない。"""
+        ind = self._demo_ind()
+        hits = 0
+        for i in range(100, ind["n"]):
+            ev = u.evaluate(ind, i, 0, mkt_up=True)
+            if ev["setup"] == "pullback":  # ルールに合う日が少なくても、判定の一致は確かめる
+                cut = u.indicators({k: ind[k][:i + 1] for k in ("d", "o", "h", "l", "c", "v")})
+                self.assertEqual(ev["fails"], u.evaluate(cut, i, 0, mkt_up=True)["fails"])
+            if ev["rule_ok"]:
+                hits += 1
+                self.assertLess(ev["stop"], ev["close"])
+                self.assertGreater(ev["target"], ev["close"])
+                self.assertGreaterEqual((ev["target"] - ev["entry"]) / ev["risk"], u.MIN_RR - 1e-9)
+                cut = u.indicators({k: ind[k][:i + 1] for k in ("d", "o", "h", "l", "c", "v")})
+                ev2 = u.evaluate(cut, i, 0, mkt_up=True)
+                self.assertEqual(round(ev["stop"], 6), round(ev2["stop"], 6))
+                self.assertEqual(ev["rule_ok"], ev2["rule_ok"])
+        self.assertGreater(hits, 0)

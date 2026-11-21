@@ -254,3 +254,47 @@ table.bt tr.sub td:first-child { padding-left: 12px; }
 .calc { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .field input, .field select { width: 100%; min-width: 0; }
 #sheet, .view { overflow-x: hidden; }
+
+/* ---- 追加：マイルール ---- */
+.chip.warn { background: #fff1d6; color: #7a4d00; }
+.banner { margin-top: 12px; font-size: 13px; line-height: 1.6; }
+.banner b { font-size: 15px; }
+.banner.bad { background: var(--bad-bg); color: var(--bad-fg); border-color: transparent; }
+.banner.info { background: #e6efff; color: #1f4fbf; border-color: transparent; margin-bottom: 8px; }
+.pick.almost { opacity: .92; border-style: dashed; }
+.ok-dot { color: var(--good-fg); margin-right: 4px; }
+.verdict { margin-top: 12px; font-size: 14px; }
+.verdict.ok { background: var(--good-bg); color: var(--good-fg); border-color: transparent; }
+.verdict.ng { background: var(--bad-bg); color: var(--bad-fg); border-color: transparent; }
+ul.checks { list-style: none; margin: 0; padding: 0; background: var(--card); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+ul.checks li { display: flex; gap: 10px; align-items: flex-start; padding: 9px 12px; border-bottom: 1px solid var(--line); font-size: 14px; }
+ul.checks li:last-child { border-bottom: 0; }
+ul.checks li i { flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-style: normal; font-weight: 800; font-size: 13px; }
+ul.checks li span { flex: 1; }
+ul.checks li small { display: block; color: var(--muted); font-size: 12px; }
+.c-true i { background: var(--good-bg); color: var(--good-fg); }
+.c-false i { background: var(--bad-bg); color: var(--bad-fg); }
+.c-null i { background: #fff1d6; color: #7a4d00; }
+.c-false span { color: var(--bad-fg); }
+.ifdoco { display: flex; flex-direction: column; gap: 6px; }
+.ifdoco > div { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; border-bottom: 1px dashed var(--line); padding-bottom: 6px; font-size: 14px; }
+.ifdoco > div b { font-size: 17px; white-space: nowrap; }
+.ifdoco small { font-size: 12px; line-height: 1.6; }
+.ifdoco .btn-sm { align-self: flex-start; }
+.sellform { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
+.linkbtn { color: var(--muted); font-size: 12px; text-decoration: underline; margin-top: 8px; padding: 4px 0; }
+.xbtn { flex: none; width: 28px; height: 28px; color: var(--muted); font-size: 16px; border-radius: 8px; }
+.matrix { display: grid; grid-template-columns: 4em 1fr 1fr; gap: 6px; text-align: center; font-size: 13px; padding: 10px; }
+.matrix .h { color: var(--muted); font-size: 12px; align-self: center; }
+.matrix .good, .matrix .bad { border-radius: 8px; padding: 6px 4px; font-size: 18px; font-weight: 700; }
+.matrix .good { background: var(--good-bg); color: var(--good-fg); }
+.matrix .bad { background: var(--bad-bg); color: var(--bad-fg); }
+.matrix small { display: block; font-size: 11px; font-weight: normal; }
+.rules { font-size: 13px; padding: 6px 14px 12px; }
+.rules .rg { font-weight: 700; color: var(--accent); margin-top: 10px; font-size: 12px; }
+.rules .rl { padding: 4px 0 4px 10px; border-left: 3px solid var(--line); margin-top: 4px; }
+.rules .rl small { display: block; color: var(--muted); font-size: 12px; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .chip.warn, :root:not([data-theme="light"]) .c-null i { background: #4a3810; color: #ffd27a; }
+  :root:not([data-theme="light"]) .banner.info { background: #1b2b4d; color: #9dbbff; }
+}

@@ -30,6 +30,8 @@ const S = {
   riskPct: store.get('riskPct', 1),
   greenUp: store.get('greenUp', false),
   positions: store.get('positions', []),
+  journal: store.get('journal', []),
+  journalAll: false,
   trackFilter: 'all',
   trackAll: false,
   open: null,
@@ -114,13 +116,57 @@ function btLine(st, prefix = '') {
 }
 
 function regimeClass(label) {
-  return label.includes('追い風') ? 'rg-good' : label === '向かい風' ? 'rg-bad' : 'rg-mid';
+  return label.includes('追い風') ? 'rg-good' : (label === '向かい風' || label === '買わない日') ? 'rg-bad' : 'rg-mid';
+}
+
+// ---- 自分の売買ルール（ルール一覧.xlsx） ----
+const MY_RULES = [
+  ['銘柄選び', '日経平均が下向きの時は買わない', '相場全体の流れに逆らわない'],
+  ['銘柄選び', '25日線が上向きで、株価がその上にある銘柄だけ狙う', 'チャートは日足3〜6か月、週足で大きな流れも確認'],
+  ['銘柄選び', '出来高が少なすぎる銘柄は避ける', '1日の売買代金が数億円以上'],
+  ['銘柄選び', '話題で急に上がった株を高値で追いかけない', 'ニュース銘柄の飛びつき買いは一番やられやすい'],
+  ['買い方', '上昇トレンド中の押し目（支持線・25日線付近）で買う', '陽線で反発したのを確認してから'],
+  ['買い方', '支持線は2回以上、できれば3回以上跳ね返った値段', '反発時に出来高が増えていれば信頼度アップ'],
+  ['買い方', '決算発表をまたいで持ち越さない', '決算で損切りラインを飛び越えて下がることがある'],
+  ['損切り・利確', '買う前に損切りと利確の値段を決める', '決めずに買わない'],
+  ['損切り・利確', '損切りは支持線の少し下に置く', '支持線1,150円なら1,130円あたり'],
+  ['損切り・利確', '利確幅は損切り幅の2倍以上', '損50円なら利益100円。勝率34%でトントン'],
+  ['損切り・利確', '利確の目安は抵抗線', '何度も上がりきれずに止まった値段'],
+  ['資金管理', '1回の損は資金の1〜2%まで', '資金100万円なら1〜2万円。株数＝許せる損÷損切り幅'],
+  ['資金管理', '負けを取り返そうと株数を増やさない', ''],
+  ['注文', '前日の夜にIFDOCO注文で仕込む', '買い・利確・損切りの3つを同時に入れる'],
+  ['保有中', '利益が損切り幅くらい出たら、損切りを買値まで上げる', '960円で買い→1,000円超えたら損切りを960円に'],
+  ['保有中', 'さらに上がったら直近安値の少し下へ損切りを上げていく', 'トレーリングストップ'],
+  ['保有中', '損切りラインは絶対に下げない', '「もうちょっと待てば戻る」が一番危ない'],
+  ['メンタル', '損切りは失敗ではなく経費', '材料費と同じ。払わないと利益も出ない'],
+  ['メンタル', '3連敗したら1週間休んで記録を見直す', ''],
+  ['記録', '全トレードを記録する。ルールを守れたかを必ず書く', '守って負け＝OK、破って勝ち＝失敗'],
+  ['記録', '20回ごとに勝率と勝ち・負けパターンを見直す', '集計シートで確認'],
+  ['口座', 'スイングは特定口座（源泉徴収あり）でやる', 'NISAは売った枠が翌年まで戻らず、損の相殺もできない'],
+];
+
+// 3連敗したら1週間休む：休みの最終日（なければ null）
+function restUntil() {
+  const done = [...S.journal].sort((a, b) => (a.sellDate < b.sellDate ? -1 : 1));
+  const last3 = done.slice(-3);
+  if (last3.length < 3 || !last3.every((t) => t.pl < 0)) return null;
+  const end = new Date(last3[2].sellDate);
+  end.setDate(end.getDate() + 7);
+  return end > new Date() ? end : null;
+}
+const fmtDate = (d) => `${d.getMonth() + 1}/${d.getDate()}`;
+
+const CHECK_ICON = { true: '✓', false: '✗', null: '？' };
+function failText(s) {
+  const f = s.checks.filter((c) => c.ok === false).map((c) => c.label);
+  return f.length ? 'ルールに足りない：' + f.join('・') : '';
 }
 
 function pickCard(s) {
   const why = s.reasons[0] || '';
-  const bt = S.data.backtest && S.data.backtest.by_setup[s.setup];
-  return `<button class="pick" data-code="${s.code}">
+  const bt = S.data.backtest && S.data.backtest.all;
+  const earn = s.earnings_days == null ? '<span class="chip warn">決算日 要確認</span>' : '';
+  return `<button class="pick ${s.rule_ok ? '' : 'almost'}" data-code="${s.code}">
     <div class="l1">
       <span class="chip setup-${s.setup}">${esc(s.setup_label)}</span>
       ${s.new_pick ? '<span class="chip new">新</span>' : ''}
@@ -139,9 +185,10 @@ function pickCard(s) {
       <div>利確目安<b class="up">${yen(s.target)}</b></div>
       <div>損切り<b class="down">${yen(s.stop)}</b></div>
     </div>
+    ${s.rule_ok ? '' : `<div class="why warn">${esc(failText(s))}</div>`}
     ${why ? `<div class="why">${esc(why)}</div>` : ''}
-    <div class="why small">翌日 <b class="num">${yen(s.chase)}</b> 円より高く寄ったら見送り${s.limit ? `・指値なら <b class="num">${yen(s.limit)}</b> 円` : ''}</div>
-    ${bt && bt.n ? `<div class="why small">この型の過去2年：${btLine(bt)}</div>` : ''}
+    <div class="why small">リスク:リワード 1:${s.rr.toFixed(1)}${s.support ? `・支持線 ${yen(s.support[0])}円（${s.support[1]}回）` : ''} ${earn}</div>
+    ${s.rule_ok && bt && bt.n ? `<div class="why small">このルールの過去2年：${btLine(bt)}</div>` : ''}
   </button>`;
 }
 
@@ -151,6 +198,9 @@ function renderHome() {
   const topNews = [...d.news].filter((n) => n.codes.length || n.themes.length)
     .sort((a, b) => Math.abs(b.sentiment) * (b.codes.length ? 1.5 : 1) - Math.abs(a.sentiment) * (a.codes.length ? 1.5 : 1)).slice(0, 5);
   const alerts = S.positions.map((p) => ({ p, st: posStatus(p) })).filter((x) => x.st.alerts.length);
+  const almost = (d.almost || []).map((c) => S.byCode[c]).filter(Boolean);
+  const rest = restUntil();
+  const noTrade = rg.nikkei_up === false;
   const tr = d.track && d.track.stats;
   const secs = d.sectors || [];
   const secMax = Math.max(1, ...secs.map((x) => Math.abs(x.ret20)));
@@ -158,6 +208,8 @@ function renderHome() {
       <span class="sbar"><i class="${x.ret20 >= 0 ? 'p' : 'm'}" style="width:${Math.abs(x.ret20) / secMax * 50}%"></i></span>
       <span class="sv num ${cls(x.ret20)}">${sgn(x.ret20, 1)}</span></button>`;
   $('#v-home').innerHTML = `
+    ${rest ? `<div class="card banner bad"><b>3連敗中：${fmtDate(rest)} まで休みます</b><br>ルール「3連敗したら1週間休んで記録を見直す」。「保有」タブの取引記録を見直しましょう。</div>` : ''}
+    ${noTrade ? '<div class="card banner bad"><b>今日は買わない日</b><br>日経平均の25日線が下向きです（ルール：日経平均が下向きの時は買わない）。</div>' : ''}
     ${alerts.length ? `<h2>保有銘柄のお知らせ</h2><div class="picks">${alerts.map(({ p, st }) => `<button class="pick alert" data-tab-go="watch">
       <div class="l1"><span class="nm">${esc(p.name)}</span><span class="num ${cls(st.retPct)}">${sgn(st.retPct, 1)}</span></div>
       ${st.alerts.map((a) => `<div class="why ${a.level}">${esc(a.text)}</div>`).join('')}</button>`).join('')}</div>` : ''}
@@ -177,21 +229,22 @@ function renderHome() {
       <div class="hl">${esc(t.headline)}</div></div>`).join('')}</div>` : ''}
     ${secs.length ? `<h2>業種の強さ<small>20日の騰落の平均・押すと業種で一番点数の高い銘柄</small></h2>
     <div class="card secs">${secs.slice(0, 5).map(secRow).join('')}<div class="secgap">…</div>${secs.slice(-3).map(secRow).join('')}</div>` : ''}
-    <h2>今日の注目銘柄<small>点数の高い順・${picks.length}銘柄${rg.min_score ? `・${rg.min_score}点以上` : ''}</small></h2>
+    <h2>ルールに合う銘柄<small>${S.data.price_date || ''} 終値・${picks.length}銘柄</small></h2>
     ${tr && tr.n ? `<button class="card trackmini" data-tab-go="track">これまでの注目銘柄の成績：${btLine(tr)}<span class="muted"> ›</span></button>` : ''}
-    ${picks.length ? `<div class="picks">${picks.map(pickCard).join('')}</div>` : '<div class="card empty">条件に合う銘柄がありません。地合いが悪い日は見送りも選択肢です。</div>'}
+    ${picks.length ? `<div class="picks">${picks.map(pickCard).join('')}</div>` : `<div class="card empty">${noTrade ? '今日は買わない日です。' : '今日はルールに全部合う銘柄がありません。'}無理に買わないのもルールのうちです。</div>`}
+    ${almost.length ? `<h2>あと1つの銘柄<small>買わずに見張る</small></h2><div class="picks">${almost.map(pickCard).join('')}</div>` : ''}
     <h2>材料になりそうなニュース</h2>
     <div class="newslist">${topNews.map(newsItem).join('') || '<div class="card empty">ニュースはありません</div>'}</div>
-    <p class="note">このアプリの点数・売買の目安は、株価の動きとニュースの見出しから機械的に計算したものです。売買をすすめるものではありません。決算発表日・権利日などはご自身で確認し、投資は自己責任で行ってください。</p>
+    <p class="note">「ルールに合う銘柄」は、あなたの売買ルール（「保有」タブの下に一覧）のうち自動で判定できるものを全部満たした銘柄です。点数・売買の目安は、株価の動きとニュースの見出しから機械的に計算したものです。売買をすすめるものではありません。決算発表日・権利日などはご自身で確認し、投資は自己責任で行ってください。</p>
   `;
 }
 
-const SETUPS = [['all', '全部'], ['pullback', '押し目'], ['breakout', '高値ブレイク'], ['rebound', '売られすぎ反発'], ['trend', '上昇トレンド'], ['none', '様子見']];
+const SETUPS = [['all', '全部'], ['rule', 'ルールに合う'], ['almost', 'あと1つ'], ['pullback', '押し目'], ['breakout', '高値ブレイク'], ['rebound', '売られすぎ反発'], ['trend', '上昇トレンド'], ['none', '様子見']];
 const SORTS = [['score', '点数'], ['chg_pct', '前日比'], ['ret20', '20日の騰落'], ['vol_ratio', '出来高の増え方'], ['rsi_low', 'RSI（低い順）'], ['news_score', 'ニュース']];
 
 function stockRow(s) {
   return `<button class="row" data-code="${s.code}">
-    <div class="main"><b>${esc(s.name)}</b><small>${s.code}・${esc(s.sector)}　<span class="chip setup-${s.setup}">${esc(s.setup_label)}</span></small></div>
+    <div class="main"><b>${s.rule_ok ? '<span class="ok-dot">✓</span>' : ''}${esc(s.name)}</b><small>${s.code}・${esc(s.sector)}　<span class="chip setup-${s.setup}">${esc(s.setup_label)}</span>${s.rule_ok ? '' : ` <span class="muted">✗${s.fails.length}</span>`}</small></div>
     <div class="rt num"><b>${yen(s.close)}</b><span class="${cls(s.chg_pct)}">${sgn(s.chg_pct)}</span></div>
     <div class="sc num">${Math.round(s.score)}</div>
   </button>`;
@@ -200,7 +253,9 @@ function stockRow(s) {
 function renderStocks() {
   const d = S.data;
   const sectors = [...new Set(d.stocks.map((s) => s.sector))].sort();
-  let list = d.stocks.filter((s) => (S.stockFilter === 'all' || s.setup === S.stockFilter) && (S.sector === 'all' || s.sector === S.sector));
+  const sf = S.stockFilter;
+  let list = d.stocks.filter((s) => (sf === 'all' || (sf === 'rule' && s.rule_ok) || (sf === 'almost' && !s.rule_ok && s.fails.length === 1)
+    || s.setup === sf) && (S.sector === 'all' || s.sector === S.sector));
   if (S.query) {
     const q = S.query.toLowerCase();
     list = list.filter((s) => s.name.toLowerCase().includes(q) || s.code.includes(q)
@@ -280,16 +335,17 @@ function renderTrack() {
     }).join('') || '<div class="empty">記録はまだありません</div>'}</div>
     ${rows.length > 20 && !S.trackAll ? `<button class="btn-sm" id="trackMore" style="width:100%;margin-top:8px">もっと見る（全 ${rows.length} 件）</button>` : ''}
     ${bt && bt.all && bt.all.n ? `
-    <h2>ルールの検証<small>過去2年（${bt.period[0] || ''}〜）・全 ${S.data.stocks.length} 銘柄</small></h2>
+    <h2>自分のルールの検証<small>過去2年（${bt.period[0] || ''}〜）・全 ${S.data.stocks.length} 銘柄</small></h2>
     ${statGrid(bt.all)}
     <div class="card" style="margin-top:10px;font-size:13px">
-      <table class="bt num"><tr><th>型</th><th>回数</th><th>勝率</th><th>平均</th><th>PF</th></tr>
-      ${Object.entries(bt.by_setup).map(([k, st]) => `<tr><td>${SETUP_NAME[k]}</td><td>${st.n}</td><td>${pctf(st.win_rate)}</td><td class="${cls(st.avg_ret)}">${sgn(st.avg_ret, 2)}</td><td>${st.pf ?? '—'}</td></tr>`).join('')}
-      ${(bt.by_score || []).map((st) => `<tr class="sub"><td>${st.label}</td><td>${st.n}</td><td>${pctf(st.win_rate)}</td><td class="${cls(st.avg_ret)}">${sgn(st.avg_ret, 2)}</td><td>${st.pf ?? '—'}</td></tr>`).join('')}
+      <table class="bt num"><tr><th></th><th>回数</th><th>勝率</th><th>平均</th><th>PF</th></tr>
+      ${[['ルールどおり', bt.all], ['日経平均の条件なし', bt.nomkt]].filter(([, st]) => st && st.n).map(([lb, st]) => `<tr><td>${lb}</td><td>${st.n}</td><td>${pctf(st.win_rate)}</td><td class="${cls(st.avg_ret)}">${sgn(st.avg_ret, 2)}</td><td>${st.pf ?? '—'}</td></tr>`).join('')}
+      ${(bt.by_score || []).filter((st) => st.n).map((st) => `<tr class="sub"><td>${st.label}</td><td>${st.n}</td><td>${pctf(st.win_rate)}</td><td class="${cls(st.avg_ret)}">${sgn(st.avg_ret, 2)}</td><td>${st.pf ?? '—'}</td></tr>`).join('')}
       </table>
+      <p class="muted" style="margin:8px 0 0">「日経平均の条件なし」と比べると、ルール「日経平均が下向きの時は買わない」の効き目が分かります。点数別（字下げの行）は、ルールに合った銘柄の中で点数が高いほど成績が良いかの確認です。</p>
       <p class="muted" style="margin:8px 0 0">比べるもの：いつ買っても ${bt.hold_days} 日持った場合の平均は <b class="${cls(bt.baseline_avg_ret)}">${sgn(bt.baseline_avg_ret, 2)}</b>。これを上回っていればルールに意味がある目安です。PF（プロフィットファクター）は「勝ちの合計 ÷ 負けの合計」で、1 を超えるとプラス。</p>
     </div>` : ''}
-    <p class="note">検証はニュースを使わずテクニカルの点数だけで行い、手数料・税金は含みません。同じ日に損切りと利確の両方に届いたときは損切りとして数えています（厳しめ）。過去の成績は将来を約束しません。</p>`;
+    <p class="note">検証は株価だけで判定できるルール（日経平均・25日線・週足・売買代金・急騰・押し目と陽線・支持線・リスク:リワード）で行い、決算のルールとニュースは使っていません（過去の決算日が取れないため）。手数料・税金は含みません。同じ日に損切りと利確の両方に届いたときは損切りとして数えています（厳しめ）。過去の成績は将来を約束しません。</p>`;
 }
 
 // ---- 保有銘柄 -----------------------------------------------------------------
@@ -305,7 +361,13 @@ function posStatus(p) {
   if (s) {
     if (now <= p.stop) alerts.push({ level: 'bad', text: `終値 ${yen(now)} 円が損切りライン ${yen(p.stop)} 円を下回りました` });
     else if (now >= p.target) alerts.push({ level: 'good', text: `終値 ${yen(now)} 円が利確目安 ${yen(p.target)} 円に届きました` });
-    else if (p.stop < p.price && now - p.price >= p.price - p.stop) alerts.push({ level: 'info', text: `損切り幅と同じだけ上がりました。損切りを買値 ${yen(p.price)} 円に上げると負けがなくなります` });
+    else if (p.stop < p.price && now - p.price >= (p.initStop ? p.price - p.initStop : p.price - p.stop)) alerts.push({ level: 'info', text: `損切り幅と同じだけ上がりました。損切りを買値 ${yen(p.price)} 円に上げます（ルール）`, act: ['stop', p.price] });
+    if (s.trail_stop && s.trail_stop > p.stop && s.trail_stop >= p.price && s.trail_stop < now) {
+      alerts.push({ level: 'info', text: `直近安値の少し下（${yen(s.trail_stop)} 円）まで損切りを上げられます（トレーリングストップ）`, act: ['stop', s.trail_stop] });
+    }
+    if (s.earnings_days != null && s.earnings_days >= 0 && s.earnings_days <= 10) {
+      alerts.push({ level: 'bad', text: `決算発表が ${s.earnings_days} 日後（${s.earnings}）。ルール：決算をまたがない → 前日までに売る` });
+    }
     (s.exit_warn || []).forEach((w) => alerts.push({ level: 'warn', text: w }));
   }
   if (days > 21) alerts.push({ level: 'warn', text: `買ってから ${days} 日。スイングの目安（3週間）を過ぎています` });
@@ -322,13 +384,74 @@ function posCard(p) {
     <div class="muted num" style="font-size:12px">${p.date} に ${yen(p.price)} 円 × ${p.shares.toLocaleString()} 株・今 ${yen(st.now)} 円</div>
     <div class="range"><i class="track"></i><i class="ent" style="left:${st.entryProg}%"></i><i class="now" style="left:${st.prog}%"></i></div>
     <div class="range-l num"><span class="down">損切り ${yen(p.stop)}</span><span class="up">利確 ${yen(p.target)}</span></div>
-    ${st.alerts.map((a) => `<div class="why ${a.level}">${esc(a.text)}</div>`).join('')}
+    ${st.alerts.map((a) => `<div class="why ${a.level}">${esc(a.text)}${a.act ? ` <button class="btn-sm" data-pos-raise="${p.id}" data-v="${a.act[1]}">${yen(a.act[1])} 円にする</button>` : ''}</div>`).join('')}
     <div class="pos-acts">
-      <label>損切り<input type="number" inputmode="decimal" data-pos-stop="${p.id}" value="${p.stop}"></label>
+      <label>損切り（上げるだけ）<input type="number" inputmode="decimal" data-pos-stop="${p.id}" value="${p.stop}"></label>
       <label>利確<input type="number" inputmode="decimal" data-pos-target="${p.id}" value="${p.target}"></label>
-      <button class="btn-sm" data-pos-del="${p.id}">売った・削除</button>
+      <button class="btn-sm" data-pos-sell="${p.id}">売った</button>
+    </div>
+    <div class="sellform" data-sellform="${p.id}" hidden>
+      <div class="calc">
+        <label class="field">売値（円）<input type="number" inputmode="decimal" data-sf="price" value="${st.now}"></label>
+        <label class="field">売った日<input type="date" data-sf="date" value="${localDate()}"></label>
+      </div>
+      <div class="field" style="margin-top:8px">ルールを守れた？
+        <div class="seg"><button data-sf-kept="1">守れた</button><button data-sf-kept="0">破った</button></div>
+      </div>
+      <label class="field" style="margin-top:8px">メモ（なぜ買った・なぜ売った）<input type="text" data-sf="memo" placeholder="例：支持線で反発、利確ラインで売り"></label>
+      <div class="pos-acts"><button class="btn-main" data-sf-save="${p.id}">記録して保有から外す</button></div>
+      <button class="linkbtn" data-pos-del="${p.id}">記録せずに消す（間違えて登録したとき）</button>
     </div>
   </div>`;
+}
+
+// ---- 取引記録 ---------------------------------------------------------------
+function saveJournal() { store.set('journal', S.journal); }
+
+function journalStats(js) {
+  const n = js.length;
+  if (!n) return null;
+  const wins = js.filter((t) => t.pl > 0), losses = js.filter((t) => t.pl <= 0);
+  const kept = js.filter((t) => t.kept);
+  const sum = (a, f) => a.reduce((x, t) => x + f(t), 0);
+  const gl = -sum(losses, (t) => t.pl);
+  let streak = 0;
+  for (const t of [...js].sort((a, b) => (a.sellDate < b.sellDate ? 1 : -1))) { if (t.pl < 0) streak++; else break; }
+  return {
+    n, winRate: wins.length / n * 100, total: sum(js, (t) => t.pl), avgRet: sum(js, (t) => t.ret) / n,
+    avgWin: wins.length ? sum(wins, (t) => t.ret) / wins.length : 0, avgLoss: losses.length ? sum(losses, (t) => t.ret) / losses.length : 0,
+    pf: gl > 0 ? sum(wins, (t) => t.pl) / gl : null, keptRate: kept.length / n * 100, streak,
+    m: { kw: js.filter((t) => t.kept && t.pl > 0).length, kl: js.filter((t) => t.kept && t.pl <= 0).length,
+      bw: js.filter((t) => !t.kept && t.pl > 0).length, bl: js.filter((t) => !t.kept && t.pl <= 0).length },
+  };
+}
+
+function journalHtml() {
+  const js = [...S.journal].sort((a, b) => (a.sellDate < b.sellDate ? 1 : -1));
+  const st = journalStats(js);
+  if (!st) return '<div class="card empty">保有銘柄の「売った」から記録すると、勝率やルールを守れた割合をここで集計します。</div>';
+  const review = st.n % 20 === 0 ? `<div class="card banner info"><b>${st.n}回たまりました：見直しの時期です</b><br>ルール「20回ごとに勝率と勝ち・負けパターンを見直す」。破って勝った取引がないか確認しましょう。</div>` : '';
+  return `${review}
+    <div class="kv num">
+      <div>回数<b>${st.n}回</b></div>
+      <div>勝率<b>${pctf(st.winRate)}</b></div>
+      <div>損益の合計<b class="${cls(st.total)}">${st.total >= 0 ? '+' : '−'}${yen(Math.abs(Math.round(st.total)))}円</b></div>
+      <div>勝ちの平均<b class="up">${sgn(st.avgWin, 1)}</b></div>
+      <div>負けの平均<b class="down">${sgn(st.avgLoss, 1)}</b></div>
+      <div>ルールを守れた<b>${pctf(st.keptRate)}</b></div>
+    </div>
+    <div class="card matrix" style="margin-top:8px">
+      <div></div><div class="h">勝ち</div><div class="h">負け</div>
+      <div class="h">守った</div><div class="good">${st.m.kw}<small>理想</small></div><div class="good">${st.m.kl}<small>OK（経費）</small></div>
+      <div class="h">破った</div><div class="bad">${st.m.bw}<small>失敗（たまたま）</small></div><div class="bad">${st.m.bl}<small>失敗</small></div>
+    </div>
+    ${st.streak >= 2 ? `<div class="why warn" style="margin-top:6px">いま ${st.streak} 連敗中${st.streak >= 3 ? '（1週間休むルール）' : '。次も負けたら1週間休みます'}</div>` : ''}
+    <div class="list" style="margin-top:8px">${js.slice(0, S.journalAll ? 999 : 10).map((t) => `<div class="row">
+      <div class="main"><b>${t.kept ? '' : '<span class="chip neg">破</span> '}${esc(t.name)}</b><small>${t.buyDate.slice(5).replace('-', '/')}→${t.sellDate.slice(5).replace('-', '/')}・${yen(t.price)}→${yen(t.sellPrice)}円×${t.shares}${t.memo ? '・' + esc(t.memo) : ''}</small></div>
+      <div class="rt num"><b class="${cls(t.pl)}">${t.pl >= 0 ? '+' : '−'}${yen(Math.abs(Math.round(t.pl)))}</b><span class="${cls(t.ret)}">${sgn(t.ret, 1)}</span></div>
+      <button class="xbtn" data-j-del="${t.id}" aria-label="消す">×</button></div>`).join('')}</div>
+    ${js.length > 10 && !S.journalAll ? `<button class="btn-sm" id="journalMore" style="width:100%;margin-top:8px">もっと見る（全 ${js.length} 件）</button>` : ''}
+    <button class="btn-sm" id="journalCsv" style="width:100%;margin-top:8px">CSV で書き出す（Excel で開ける）</button>`;
 }
 
 function renderWatch() {
@@ -337,27 +460,35 @@ function renderWatch() {
   $('#v-watch').innerHTML = `
     <h2>保有銘柄${S.positions.length ? `<small class="num ${cls(tot)}">合計 ${tot >= 0 ? '+' : '−'}${yen(Math.abs(Math.round(tot)))}円</small>` : ''}</h2>
     ${S.positions.length ? `<div class="picks">${S.positions.map(posCard).join('')}</div>` : '<div class="card empty">銘柄の画面の「買った」から登録すると、損切り・利確・売りのサインをお知らせします。</div>'}
+    <h2>取引記録<small>全トレードを記録し、ルールを守れたかを書く</small></h2>
+    ${journalHtml()}
     <h2>ウォッチ銘柄</h2>
     ${list.length ? `<div class="list">${list.map(stockRow).join('')}</div>` : '<div class="card empty">銘柄の画面の ☆ を押すと、ここに並びます。</div>'}
     <h2>設定</h2>
     <div class="card settings">
       <label class="field">投資に使う資金（円）<input id="capital" type="number" inputmode="numeric" min="0" step="10000" value="${S.capital}"></label>
       <label class="field">1回の取引で許せる損失（資金の %）<input id="riskPct" type="number" inputmode="decimal" min="0.1" max="10" step="0.1" value="${S.riskPct}"></label>
+      ${S.riskPct > 2 ? '<p class="why bad" style="margin:0 0 10px">ルール：1回の損は資金の1〜2%まで</p>' : ''}
       <div class="field">上がったときの色
         <div class="seg"><button data-color="red" class="${S.greenUp ? '' : 'on'}">赤</button><button data-color="green" class="${S.greenUp ? 'on' : ''}">緑</button></div>
       </div>
       <p class="muted" style="font-size:12px;margin:0">資金と損失の割合から、銘柄の画面で「買える株数」を計算します（100株単位）。</p>
     </div>
-    <h2>点数のつけ方</h2>
+    <h2>マイルール<small>ルール一覧.xlsx より</small></h2>
+    <div class="card rules">${MY_RULES.map((r, i) => `${i === 0 || MY_RULES[i - 1][0] !== r[0] ? `<div class="rg">${esc(r[0])}</div>` : ''}
+      <div class="rl"><b>${esc(r[1])}</b>${r[2] ? `<small>${esc(r[2])}</small>` : ''}</div>`).join('')}</div>
+    <h2>アプリでの判定のしかた</h2>
     <div class="card" style="font-size:13px">
-      <p style="margin-top:0">50点を基準に、次の条件で足し引きします（0〜100点）。型（押し目・高値ブレイク・売られすぎ反発）に当てはまり、点数が基準以上の銘柄を「注目銘柄」に出します。基準は地合いで変わります（追い風 60点・10銘柄／中立 63点・8銘柄／向かい風 68点・5銘柄）。</p>
       <ul style="padding-left:18px;margin:0">
-        <li><b>押し目</b>：25日線・75日線が上向きの上昇トレンド中に、25日線付近まで下げた（RSI 35〜58）</li>
-        <li><b>高値ブレイク</b>：20日高値を出来高 1.3 倍以上で上抜けた</li>
-        <li><b>売られすぎ反発</b>：RSI 32 未満・25日線から −7% 以上離れたところで陽線（逆張り・高リスク）</li>
-        <li>加点：MACD の上抜け、日経平均より強い動き、プラスの材料ニュース、追い風テーマの業種</li>
-        <li>減点：下降トレンド、RSI 75 超の過熱、25日線から +12% 超、売買代金が少ない、マイナスの材料</li>
-        <li>損切りは値動きの大きさ（ATR）から、利確は損切り幅の 2 倍を目安にしています</li>
+        <li><b>日経平均が下向き</b>：日経平均の25日線が5営業日前より下がっていたら「買わない日」</li>
+        <li><b>25日線</b>：25日線が5営業日前より上向きで、終値がその上。週足は13週線（65日線）が上向きで、その上</li>
+        <li><b>売買代金</b>：直近20日の平均が 3億円/日 以上</li>
+        <li><b>急騰を追わない</b>：5日で +10% 未満、直近3日に +5% 以上の窓あけがない、25日線から +8% 未満</li>
+        <li><b>押し目と陽線</b>：直近3日の安値が25日線（+1.2%以内）か支持線まで下がり、当日が陽線で前日比プラス</li>
+        <li><b>支持線・抵抗線</b>：過去120日で「前後3日でいちばん安い（高い）日」を反発とみなし、近い値段（値動きの半日分か1.2%以内）をまとめて、2回以上なら線とする</li>
+        <li><b>損切り</b>：株価のすぐ下の支持線から、値動きの1/4日分か1%の少し下。<b>利確</b>：上の抵抗線の少し手前（抵抗線がなければ損切り幅の2倍）。2倍に届かなければ買わない</li>
+        <li><b>決算</b>：3週間以内に決算発表があれば買わない。決算日が取れない銘柄は「要確認」</li>
+        <li>点数（0〜100）は、ルールに合う銘柄どうしの順番づけに使います（出来高を伴う反発・MACD・日経平均より強いか・ニュースなど）</li>
       </ul>
     </div>
     <p class="note">データは平日の朝（7時ごろ）と大引け後（16時半ごろ）に更新されます。株価は Yahoo! Finance、ニュースは NHK・Yahoo!ニュース・Google ニュースの RSS と適時開示（TDnet）から取得しています。保有・ウォッチ・設定はこの端末の中だけに保存されます。売買をすすめるものではありません。</p>`;
@@ -404,19 +535,31 @@ async function openStock(code, keepScroll) {
         <div class="muted num" style="font-size:12px">テクニカル ${s.tech_score}・ニュース ${s.news_score > 0 ? '+' : ''}${s.news_score}</div></div>
     </div>
     <div class="bar"><i style="width:${s.score}%"></i></div>
+    <div class="card verdict ${s.rule_ok ? 'ok' : 'ng'}">${s.rule_ok
+      ? `<b>✓ ルールに合っています</b>${s.earnings_days == null ? '<br><small>決算日だけは取れなかったので、自分で確認してください</small>' : ''}`
+      : `<b>✗ ルールに合っていません（${s.fails.length}つ）</b><br><small>買わずに見張りましょう。</small>`}</div>
+    <h2>ルールチェック</h2>
+    <ul class="checks">${s.checks.map((c) => `<li class="c-${c.ok}"><i>${CHECK_ICON[c.ok]}</i><span>${esc(c.label)}${c.detail ? `<small>${esc(c.detail)}</small>` : ''}</span></li>`).join('')}</ul>
     <div class="chartbox"><canvas id="chart"></canvas>
       <div class="legend"><span><i style="background:#f0a020"></i>25日線</span><span><i style="background:#8a63d2"></i>75日線</span>
-      <span><i style="background:var(--up)"></i>利確目安</span><span><i style="background:var(--down)"></i>損切り</span></div></div>
-    <h2>売買の目安<small>リスク:リワード 1:${s.rr}</small></h2>
+      <span><i style="background:var(--up)"></i>利確</span><span><i style="background:var(--down)"></i>損切り</span>
+      <span><i style="background:#2bb0a0"></i>支持線</span><span><i style="background:#c060a0"></i>抵抗線</span></div></div>
+    <h2>売買の目安<small>リスク:リワード 1:${s.rr.toFixed(2)}</small></h2>
     <div class="planbig num">
       <div>買い目安<b>${yen(s.entry)}</b><span class="muted">終値基準</span></div>
       <div class="tg">利確目安<b>${yen(s.target)}</b><span>${pctTo(s.target)}</span></div>
       <div class="st">損切り<b>${yen(s.stop)}</b><span>${pctTo(s.stop)}</span></div>
     </div>
-    <div class="card orderhint">
-      <div>翌日 <b class="num">${yen(s.chase)}</b> 円より<b>高く寄ったら見送り</b>（損切りまでが遠くなり割に合わない）</div>
-      ${s.limit ? `<div>押し目を待つなら <b class="num">${yen(s.limit)}</b> 円に指値</div>` : ''}
+    <h2>IFDOCO 注文<small>前日の夜に3つ同時に入れる</small></h2>
+    <div class="card ifdoco num">
+      <div><span>① 買い（指値）</span><b>${yen(s.limit || s.entry)} 円</b></div>
+      <div><span>② 利確（指値・売り）</span><b class="up">${yen(s.target)} 円</b></div>
+      <div><span>③ 損切り（逆指値・売り）</span><b class="down">${yen(s.stop)} 円以下で成行</b></div>
+      <small class="muted">損切りは${s.support ? `支持線 ${yen(s.support[0])} 円（${s.support[1]}回反発）の少し下` : '値動きの大きさから計算'}、利確は${s.resistance ? `抵抗線 ${yen(s.resistance[0])} 円の少し手前` : '損切り幅の2倍（上に抵抗線なし）'}。
+      翌朝 ${yen(s.chase)} 円より高く寄りそうなら取り消す（損切りまでが遠くなり割に合わない）。</small>
+      <button class="btn-sm" id="copyOrder">注文の値段をコピー</button>
     </div>
+    <div class="card orderhint" style="display:block">決算発表：${s.earnings ? `<b>${s.earnings}</b>（${s.earnings_days} 日後）` : '<b>不明</b>（下の「決算発表日を調べる」で確認）'}</div>
     ${s.bt && s.bt.all && s.bt.all.n ? `<h2>この銘柄での過去の成績<small>過去2年・同じルール</small></h2>
     <div class="card" style="font-size:14px">${btLine(s.bt.all, 'すべての型：')}${s.bt.same && s.bt.same.n ? `<br>${btLine(s.bt.same, esc(s.setup_label) + '：')}` : ''}</div>` : ''}
     ${s.exit_warn && s.exit_warn.length ? `<h2>持っている人へ（売りのサイン）</h2><ul class="pts bad">${s.exit_warn.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
@@ -431,6 +574,7 @@ async function openStock(code, keepScroll) {
       <div class="calc">
         <label class="field">買値（円）<input id="bPrice" type="number" inputmode="decimal" value="${s.entry}"></label>
         <label class="field">株数<input id="bShares" type="number" inputmode="numeric" step="100" value="${(sharesFor(s) || {}).n || 100}"></label>
+        <div class="why warn" id="bWarn" style="grid-column:1/-1" hidden></div>
         <label class="field">損切り（円）<input id="bStop" type="number" inputmode="decimal" value="${s.stop}"></label>
         <label class="field">利確（円）<input id="bTarget" type="number" inputmode="decimal" value="${s.target}"></label>
         <label class="field">買った日<input id="bDate" type="date" value="${localDate()}"></label>
@@ -494,7 +638,7 @@ function drawChart(cv, ch, s) {
   const o = sl(ch.o), h = sl(ch.h), l = sl(ch.l), c = sl(ch.c), v = sl(ch.v), m25 = sl(ch.ma25), m75 = sl(ch.ma75), d = sl(ch.d);
   const padR = 52, padB = 18, volH = 44;
   const padT = 10, pw = W - padR, ph = H - padB - volH - 6;
-  const vals = [...h, ...l, s.target, s.stop, ...m25.filter((x) => x != null), ...m75.filter((x) => x != null)];
+  const vals = [...h, ...l, s.target, s.stop, ...(s.support ? [s.support[0]] : []), ...m25.filter((x) => x != null), ...m75.filter((x) => x != null)];
   let mx = Math.max(...vals), mn = Math.min(...vals);
   const pad = (mx - mn) * 0.05; mx += pad; mn -= pad;
   const Y = (p) => ph - ((p - mn) / (mx - mn)) * (ph - padT);
@@ -542,6 +686,9 @@ function drawChart(cv, ch, s) {
     g.fillStyle = color; g.fillRect(pw, Y(p) - 7, padR, 14);
     g.fillStyle = '#fff'; g.textAlign = 'left'; g.font = 'bold 10px sans-serif'; g.fillText(label + ' ' + yen(p), pw + 2, Y(p) + 3.5);
   };
+  const vis = (p) => p != null && p > mn && p < mx;
+  if (s.support && vis(s.support[0])) hl(s.support[0], '#2bb0a0', '支');
+  if (s.resistance && vis(s.resistance[0])) hl(s.resistance[0], '#c060a0', '抵');
   hl(s.target, up, '利'); hl(s.stop, down, '損');
 }
 
@@ -551,6 +698,22 @@ function setTab(t) {
   document.querySelectorAll('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === t));
   document.querySelectorAll('.view').forEach((v) => { v.hidden = v.id !== 'v-' + t; });
   window.scrollTo(0, 0);
+}
+
+let rwT;
+function renderWatchSoon() { clearTimeout(rwT); rwT = setTimeout(() => { if (document.activeElement && document.activeElement.id === 'riskPct') return; renderWatch(); }, 800); }
+
+function exportCsv() {
+  const head = ['銘柄コード', '銘柄', '買った日', '買値', '株数', '損切り（最初）', '利確', '売った日', '売値', '損益（円）', '損益（%）', 'ルールを守れた', 'メモ'];
+  const rows = [...S.journal].sort((a, b) => (a.sellDate < b.sellDate ? -1 : 1)).map((t) => [t.code, t.name, t.buyDate, t.price, t.shares, t.stop, t.target,
+    t.sellDate, t.sellPrice, Math.round(t.pl), t.ret.toFixed(2), t.kept ? '守った' : '破った', t.memo || '']);
+  const csv = [head, ...rows].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+  const blob = new Blob(['\ufeff' + csv], { type: 'text/csv' });  // Excel で文字化けしないよう BOM をつける
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `取引記録_${localDate()}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
 function applyColor() { document.documentElement.classList.toggle('green-up', S.greenUp); }
@@ -573,10 +736,67 @@ document.addEventListener('click', (e) => {
     const p = { id: Date.now().toString(36), code: s.code, name: s.name, price: +$('#bPrice').value, shares: +$('#bShares').value,
       stop: +$('#bStop').value, target: +$('#bTarget').value, date: $('#bDate').value || localDate() };
     if (!(p.price > 0 && p.shares > 0)) return toast('買値と株数を入れてください');
+    if (!(p.stop > 0 && p.target > 0) || p.stop >= p.price || p.target <= p.price) return toast('ルール：損切りと利確の値段を決めてから買う');
+    const warns = [];
+    const rest = restUntil();
+    if (rest) warns.push(`3連敗中で ${fmtDate(rest)} まで休む期間です`);
+    if (!s.rule_ok) warns.push('この銘柄はルールに合っていません（' + s.checks.filter((c) => c.ok === false).map((c) => c.label).join('・') + '）');
+    const rr = (p.target - p.price) / (p.price - p.stop);
+    if (rr < 2) warns.push(`利確幅が損切り幅の ${rr.toFixed(1)} 倍しかありません（ルールは2倍以上）`);
+    const lossPct = (p.price - p.stop) * p.shares / (S.capital || 1) * 100;
+    if (lossPct > 2) warns.push(`損切りになると資金の ${lossPct.toFixed(1)}% の損です（ルールは1〜2%まで）`);
+    if (warns.length && !confirm('ルールに合っていません。\n\n・' + warns.join('\n・') + '\n\nそれでも記録しますか？（「破った」取引として記録されます）')) return;
+    p.ruleOkAtBuy = !warns.length;
+    p.initStop = p.stop;
     S.positions.push(p); savePositions();
     $('#buyForm').hidden = true;
     toast('保有に追加しました（「保有」タブ）');
     renderWatch(); renderHome();
+    return;
+  }
+  const raise = e.target.closest('[data-pos-raise]');
+  if (raise) {
+    const p = S.positions.find((x) => x.id === raise.dataset.posRaise);
+    const v = +raise.dataset.v;
+    if (p && v > p.stop) { p.stop = v; savePositions(); renderWatch(); renderHome(); toast(`損切りを ${yen(v)} 円に上げました`); }
+    return;
+  }
+  const sell = e.target.closest('[data-pos-sell]');
+  if (sell) { const f = document.querySelector(`[data-sellform="${sell.dataset.posSell}"]`); f.hidden = !f.hidden; return; }
+  const kept = e.target.closest('[data-sf-kept]');
+  if (kept) {
+    kept.parentElement.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === kept));
+    return;
+  }
+  const sfs = e.target.closest('[data-sf-save]');
+  if (sfs) {
+    const p = S.positions.find((x) => x.id === sfs.dataset.sfSave);
+    const f = document.querySelector(`[data-sellform="${p.id}"]`);
+    const sp = +f.querySelector('[data-sf=price]').value;
+    const k = f.querySelector('[data-sf-kept].on');
+    if (!(sp > 0)) return toast('売値を入れてください');
+    if (!k) return toast('ルールを守れたかを選んでください（ルール：必ず書く）');
+    const t = { id: p.id, code: p.code, name: p.name, buyDate: p.date, sellDate: f.querySelector('[data-sf=date]').value || localDate(),
+      price: p.price, sellPrice: sp, shares: p.shares, stop: p.initStop || p.stop, target: p.target,
+      pl: (sp - p.price) * p.shares, ret: (sp / p.price - 1) * 100, kept: k.dataset.sfKept === '1',
+      memo: f.querySelector('[data-sf=memo]').value.trim() };
+    S.journal.push(t); saveJournal();
+    S.positions = S.positions.filter((x) => x !== p); savePositions();
+    renderWatch(); renderHome();
+    toast(t.pl >= 0 ? '記録しました' : (t.kept ? '記録しました。ルールどおりの損切りは経費です' : '記録しました'));
+    return;
+  }
+  const jd = e.target.closest('[data-j-del]');
+  if (jd) {
+    if (confirm('この取引記録を消しますか？')) { S.journal = S.journal.filter((t) => t.id !== jd.dataset.jDel); saveJournal(); renderWatch(); renderHome(); }
+    return;
+  }
+  if (e.target.closest('#journalMore')) { S.journalAll = true; return renderWatch(); }
+  if (e.target.closest('#journalCsv')) return exportCsv();
+  if (e.target.closest('#copyOrder')) {
+    const s = S.byCode[S.open];
+    const txt = `${s.name}（${s.code}）IFDOCO\n買い指値 ${s.limit || s.entry}円\n利確指値 ${s.target}円\n損切り逆指値 ${s.stop}円`;
+    (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(() => toast('コピーしました'), () => toast(txt));
     return;
   }
   const del = e.target.closest('[data-pos-del]');
@@ -606,15 +826,28 @@ document.addEventListener('input', (e) => {
   if (id === 'capital' || id === 'cCap') { S.capital = Math.max(0, +e.target.value || 0); store.set('capital', S.capital); }
   if (id === 'riskPct' || id === 'cRisk') { S.riskPct = Math.max(0, +e.target.value || 0); store.set('riskPct', S.riskPct); }
   if ((id === 'cCap' || id === 'cRisk') && S.open) $('#cRes').innerHTML = calcHtml(S.byCode[S.open]);
+  if (id === 'bShares' && S.open) {
+    const r = sharesFor(S.byCode[S.open]);
+    const w = $('#bWarn');
+    if (w) { w.hidden = !(r && +e.target.value > r.n); w.textContent = `ルール：負けを取り返そうと株数を増やさない（計算では ${r ? r.n : 0} 株まで）`; }
+  }
+  if (id === 'riskPct') renderWatchSoon();
 });
 
 document.addEventListener('change', (e) => {
   const ps = e.target.dataset.posStop, pt = e.target.dataset.posTarget;
   if (ps || pt) {
     const p = S.positions.find((x) => x.id === (ps || pt));
-    if (p && +e.target.value > 0) { p[ps ? 'stop' : 'target'] = +e.target.value; savePositions(); renderWatch(); renderHome(); }
+    const v = +e.target.value;
+    if (p && ps && v < p.stop) {
+      toast('ルール：損切りラインは絶対に下げない');
+      e.target.value = p.stop;
+      return;
+    }
+    if (p && v > 0) { p[ps ? 'stop' : 'target'] = v; savePositions(); renderWatch(); renderHome(); }
     return;
   }
+  if (e.target.id === 'riskPct') renderWatch();
   if (e.target.id === 'sector') { S.sector = e.target.value; renderStocks(); }
   if (e.target.id === 'sort') { S.sort = e.target.value; store.set('sort', S.sort); renderStocks(); }
 });
