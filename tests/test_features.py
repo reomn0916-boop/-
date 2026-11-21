@@ -80,7 +80,9 @@ def test_excluded_from_rate_base(conn, pid):
     assert s.direct == 1397675 and s.direct_excluded == 124000
     base = s.direct - 124000
     assert s.common_temp_rate == round(30 * base ** -0.1, 2)
-    assert s.common_temp_rated == int(base * s.common_temp_rate / 100)
+    # 共通仮設費の率計上の金額は1,000円未満切捨て（積算基準）
+    assert s.common_temp_rated == int(base * s.common_temp_rate / 100) // 1000 * 1000
+    assert s.site_mgmt % 1000 == 0
 
 
 # ---------------------------------------------------------------- ⑤ 見積単価

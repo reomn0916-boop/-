@@ -16,7 +16,9 @@ DEFAULT_RULES = {
     "単価の有効桁数": "4",
     "単価の端数処理": "切捨て",   # 切捨て / 四捨五入 / 切上げ
     "率の小数桁": "2",
-    "工事価格の端数単位": "1000",  # 一般管理費等で調整して、この単位未満を切り捨てる
+    "工事価格の端数単位": "1000",  # 一般管理費等で調整して、この単位未満を切り捨てる（奈良県：1,000円。国交省は10,000円）
+    "共通仮設費_端数単位": "1000",  # 共通仮設費の率計上の金額は1,000円未満切捨て（積算基準）
+    "現場管理費_端数単位": "1000",  # 現場管理費の金額は1,000円未満切捨て（積算基準）
     "消費税率": "10",
     # 低入札価格調査基準価格・最低制限価格の計算式（中央公契連モデル型）。
     # 発注者ごとに違うので、奈良県・各市町村の公表内容に合わせて「発注者ごとの設定」で上書きする。
@@ -499,18 +501,25 @@ class Calculator:
         r = self.conn.execute(
             "SELECT * FROM overhead_param WHERE fy=? AND work_type=? AND item=?", (self.fy, work_type, item)
         ).fetchone()
-        if not r:
-            self.warnings.append(f"{self.fy}年度「{work_type}」の{item}率がありません（0%で計算）")
-            return 0.0
-        pp = min(max(p, r["p_min"]), r["p_max"])
+        if r:
+            formula, a, b, p_min, p_max = r["formula"], r["a"], r["b"], r["p_min"], r["p_max"]
+        else:   # 年度マスタにない工種区分は、国交省の率（奈良県は読替規定でそのまま使う）
+            from . import overhead_std
+            std = overhead_std.params(self.fy, work_type, item)
+            if not std:
+                self.warnings.append(f"{self.fy}年度「{work_type}」の{item}率がありません（0%で計算）。"
+                                     "工種区分を国交省の区分（公園工事・道路改良工事など）に合わせてください")
+                return 0.0
+            formula, a, b, p_min, p_max = std
+        pp = min(max(p, p_min), p_max)
         if pp <= 0:
             return 0.0
-        if r["formula"] == "power":
-            v = r["a"] * pp ** r["b"]
-        elif r["formula"] == "log":
-            v = r["a"] * math.log10(pp) + r["b"]
+        if formula == "power":
+            v = a * pp ** b
+        elif formula == "log":
+            v = a * math.log10(pp) + b
         else:
-            raise ValueError(f"諸経費の式の種類が不明です: {r['formula']}")
+            raise ValueError(f"諸経費の式の種類が不明です: {formula}")
         return round_dec(v, int(self.rules["率の小数桁"]))
 
     def summary(self, direct: int, work_type: str, ct_stack: int = 0, sm_stack: int = 0,
@@ -521,7 +530,8 @@ class Calculator:
         base_ct = direct - excluded
         s.common_temp_rate = round_dec(
             self.rate(work_type, "共通仮設費", base_ct) * self.factor(self.conditions, "共通仮設費率"), places)
-        s.common_temp_rated = floor_yen(base_ct * s.common_temp_rate / 100)
+        ct_unit = int(self.rules.get("共通仮設費_端数単位", "1") or 1)
+        s.common_temp_rated = floor_yen(base_ct * s.common_temp_rate / 100) // ct_unit * ct_unit
         s.common_temp_stacked = ct_stack
         s.common_temp = s.common_temp_rated + ct_stack
         s.net = s.direct + s.common_temp
@@ -529,9 +539,13 @@ class Calculator:
         s.site_mgmt_rate = round_dec(
             self.rate(work_type, "現場管理費", base_sm) * self.factor(self.conditions, "現場管理費率"), places)
         s.site_mgmt_stacked = sm_stack
-        s.site_mgmt = floor_yen(base_sm * s.site_mgmt_rate / 100) + sm_stack
+        sm_unit = int(self.rules.get("現場管理費_端数単位", "1") or 1)
+        s.site_mgmt = (floor_yen(base_sm * s.site_mgmt_rate / 100) + sm_stack) // sm_unit * sm_unit
         s.cost = s.net + s.site_mgmt
         s.general_rate = self.rate(work_type, "一般管理費等", s.cost)
+        adv, add = self.general_adjust()
+        if adv != 1.0 or add:   # 前払金支出割合（別表第4）を掛け、契約保証（別表第5）を足す
+            s.general_rate = round_dec(round_dec(s.general_rate * adv, 2) + add, 2)
         general = floor_yen(s.cost * s.general_rate / 100)
         unit = int(self.rules["工事価格の端数単位"]) or 1
         s.price = (s.cost + general) // unit * unit
@@ -540,6 +554,21 @@ class Calculator:
         s.total = s.price + s.tax
         s.threshold = self.threshold(s)
         return s
+
+    def general_adjust(self) -> tuple[float, float]:
+        """一般管理費等率の補正：(前払金支出割合の係数, 契約保証の加算値)。金抜き設計書の表紙の記載から。"""
+        if self.project_id is None:
+            return 1.0, 0.0
+        import json as _json
+
+        from . import overhead_std
+        r = self.conn.execute("SELECT doc_meta FROM project WHERE id=?", (self.project_id,)).fetchone()
+        try:
+            meta = _json.loads(r["doc_meta"]) if r and r["doc_meta"] else {}
+        except ValueError:
+            meta = {}
+        return (overhead_std.advance_factor(meta.get("一般管理費前払補正", "")),
+                overhead_std.guarantee_add(meta.get("契約保証", "")))
 
     def threshold(self, s: Summary) -> int:
         """調査基準価格・最低制限価格の試算。予定価格は工事価格と同じとみなす。"""

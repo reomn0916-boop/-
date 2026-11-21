@@ -101,3 +101,22 @@ def test_parse_match_and_apply(conn, tmp_path):
 def test_labor_base_bundled():
     ym, prices = sekopkg.TOKYO_LABOR["R8"]
     assert ym == "2025-03" and prices["普通作業員"] == 26800 and prices["運転手(一般)"] == 25400
+
+
+def test_official_overhead_rates(conn):
+    """国交省の諸経費率（奈良県も読替規定でそのまま使う）。年度マスタにない工種区分はこれで計算する。"""
+    from sekisan import overhead_std
+    c = calc.Calculator(conn, "R8")
+    # 表に載っている下限・上限の率と同じになる
+    assert c.rate("公園工事", "共通仮設費", 5_000_000) == 10.80 and c.rate("公園工事", "共通仮設費", 2e9) == 6.62
+    assert c.rate("公 園 工 事", "現場管理費", 5_000_000) == 43.09
+    assert c.rate("道路維持工事", "共通仮設費", 1_000_000) == 23.94      # 第3表：200万円以下
+    assert c.rate("ＰＣ橋工事", "現場管理費", 2e9) == 20.80
+    assert c.rate("下水道工事（２）", "共通仮設費", 5e6) == 13.32
+    assert c.rate("公園工事", "一般管理費等", 4e6) == 25.13 and c.rate("公園工事", "一般管理費等", 4e9) == 10.63
+    # 式：共通仮設費率 Kr = A・P^b、一般管理費等率 Gp = -5.21826 log10(Cp) + 60.08343
+    assert c.rate("河川工事", "共通仮設費", 50_000_000) == round(238.6 * 50_000_000 ** -0.1888, 2)
+    assert c.rate("河川工事", "一般管理費等", 80_000_000) == round(-5.21826 * 7.903089987 + 60.08343, 2)
+    assert not [w for w in c.warnings if "率がありません" in w]
+    assert c.rate("存在しない工事", "共通仮設費", 5e6) == 0 and c.warnings
+    assert overhead_std.advance_factor("0％から5％以下") == 1.05 and overhead_std.guarantee_add("役務的保証") == 0.09
