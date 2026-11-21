@@ -25,6 +25,7 @@ import urllib.parse
 import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -34,6 +35,8 @@ UA = "Mozilla/5.0 (compatible; swing-board/1.0)"
 CHART_DAYS = 120          # アプリのチャートに載せる日数
 PER_STOCK_NEWS = 25       # 個別にニュースを検索する銘柄の数（点数の上位から）
 NEWS_KEEP_DAYS = 4        # これより古いニュースは捨てる
+WORKERS = 6               # 株価を同時に取りにいく数（多すぎると断られる）
+EARNINGS_RECHECK_DAYS = 3 # 決算発表日はこの日数ごとに取り直す（それまでは前回の結果を使う）
 HOLD_DAYS = 15            # 検証で最長何営業日持つか
 TRACK_DAYS = 60           # 注目銘柄の成績を何日分追うか
 # ---- 自分の売買ルール（ルール一覧.xlsx）から決めた数値 ----
@@ -202,6 +205,47 @@ class YahooCal:
             return ds[0].isoformat() if ds else None
         except Exception:  # noqa: BLE001
             return None
+
+
+def pmap(fn, items, workers: int = WORKERS) -> list:
+    """items を同時にいくつか処理する（ネットの待ち時間を重ねて短くする）。順番は保つ。"""
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        return list(ex.map(fn, items))
+
+
+class Timer:
+    """どこで何秒かかったかをログに出す。"""
+
+    def __init__(self):
+        self.t = time.time()
+
+    def lap(self, label: str):
+        now = time.time()
+        print(f"  ⏱ {label}: {now - self.t:.0f} 秒")
+        self.t = now
+
+
+def load_earnings_cache(path: Path) -> dict:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def earnings_cached(code: str, cache: dict, cal) -> str | None:
+    """決算発表日。最近調べていて、まだ過ぎていなければ前回の結果を使う。"""
+    today = datetime.now(JST).date()
+    c = cache.get(code)
+    if c:
+        checked = datetime.fromisoformat(c["checked"]).date()
+        fresh = (today - checked).days < EARNINGS_RECHECK_DAYS
+        if fresh and (c.get("date") is None or datetime.fromisoformat(c["date"]).date() >= today):
+            return c.get("date")
+    if not cal or not cal.crumb:
+        return c.get("date") if c else None
+    d = cal.earnings(code + ".T")
+    cache[code] = {"date": d, "checked": today.isoformat()}
+    return d
 
 
 def days_until(date_s: str | None) -> int | None:
@@ -997,8 +1041,10 @@ def main() -> int:
     out_path = Path(args.out)
     hist_path = out_path.with_name("history.json")
 
+    tm = Timer()
     # 指数
     idx_px, idx_sum = {}, {}
+    idx_fetched = {} if args.demo else dict(zip([ix["sym"] for ix in INDICES], pmap(lambda ix: fetch_daily(ix["sym"]), INDICES)))
     for ix in INDICES:
         if args.demo:
             base = {"^N225": 38000, "1306.T": 2800, "^GSPC": 5900, "^IXIC": 19000, "^SOX": 5200,
@@ -1006,8 +1052,7 @@ def main() -> int:
             px = demo_prices(ix["sym"], base, days=500, drift=(0.0015 if ix["sym"] == "^N225" else 0.0006) if ix["kind"] != "vol" else 0.0,
                              vol=0.009 if ix["kind"] != "vol" else 0.03, shape="uptrend" if ix["sym"] == "^N225" else "")
         else:
-            px = fetch_daily(ix["sym"])
-            time.sleep(0.4)
+            px = idx_fetched.get(ix["sym"])
         if px:
             idx_px[ix["sym"]] = px
             idx_sum[ix["sym"]] = index_summary(ix, px)
@@ -1029,7 +1074,21 @@ def main() -> int:
     mkt_up = mkt_now["up"]
     print(f"日経平均の25日線: {'上向き' if mkt_up else '下向き' if mkt_up is False else '不明'}"
           f"・日経平均は25日線の{'上' if mkt_now['above'] else '下'}")
+    tm.lap("指数")
     cal = None if args.demo else YahooCal()
+    earn_path = out_path.with_name("earnings.json")
+    earn_cache = {} if args.demo else load_earnings_cache(earn_path)
+
+    # 株価と決算日を、まとめて同時に取りにいく
+    fetched = {}
+    if not args.demo:
+        def fetch_one(s):
+            return fetch_daily(s["code"] + ".T")
+        fetched = dict(zip([s["code"] for s in stocks], pmap(fetch_one, stocks)))
+        tm.lap(f"株価 {len(stocks)} 銘柄")
+        n_before = sum(1 for c in earn_cache.values() if c)
+        earns = dict(zip([s["code"] for s in stocks], pmap(lambda s: earnings_cached(s["code"], earn_cache, cal), stocks)))
+        tm.lap(f"決算発表日（前回の結果を使った {n_before} 銘柄を含む）")
 
     # 個別株
     shapes = ["pullback", "breakout", "rebound", "hot", "", "", "", ""]
@@ -1040,8 +1099,7 @@ def main() -> int:
             px = demo_prices(s["code"], rnd.uniform(800, 9000), days=500, drift=rnd.uniform(-0.0006, 0.0015),
                              vol=rnd.uniform(0.012, 0.028), shape=shapes[k % len(shapes)])
         else:
-            px = fetch_daily(s["code"] + ".T")
-            time.sleep(0.35)
+            px = fetched.get(s["code"])
         if not px or len(px["c"]) < 80:
             failed.append(s["code"])
             continue
@@ -1049,7 +1107,7 @@ def main() -> int:
             earn = (datetime.now(JST).date() + timedelta(days=random.Random(s["code"] + "e").randint(-20, 90))).isoformat() \
                 if k % 3 else None
         else:
-            earn = cal.earnings(s["code"] + ".T") if cal else None
+            earn = earns.get(s["code"])
         try:
             ind = indicators(px)
             ev = evaluate(ind, ind["n"] - 1, bench_ret20, mkt_now, days_until(earn))
@@ -1070,6 +1128,7 @@ def main() -> int:
         print("株価の取得に失敗した銘柄が多いので、書き出しを中止します", file=sys.stderr)
         return 1
 
+    tm.lap("指標・ルールの判定")
     # 検証（過去2年で、同じルールで売買していたらどうだったか）
     all_trades, per_stock, nomkt, loose_trades, per_stock_l = [], {}, [], [], {}
     base_rets = []
@@ -1099,23 +1158,26 @@ def main() -> int:
     }
     print(f"検証 きびしめ: {bt['all']}\n     ゆるめ: {bt['loose']}\n  比較（いつでも買う）平均 {bt['baseline_avg_ret']}%")
 
+    tm.lap("過去2年の検証")
     # ニュース
     raw = []
     if args.demo:
         raw = demo_news(stocks)
     else:
-        raw += [it for it in fetch_rss(TDNET_FEED[1], TDNET_FEED[0]) if it.get("codes")]
-        for src, url in MARKET_FEEDS:
-            raw += fetch_rss(url, src)
-            time.sleep(0.5)
+        feeds = [(TDNET_FEED[0], TDNET_FEED[1])] + [(src, url) for src, url in MARKET_FEEDS]
         top = sorted(records, key=lambda a: -a["tech_score"])[:PER_STOCK_NEWS]
         for a in top:
             q = f"\"{a['name']}\" 株 when:3d"
-            url = "https://news.google.com/rss/search?q=" + urllib.parse.quote(q) + "&hl=ja&gl=JP&ceid=JP:ja"
-            raw += fetch_rss(url, "Google ニュース")[:8]
-            time.sleep(0.8)
+            feeds.append(("Google ニュース*", "https://news.google.com/rss/search?q=" + urllib.parse.quote(q) + "&hl=ja&gl=JP&ceid=JP:ja"))
+        for (src, _), items in zip(feeds, pmap(lambda f: fetch_rss(f[1], f[0].rstrip("*")), feeds, workers=4)):
+            if src == TDNET_FEED[0]:
+                items = [it for it in items if it.get("codes")]
+            elif src.endswith("*"):
+                items = items[:8]  # 銘柄ごとの検索は新しい8件まで
+            raw += items
     news, hot = analyze_news(raw, stocks)
     print(f"ニュース {len(news)} 件 / テーマ {[h['theme'] for h in hot]}")
+    tm.lap("ニュース")
 
     # 総合点
     for a in records:
@@ -1213,6 +1275,7 @@ def main() -> int:
     out_path.write_text(dump(out), encoding="utf-8")
     out_path.with_name("charts.json").write_text(dump(charts), encoding="utf-8")
     if not args.demo:
+        earn_path.write_text(json.dumps(earn_cache, ensure_ascii=False, indent=0, sort_keys=True), encoding="utf-8")
         hist_path.write_text(json.dumps({"picks": hist}, ensure_ascii=False, indent=0), encoding="utf-8")
     print(f"書き出し: {out_path} ({out_path.stat().st_size // 1024} KB) 注目 {len(picks)}+{len(picks_l)} 銘柄 / "
           f"記録 {len(hist)} 件 / {time.time() - t0:.0f} 秒")

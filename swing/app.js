@@ -57,6 +57,7 @@ async function load(force) {
     buildView();
     S.newsById = Object.fromEntries(S.data.news.map((n) => [n.id, n]));
     renderAll();
+    renderUpd();
     if (force) toast('最新のデータにしました');
   } catch (e) {
     $('#updated').textContent = 'データを読み込めませんでした';
@@ -93,6 +94,127 @@ function setMode(m) {
 function modeSeg() {
   return `<div class="seg modeseg"><button data-mode="strict" class="${S.mode === 'strict' ? 'on' : ''}">きびしめ<small>ルールどおり</small></button>
     <button data-mode="loose" class="${S.mode === 'loose' ? 'on' : ''}">ゆるめ<small>買える銘柄を増やす</small></button></div>`;
+}
+
+// ---- 今すぐ更新（GitHub Actions の「スイングデータ更新」を動かす） ----------------
+const WORKFLOW = 'swing-update.yml';
+function ghRepo() {
+  const saved = store.get('ghRepo', '');
+  if (saved) return saved;
+  // GitHub Pages（owner.github.io/repo/）で開いていれば、そこから分かる
+  const m = location.hostname.match(/^([^.]+)\.github\.io$/);
+  if (m) return `${m[1]}/${location.pathname.split('/').filter(Boolean)[0] || ''}`;
+  return '';
+}
+const ghToken = () => store.get('ghToken', '');
+const wfUrl = () => `https://github.com/${ghRepo()}/actions/workflows/${WORKFLOW}`;
+
+async function ghApi(path, opt = {}) {
+  const r = await fetch(`https://api.github.com/repos/${ghRepo()}${path}`, {
+    ...opt,
+    headers: { Accept: 'application/vnd.github+json', Authorization: `Bearer ${ghToken()}`, 'X-GitHub-Api-Version': '2022-11-28', ...(opt.headers || {}) },
+  });
+  if (!r.ok && r.status !== 204) {
+    const msg = r.status === 401 ? '合い言葉（トークン）が正しくないか、期限切れです'
+      : r.status === 403 || r.status === 404 ? '合い言葉に Actions の権限がないか、リポジトリ名が違います' : `GitHub の応答 ${r.status}`;
+    throw new Error(msg);
+  }
+  return r.status === 204 ? null : r.json();
+}
+
+// 更新の進み具合（アプリを閉じても続きから見られるよう端末に残す）
+const UPD = { get: () => store.get('upd', null), set: (v) => store.set('upd', v) };
+
+function renderUpd() {
+  const el = $('#updCard');
+  if (!el || !S.data) return;
+  const u = UPD.get();
+  const when = fmtTime(S.data.generated_at);
+  let status = '';
+  if (u && u.state) {
+    const min = Math.max(0, Math.round((Date.now() - u.since) / 6e4));
+    const txt = { start: '更新を頼んでいます…', queued: '順番待ち', in_progress: `株価とニュースを集めています（${min}分経過・2〜3分かかります）`,
+      publish: '仕上げ中（公開を待っています）', done: '更新しました', fail: '更新に失敗しました',
+      wait: `GitHub で「Run workflow」→ 緑の「Run workflow」を押してください。終わると（2〜3分）ここが自動で新しくなります（${min}分経過）` }[u.state] || u.state;
+    status = `<div class="upd-st ${u.state}">${u.state === 'done' || u.state === 'fail' ? '' : '<i class="spinner"></i>'}<span class="t">${esc(txt)}</span>${u.state === 'fail' && u.url ? ` <a href="${esc(u.url)}" target="_blank" rel="noopener">くわしく</a>` : ''}${u.err ? `<small>${esc(u.err)}</small>` : ''}${u.state === 'wait' ? `<small><a href="${esc(wfUrl())}" target="_blank" rel="noopener">GitHub をもう一度開く</a>・<a href="#" id="updCancel">待つのをやめる</a></small>` : ''}</div>`;
+  }
+  const busy = u && ['start', 'queued', 'in_progress', 'publish', 'wait'].includes(u.state);
+  // 合い言葉なし：ボタンはそのまま GitHub の画面へのリンク（スマホでも確実に開くように）
+  const btn = !busy && !ghToken() && ghRepo()
+    ? `<a class="upd-btn" id="btnUpdateLink" href="${esc(wfUrl())}" target="_blank" rel="noopener">今すぐ更新</a>`
+    : `<button class="upd-btn" id="btnUpdate" ${busy ? 'disabled' : ''}>${busy ? '更新中…' : '今すぐ更新'}</button>`;
+  el.innerHTML = `<div class="upd">
+    <div class="upd-l"><small>データ</small><b>${esc(when)}</b></div>
+    ${btn}
+  </div>${status}`;
+}
+
+async function startUpdate() {
+  if (!ghRepo()) { toast('リポジトリが分かりません。「保有」タブの設定で入れてください'); setTab('watch'); return; }
+  if (!ghToken()) { window.open(wfUrl(), '_blank', 'noopener'); startWaiting(); return; }
+  const since = Date.now();
+  UPD.set({ state: 'start', since, prevGen: S.data.generated_at });
+  renderUpd();
+  try {
+    await ghApi(`/actions/workflows/${WORKFLOW}/dispatches`, { method: 'POST', body: JSON.stringify({ ref: 'main' }) });
+    pollUpdate();
+  } catch (e) {
+    UPD.set({ state: 'fail', since, err: e.message });
+    renderUpd();
+  }
+}
+
+// 合い言葉なし：GitHub で動かしてもらい、新しいデータが公開されるのを待つ
+function startWaiting() {
+  UPD.set({ state: 'wait', since: Date.now(), prevGen: S.data.generated_at });
+  renderUpd();
+  clearTimeout(pollT);
+  pollT = setTimeout(pollUpdate, 20000);
+}
+
+let pollT;
+async function pollUpdate() {
+  clearTimeout(pollT);
+  const u = UPD.get();
+  if (!u || !['start', 'queued', 'in_progress', 'publish', 'wait'].includes(u.state)) return;
+  if (Date.now() - u.since > 40 * 6e4) {
+    UPD.set({ ...u, state: 'fail', err: u.state === 'wait' ? '40分待っても新しいデータが来ませんでした。GitHub で Run workflow を押したか、赤い ✗ になっていないかを見てください' : '40分たっても終わりませんでした' });
+    renderUpd(); return;
+  }
+  try {
+    if (u.state !== 'publish' && u.state !== 'wait') {
+      const res = await ghApi(`/actions/workflows/${WORKFLOW}/runs?per_page=5&event=workflow_dispatch`);
+      const run = (res.workflow_runs || []).find((x) => new Date(x.created_at).getTime() >= u.since - 60e3);
+      if (run) {
+        if (run.status === 'completed') {
+          if (run.conclusion === 'success') UPD.set({ ...u, state: 'publish', url: run.html_url });
+          else { UPD.set({ ...u, state: 'fail', url: run.html_url, err: '「くわしく」で赤い ✗ の場所を見てください' }); renderUpd(); return; }
+        } else UPD.set({ ...u, state: run.status === 'queued' ? 'queued' : 'in_progress', url: run.html_url });
+      }
+    } else {
+      // 保存されたデータが GitHub Pages に出るまで待つ
+      const r = await fetch('data/latest.json?t=' + Date.now(), { cache: 'no-store' });
+      const d = r.ok ? await r.json() : null;
+      if (d && d.generated_at !== u.prevGen) {
+        UPD.set({ ...u, state: 'done' });
+        await load(true);
+        renderUpd();
+        setTimeout(() => { const x = UPD.get(); if (x && x.state === 'done') { UPD.set(null); renderUpd(); } }, 8000);
+        return;
+      }
+    }
+  } catch (e) {
+    UPD.set({ ...u, err: e.message });
+  }
+  renderUpd();
+  pollT = setTimeout(pollUpdate, u.state === 'wait' ? 20000 : 15000);
+}
+
+async function testToken() {
+  try {
+    const wf = await ghApi(`/actions/workflows/${WORKFLOW}`);
+    toast(`つながりました（${wf.name}）`);
+  } catch (e) { toast(e.message); }
 }
 
 async function loadCharts() {
@@ -503,6 +625,23 @@ function renderWatch() {
     ${journalHtml()}
     <h2>ウォッチ銘柄</h2>
     ${list.length ? `<div class="list">${list.map(stockRow).join('')}</div>` : '<div class="card empty">銘柄の画面の ☆ を押すと、ここに並びます。</div>'}
+    <details class="card settings advanced" ${ghToken() ? 'open' : ''}><summary>上級者向け：GitHub を開かずにボタンだけで更新する</summary>
+      <p class="muted" style="font-size:12px">ふだんは設定いりません。「今すぐ更新」で GitHub の画面が開くので、Run workflow を押すだけです。GitHub の合い言葉（トークン）を登録すると、その手間も省けます。</p>
+      <label class="field">リポジトリ（持ち主/名前）<input id="ghRepo" type="text" autocapitalize="off" autocomplete="off" placeholder="例：reomn0916-boop/-" value="${esc(ghRepo())}"></label>
+      <label class="field">合い言葉（GitHub のアクセストークン）<input id="ghToken" type="password" autocapitalize="off" autocomplete="off" placeholder="${ghToken() ? '登録済み（変えるときだけ入れる）' : 'github_pat_ で始まる文字'}"></label>
+      <div class="pos-acts" style="margin-top:0"><button class="btn-sm" id="ghSave">保存</button><button class="btn-sm" id="ghTest" ${ghToken() ? '' : 'disabled'}>つながるか確かめる</button><button class="btn-sm" id="ghDel" ${ghToken() ? '' : 'disabled'}>合い言葉を消す</button></div>
+      <details class="howto"><summary>合い言葉の作り方（はじめの1回だけ）</summary>
+        <ol>
+          <li><a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">GitHub の新しいトークンの画面</a>を開く（GitHub にログインした状態で）</li>
+          <li><b>Token name</b>：「スイングボード」など好きな名前</li>
+          <li><b>Expiration</b>：期限（90日など。切れたら作り直す）</li>
+          <li><b>Repository access</b>：<b>Only select repositories</b> を選び、このリポジトリ（<code>${esc(ghRepo().split('/')[1] || '-')}</code>）だけを選ぶ</li>
+          <li><b>Permissions</b> → <b>Repository permissions</b> → <b>Actions</b> を <b>Read and write</b> にする（ほかは触らない）</li>
+          <li>いちばん下の <b>Generate token</b> を押し、出てきた <code>github_pat_…</code> をコピーして、上の欄に貼って「保存」</li>
+        </ol>
+        <p class="muted">合い言葉はこのスマホの中だけに保存され、GitHub に更新を頼むときにだけ使います。この権限でできるのは Actions の操作（更新を動かす・止めるなど）だけで、ファイルの書きかえはできません。人に見せたり送ったりしないでください。</p>
+      </details>
+    </details>
     <h2>設定</h2>
     <div class="card settings">
       <div class="field">銘柄を選ぶルール${modeSeg()}</div>
@@ -775,6 +914,20 @@ function applyColor() { document.documentElement.classList.toggle('green-up', S.
 document.addEventListener('click', (e) => {
   const tab = e.target.closest('#tabs button');
   if (tab) return setTab(tab.dataset.tab);
+  if (e.target.closest('#btnUpdate')) return startUpdate();
+  if (e.target.closest('#btnUpdateLink')) return startWaiting();  // リンクはそのまま GitHub を開く
+  if (e.target.closest('#updCancel')) { e.preventDefault(); clearTimeout(pollT); UPD.set(null); renderUpd(); return; }
+  if (e.target.closest('#ghSave')) {
+    const repo = $('#ghRepo').value.trim().replace(/^https:\/\/github\.com\//, '').replace(/\/$/, '');
+    const tok = $('#ghToken').value.trim();
+    if (repo) store.set('ghRepo', repo);
+    if (tok) store.set('ghToken', tok);
+    renderWatch();
+    toast(tok ? '保存しました。「つながるか確かめる」を押してください' : '保存しました');
+    return;
+  }
+  if (e.target.closest('#ghTest')) return testToken();
+  if (e.target.closest('#ghDel')) { if (confirm('合い言葉を消しますか？')) { store.set('ghToken', ''); renderWatch(); toast('消しました'); } return; }
   const md = e.target.closest('[data-mode]');
   if (md) return setMode(md.dataset.mode);
   const go = e.target.closest('[data-tab-go]');
@@ -932,10 +1085,12 @@ window.addEventListener('resize', () => {
 document.addEventListener('visibilitychange', () => {
   // 開きっぱなしで日をまたいだら読み直す
   if (document.visibilityState === 'visible' && S.data && Date.now() - new Date(S.data.generated_at) > 6 * 36e5) load(false);
+  if (document.visibilityState === 'visible') { renderUpd(); pollUpdate(); }
 });
 
 applyColor();
 load(false).then(() => {
+  pollUpdate();
   const c = location.hash.slice(1);
   if (c && S.byCode && S.byCode[c]) openStock(c, true);
 });
