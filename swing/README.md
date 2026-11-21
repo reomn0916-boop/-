@@ -40,6 +40,15 @@ GitHub Actions（平日 7:07 と 16:37）
    - Settings → Actions → General → Workflow permissions が「Read and write」になっていないと保存に失敗します。
 3. `https://<GitHub Pages の URL>/swing/` をスマホで開き、共有メニューから **ホーム画面に追加**。
 
+### 「今すぐ更新」ボタン
+
+アプリの上の「今すぐ更新」で、決まった時刻を待たずにデータを作り直せます（5〜10分）。
+
+- **合い言葉なし**：GitHub の「スイングデータ更新」の画面が開くので、Run workflow を押す
+- **合い言葉あり**：ボタンだけで更新が始まり、進み具合が出て、終わると自動で新しいデータになる。合い言葉は「保有」タブ →「今すぐ更新」ボタンの設定で登録する（作り方も画面に出ます）
+  - GitHub の fine-grained personal access token。このリポジトリだけ・**Actions: Read and write** だけにする
+  - スマホの中（ブラウザの保存領域）にだけ保存し、`api.github.com` に更新を頼むときにだけ送る
+
 手元で試すとき：
 
 ```sh

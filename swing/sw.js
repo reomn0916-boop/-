@@ -1,5 +1,5 @@
 // スイングボードのオフライン用キャッシュ。画面のファイルを変えたら VERSION を上げる
-const VERSION = 'swing-v4';
+const VERSION = 'swing-v5';
 const FILES = ['./', './index.html', './app.css', './app.js', './manifest.webmanifest', './icon.svg', './icon-192.png'];
 
 self.addEventListener('install', (e) => {
