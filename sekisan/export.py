@@ -391,13 +391,13 @@ def export_agreement(path: str | Path, project: dict, ag, prog=None) -> Path:
 
 
 def export_book_list(path: str | Path, project: dict, items) -> Path:
-    """物価資料（積算資料・建設物価）で調べる単価の一覧。調べた単価を書き込んで使う。"""
+    """単価が不明な資源の一覧（物価資料・損料表・見積で調べる）。調べた単価を書き込んで使う。"""
     wb = Workbook()
     ws = wb.active
-    ws.title = "物価資料で調べる単価"
-    _title(ws, f"物価資料で調べる単価　{project['name']}")
-    ws["A2"] = "県の単価資料で「○（刊行物単価使用）」になっている品目です。積算資料・建設物価の単価を「単価」欄に記入してください。"
-    data = [[b.kind, b.code, b.name, b.spec, b.unit, b.region, b.ref, b.used_in, None] for b in items]
-    _table(ws, 4, ["種類", "単価コード", "名称", "規格", "単位", "地区", "刊行物の掲載元", "使う明細", "単価"], data,
-           {9: YEN}, [8, 13, 26, 24, 6, 7, 30, 20, 12])
+    ws.title = "単価が不明な資源"
+    _title(ws, f"単価が不明な資源　{project['name']}")
+    ws["A2"] = "積算資料・建設物価・建設機械等損料表・見積で調べた単価を「単価」欄に記入してください。"
+    data = [[b.cause, b.kind, b.code, b.name, b.spec, b.unit, b.count, b.used_in, b.ref, None] for b in items]
+    _table(ws, 4, ["原因", "種類", "コード", "名称", "規格", "単位", "使う行", "使う単価表・明細", "刊行物の掲載元", "単価"], data,
+           {10: YEN}, [18, 8, 13, 26, 24, 6, 7, 26, 24, 12])
     return _save(wb, path)

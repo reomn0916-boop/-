@@ -41,6 +41,16 @@ class Candidate:
     reason: str
 
 
+def _kind_of_unit(unit: str, code: str) -> str:
+    """覚えた単価の種類（コードか単位から）"""
+    from .publicprice import kind_of_code
+    k = kind_of_code(code) if not code.startswith("実績:") else ""
+    if k:
+        return k
+    u = unicodedata.normalize("NFKC", unit or "")
+    return "労務" if u in ("人", "人日") else ("機械" if u in ("日", "時間", "供用日", "h") else "材料")
+
+
 def candidates(conn: sqlite3.Connection, fy: str, name: str, spec: str, unit: str, n: int = 5) -> list[Candidate]:
     pool: list[tuple[str, str, str, str, str]] = []
     for r in conn.execute("SELECT code, name, spec, unit FROM bukake WHERE fy=?", (fy,)):
@@ -52,6 +62,12 @@ def candidates(conn: sqlite3.Connection, fy: str, name: str, spec: str, unit: st
     for r in conn.execute("SELECT code, name, spec, unit FROM quote"):
         pool.append((r["code"], "見積", r["name"], r["spec"], r["unit"]))
     have = {c for c, *_ in pool}
+    # 金入り設計書で覚えた単価（県のコードがない品目は「実績:名称 規格」のコード）
+    for r in conn.execute("SELECT DISTINCT code, name, spec, unit FROM observed_price WHERE fy=?", (fy,)):
+        if r["code"] not in have:
+            kind = _kind_of_unit(r["unit"], r["code"])
+            pool.append((r["code"], kind, r["name"], r["spec"], r["unit"]))
+            have.add(r["code"])
     for r in conn.execute("SELECT DISTINCT kind, code, name, spec, unit, source FROM public_item "
                           "WHERE fy=? AND price IS NULL", (fy,)):
         if r["code"] not in have:

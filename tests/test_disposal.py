@@ -86,3 +86,35 @@ def test_loss_pdf(tmp_path):
     assert (rows["M007000230"].unit, rows["M007000230"].price) == ("供用日", 515)
     assert (rows["M007000180"].name, rows["M007000180"].spec, rows["M007000180"].unit, rows["M007000180"].price) == \
         ("ﾊﾟﾄﾛｰﾙｶｰ 4×4D", "普通", "時間", 2020)
+
+
+def test_missing_prices_grouped_and_remembered(conn):
+    """不明な資源を原因ごとにまとめ、県のコードがない品目も単価を入れると当たり、次からは名称・規格で自動で当たる。"""
+    from sekisan import kinnuki, suggest
+    pid = conn.execute("INSERT INTO project(name, fy, region) VALUES ('試験', 'R8', '')").lastrowid
+    conn.execute("INSERT INTO bukake(fy, code, name, spec, unit, per_qty, project_id) VALUES "
+                 "('R8', 'T#1/単1', '試験（単1号）', '', 'm2', 1, ?)", (pid,))
+    conn.executemany("INSERT INTO bukake_component(fy, bukake_code, seq, kind, res_code, qty, src, note) VALUES "
+                     "('R8', 'T#1/単1', ?, ?, '', 1, ?, '単価を当てる')",
+                     [(1, "材料", "ﾌﾞﾙｰｼｰﾄ ＃3000 (m2)"), (2, "機械", "ﾁｪﾝｿｰ[ｶﾞｿﾘﾝｴﾝｼﾞﾝ] 鋸長500mm (日)"),
+                      (3, "材料", "処分費 伐木 (m3)")])
+    conn.commit()
+    items = publicprice.book_items_for(conn, pid)
+    causes = {b.name: b.cause for b in items}
+    assert causes == {"ﾌﾞﾙｰｼｰﾄ": publicprice.CAUSE_NOCODE, "ﾁｪﾝｿｰ[ｶﾞｿﾘﾝｴﾝｼﾞﾝ]": publicprice.CAUSE_MACHINE,
+                      "処分費": publicprice.CAUSE_DISPOSAL}
+    sheet = next(b for b in items if b.name == "ﾌﾞﾙｰｼｰﾄ")
+    assert (sheet.spec, sheet.unit, sheet.targets) == ("＃3000", "m2", [("T#1/単1", 1)])
+    code = publicprice.set_missing_price(conn, "R8", sheet, 120)
+    assert conn.execute("SELECT res_code FROM bukake_component WHERE bukake_code='T#1/単1' AND seq=1").fetchone()[0] == code
+    assert {b.name for b in publicprice.book_items_for(conn, pid)} == {"ﾁｪﾝｿｰ[ｶﾞｿﾘﾝｴﾝｼﾞﾝ]", "処分費"}
+    with pytest.raises(ValueError):
+        publicprice.set_missing_price(conn, "R8", next(b for b in items if b.name == "処分費"), 1000)
+    # 次の金抜き設計書では、同じ名称・規格の行に自動で当たる
+    hit = kinnuki._match_resource(conn, "R8", kinnuki.TableLine("ﾌﾞﾙｰｼｰﾄ", "＃3000", "", "m2", 1.0, "", None, ""))
+    assert hit and hit[1] == code
+    # 金入り設計書で覚えた、県のコードがない品目の単価も候補になる
+    conn.execute("INSERT INTO observed_price(fy, code, month, price, name, spec, unit) VALUES "
+                 "('R8', '実績:計量器 ひょう量300kg', '2026-08-01', 3000, '計量器', 'ひょう量300kg', '日')")
+    conn.commit()
+    assert suggest.candidates(conn, "R8", "計量器", "ひょう量300kg", "日")[0].code == "実績:計量器 ひょう量300kg"

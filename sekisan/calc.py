@@ -457,7 +457,7 @@ class Calculator:
                     if pub:
                         self.warnings.append(f"明細{row['seq']}「{row['name']}」の {code}（{pub['name']} {pub['spec']}）は"
                                              f"県の単価資料で「{pub['source']}」のため単価がありません。"
-                                             "「物価資料の単価」で入れてください。")
+                                             "「不明な単価」の画面で入れてください。")
                     else:
                         self.warnings.append(f"明細{row['seq']}「{row['name']}」のコード {code} が見つかりません")
                     how = "物価資料待ち" if pub and pub["source"] == "物価資料" else "未設定"

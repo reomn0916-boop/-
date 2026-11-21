@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QDate, Qt
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QSplitter, QTableWidget, QTableWidgetItem,
@@ -108,7 +109,7 @@ class PricePreviewDialog(QDialog):
         head = f"{len(rows):,} 件を読み取りました。" + (f"（適用日 {valid_from}）" if valid_from else "")
         lab = QLabel(head + f"\n{fy}年度の単価に入れるもの：新規 {cnt['新規']:,} 件・単価が変わる {cnt['更新']:,} 件・"
                      f"変わらない {cnt['同じ']:,} 件\n単価がないもの：○（物価資料の単価を使う）{cnt['物価資料']:,} 件・"
-                     f"空欄 {cnt['未設定']:,} 件 → 名称・規格だけ控えて、当てはめ候補と「物価資料の単価」に使います")
+                     f"空欄 {cnt['未設定']:,} 件 → 名称・規格だけ控えて、当てはめ候補と「不明な単価」に使います")
         lab.setStyleSheet("font-weight: 700;")
         lab.setWordWrap(True)
         v.addWidget(lab)
@@ -766,7 +767,7 @@ class PagesMixin2:
             if n:
                 book = sum(r.price is None for r in rows)
                 self.m_banner.show_msg(f"{fy}年度の単価に {n:,} 件を取り込みました。単価のない {book:,} 件は名称・規格を控えました"
-                                       "（当てはめ候補と「物価資料の単価」に出ます）。", "ok")
+                                       "（当てはめ候補と「不明な単価」に出ます）。", "ok")
                 self._load_master_overview()
                 self.recalc()
 
@@ -897,6 +898,10 @@ class PagesMixin2:
         self.s_banner.show_msg(f"バックアップから戻しました。戻す前の状態は {safety.name} に残しています。", "ok")
 
 
+BOOK_COLS = ["原因", "種類", "コード", "名称", "規格", "単位", "単価（入力）", "使う行", "使う単価表・明細", "どうするか"]
+PRICE_COL, COUNT_COL = 6, 7
+
+
 class BookPageMixin:
     """物価資料（積算資料・建設物価）で調べる単価：県の資料で○の品目のうち、この工事で使うもの。"""
 
@@ -905,8 +910,9 @@ class BookPageMixin:
         self.bk_banner = Banner()
         v.addWidget(self.bk_banner)
         bar = QHBoxLayout()
-        hint = QLabel("県の単価資料で「○（刊行物単価使用）」の品目は、県のPDFに金額がありません。"
-                      "積算資料・建設物価で調べた単価を「単価」欄に入れて「保存」すると、年度の単価として使われます。")
+        hint = QLabel("この工事で単価が「不明」の資源を、原因ごとにまとめています（たくさん使うものが上）。"
+                      "「単価（入力）」に入れて「保存」すると、この工事のすべての単価表に入り、年度の単価として次の工事でも使われます。"
+                      "県のコードがない品目も、入れた名称・規格で次の金抜き設計書に自動で当たります。")
         hint.setObjectName("Muted")
         hint.setWordWrap(True)
         bar.addWidget(hint, 1)
@@ -918,9 +924,8 @@ class BookPageMixin:
         bar.addWidget(xb)
         bar.addWidget(sb)
         v.addLayout(bar)
-        self.book_table = QTableWidget(0, 9)
-        self.book_table.setHorizontalHeaderLabels(["種類", "単価コード", "名称", "規格", "単位", "地区", "刊行物の掲載元",
-                                                   "使う明細", "単価（入力）"])
+        self.book_table = QTableWidget(0, len(BOOK_COLS))
+        self.book_table.setHorizontalHeaderLabels(BOOK_COLS)
         from .gui import _style_table
         _style_table(self.book_table)
         v.addWidget(self.book_table, 1)
@@ -930,24 +935,39 @@ class BookPageMixin:
         items = publicprice.book_items_for(self.conn, self.pid) if self.pid is not None else []
         self.book_items = items
         self.book_table.setRowCount(len(items))
+        tone = {publicprice.CAUSE_DISPOSAL: C["accent"], publicprice.CAUSE_MACHINE: C["warn"], publicprice.CAUSE_BOOK: C["bad"]}
         for i, b in enumerate(items):
-            for c, val in enumerate([b.kind, b.code, b.name, b.spec, b.unit, b.region or "共通", b.ref, b.used_in, ""]):
+            vals = [b.cause, b.kind, b.code or "（なし）", b.name, b.spec, b.unit, "", f"{b.count}",
+                    b.used_in, b.hint + (f"　掲載元：{b.ref}" if b.ref else "")]
+            for c, val in enumerate(vals):
                 cell = QTableWidgetItem(val)
-                if c != 8:
+                if c != PRICE_COL or b.cause == publicprice.CAUSE_DISPOSAL:
                     cell.setFlags(cell.flags() & ~Qt.ItemIsEditable)
                 else:
                     cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                     cell.setBackground(Qt.white)
+                if c == 0 and b.cause in tone:
+                    cell.setForeground(QBrush(QColor(tone[b.cause])))
+                if c == COUNT_COL:
+                    cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                if c == PRICE_COL and b.cause == publicprice.CAUSE_DISPOSAL:
+                    cell.setText("処分場で選ぶ")
                 self.book_table.setItem(i, c, cell)
-        for c, wd in enumerate([70, 110, 220, 200, 50, 60, 200, 140]):
+        for c, wd in enumerate([150, 60, 100, 220, 190, 45, 100, 50, 160]):
             self.book_table.setColumnWidth(c, wd)
         self.book_table.horizontalHeader().setStretchLastSection(True)
         if self.pid is None:
             self.bk_banner.hide()
         elif items:
-            self.bk_banner.show_msg(f"この工事で使う品目のうち {len(items)} 件は、物価資料の単価を入れる必要があります。", "warn")
+            by = {}
+            for b in items:
+                by[b.cause] = by.get(b.cause, 0) + 1
+            uses = sum(b.count for b in items)
+            self.bk_banner.show_msg(f"単価が不明な資源が {len(items)} 種類（単価表の {uses} 行）あります："
+                                    + "、".join(f"{k} {v}" for k, v in by.items())
+                                    + "。上から順に入れると、早く減ります。", "warn")
         else:
-            self.bk_banner.show_msg("物価資料で調べる必要のある品目はありません。", "ok")
+            self.bk_banner.show_msg("単価が不明な資源はありません。", "ok")
 
     def _save_book(self) -> None:
         p = self._project_row()
@@ -955,19 +975,21 @@ class BookPageMixin:
             return
         n = 0
         for i, b in enumerate(getattr(self, "book_items", [])):
-            t = (self.book_table.item(i, 8).text() or "").replace(",", "").replace("¥", "").strip()
-            if not t:
+            it = self.book_table.item(i, PRICE_COL)
+            t = ((it.text() if it else "") or "").replace(",", "").replace("¥", "").replace("円", "").strip()
+            if not t or b.cause == publicprice.CAUSE_DISPOSAL:
                 continue
             try:
                 price = float(t)
             except ValueError:
                 QMessageBox.warning(self, "入力", f"{b.name} {b.spec} の単価は数字で入れてください")
                 return
-            if self.guard(publicprice.set_book_price, self.conn, p["fy"], b.kind, b.code, price, b.region) is None:
+            if self.guard(publicprice.set_missing_price, self.conn, p["fy"], b, price) is None:
                 return
             n += 1
+        self._res_cands = None
         self.recalc()
-        self.status.showMessage(f"物価資料の単価を {n} 件保存しました", 5000)
+        self.status.showMessage(f"単価を {n} 件保存しました", 5000)
 
     def _export_book(self) -> None:
         if self.pid is None:

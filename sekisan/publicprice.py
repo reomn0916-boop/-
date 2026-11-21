@@ -195,46 +195,126 @@ def apply(conn: sqlite3.Connection, fy: str, rows: list[PriceRow], source: str =
     return len(priced)
 
 
-# ---------------------------------------------------------------- 物価資料で調べる単価
+# ---------------------------------------------------------------- 単価が不明な資源（物価資料・機械損料・県の資料にない品目）
+CAUSE_BOOK = "物価資料（県の資料で○）"
+CAUSE_BLANK = "県の単価が空欄"
+CAUSE_NOCODE = "県の資料にない"
+CAUSE_MACHINE = "機械損料（損料表）"
+CAUSE_DISPOSAL = "処分場が未選択"
+CAUSE_UNKNOWN = "コードに単価がない"
+CAUSE_HINT = {
+    CAUSE_BOOK: "積算資料・建設物価の単価を入れる",
+    CAUSE_BLANK: "見積・物価資料で単価を決めて入れる",
+    CAUSE_NOCODE: "物価資料・見積の単価を入れる（次からは同じ名称・規格に自動で当たる）",
+    CAUSE_MACHINE: "建設機械等損料表の損料（運転1時間・1日当り）を入れる",
+    CAUSE_DISPOSAL: "「処分場」の画面で処分場を選ぶ（単価はここでは入れない）",
+    CAUSE_UNKNOWN: "コードを確かめるか、単価を入れる",
+}
+
+
 @dataclass
 class BookItem:
     kind: str
-    code: str
+    code: str             # 空欄＝県のコードがない品目（単価を入れると自分用のコードを作る）
     name: str
     spec: str
     unit: str
     region: str
     ref: str
-    used_in: str          # どの明細・歩掛で使うか
+    used_in: str          # どの明細・単価表で使うか
+    cause: str = CAUSE_BOOK
+    count: int = 0        # 使っている行の数
+    targets: list = None  # [(歩掛コード, 行)]：単価を入れたとき、コードを当てる行
+
+    @property
+    def hint(self) -> str:
+        return CAUSE_HINT.get(self.cause, "")
+
+
+def split_src(src: str) -> tuple[str, str, str]:
+    """単価表の行の「設計書の記載」（名称 規格 〔条件〕 (単位)）を、名称・規格・単位に分ける。"""
+    m = re.match(r"(.*?)(?: 〔.*〕)? \((.*)\)$", src or "")
+    body, unit = (m.group(1), m.group(2)) if m else (src or "", "")
+    name, _, spec = body.strip().partition(" ")
+    return name.strip(), spec.strip(), unit.strip()
+
+
+def own_code(kind: str, name: str, spec: str, unit: str) -> str:
+    """県のコードがない品目に付ける自分用のコード（同じ名称・規格・単位なら同じコード）"""
+    import hashlib
+    h = hashlib.sha1(f"{kind}|{unicodedata.normalize('NFKC', name)}|{unicodedata.normalize('NFKC', spec)}|"
+                     f"{unicodedata.normalize('NFKC', unit)}".encode()).hexdigest()[:8].upper()
+    return f"自{h}"
 
 
 def book_items_for(conn: sqlite3.Connection, project_id: int) -> list[BookItem]:
-    """この工事で使うのに年度の単価がなく、県の資料で「○（物価資料）」になっている品目。"""
-    from . import calc
-    p = conn.execute("SELECT fy, region FROM project WHERE id=?", (project_id,)).fetchone()
-    res = calc.calculate(conn, project_id)
-    want: dict[str, set[str]] = {}
-    for it in res.items:
-        if it.code:
-            want.setdefault(it.code, set()).add(f"明細{it.seq}")
-        if it.detail:
-            for l in it.detail.lines:
-                if l.source == "不明" and l.code:
-                    want.setdefault(l.code, set()).add(f"明細{it.seq}（{it.detail.code}の中）")
-    out = []
-    for code, used in want.items():
-        has = conn.execute("SELECT 1 FROM master_price WHERE fy=? AND code=? AND region IN (?, '')",
-                           (p["fy"], code, p["region"])).fetchone() or conn.execute(
-            "SELECT 1 FROM observed_price WHERE fy=? AND code=? AND region IN (?, '')",
-            (p["fy"], code, p["region"])).fetchone()
-        if has:
-            continue
-        r = conn.execute("SELECT * FROM public_item WHERE fy=? AND code=? AND region IN (?, '') AND price IS NULL"
-                         " ORDER BY region DESC LIMIT 1", (p["fy"], code, p["region"])).fetchone()
+    """この工事で単価が「不明」になっている資源を、原因ごとにまとめて返す（よく使うものから）。"""
+    from . import calc, disposal
+    p = conn.execute("SELECT * FROM project WHERE id=?", (project_id,)).fetchone()
+    cl = calc.Calculator(conn, p["fy"], p["region"], calc.DESIGN, calc.project_conditions(conn, project_id),
+                         p["orderer"], p["price_date"], project_id)
+    found: dict[tuple, BookItem] = {}
+
+    def pub(code: str):
+        return conn.execute("SELECT * FROM public_item WHERE fy=? AND code=? AND region IN (?, '')"
+                            " ORDER BY region DESC LIMIT 1", (p["fy"], code, p["region"])).fetchone()
+
+    def add(key, make, where: str, target=None) -> None:
+        b = found.get(key)
+        if b is None:
+            b = found[key] = make()
+            b.targets, b.used_in = [], ""
+        b.count += 1
+        if target:
+            b.targets.append(target)
+        places = [x for x in b.used_in.split("、") if x]
+        if where not in places:
+            b.used_in = "、".join(places + [where])
+
+    def coded(kind: str, code: str, where: str) -> None:
+        if code.startswith(disposal.PREFIX):
+            _pr, name, unit, warn = disposal.price_for(conn, project_id, code, p["price_date"] or "")
+            if warn:
+                add(("code", code), lambda: BookItem(kind, code, name, "", unit, "", "", "", CAUSE_DISPOSAL), where)
+            return
+        price, name, unit, source = cl.resource_price(kind, code)
+        if source != "不明":
+            return
+        r = pub(code)
         if r:
-            out.append(BookItem(r["kind"], code, r["name"], r["spec"], r["unit"], r["region"], r["ref"],
-                                "、".join(sorted(used))))
-    return out
+            cause = CAUSE_BOOK if r["source"] == FROM_BOOK else CAUSE_BLANK
+            add(("code", code), lambda: BookItem(r["kind"], code, r["name"], r["spec"], r["unit"], r["region"], r["ref"],
+                                                 "", cause), where)
+        else:
+            add(("code", code), lambda: BookItem(kind, code, name, "", unit, "", "", "", CAUSE_UNKNOWN), where)
+
+    tables = list(conn.execute("SELECT code, name FROM bukake WHERE fy=? AND project_id=? ORDER BY rowid",
+                               (p["fy"], project_id)))
+    for b in tables:
+        where = re.sub(r"^.*（", "", b["name"]).rstrip("）") if "（" in b["name"] else b["name"]
+        for c in conn.execute("SELECT * FROM bukake_component WHERE fy=? AND bukake_code=? ORDER BY seq",
+                              (p["fy"], b["code"])):
+            if c["kind"] in ("歩掛", "パッケージ"):
+                continue
+            if c["res_code"]:
+                coded(c["kind"], c["res_code"], where)
+                continue
+            name, spec, unit = split_src(c["src"])
+            if not name:
+                continue
+            cause = CAUSE_MACHINE if c["kind"] == "機械" else CAUSE_NOCODE
+            if "処分" in name and c["kind"] != "機械":
+                cause = CAUSE_DISPOSAL
+            key = ("name", c["kind"], unicodedata.normalize("NFKC", f"{name}|{spec}|{unit}"))
+            add(key, lambda: BookItem(c["kind"], "", name, spec, unit, "", "", "", cause), where,
+                (b["code"], c["seq"]))
+    for it in calc.calculate(conn, project_id).items:   # 明細に直接当てたコード
+        if it.code and not it.detail and it.how in ("物価資料待ち", "未設定"):
+            r = pub(it.code)
+            if r:
+                coded(r["kind"], it.code, f"明細{it.seq}")
+    order = list(CAUSE_HINT)
+    return sorted(found.values(), key=lambda b: (b.cause == CAUSE_DISPOSAL, -b.count, order.index(b.cause), b.name))
 
 
 def set_book_price(conn: sqlite3.Connection, fy: str, kind: str, code: str, price: float, region: str = "",
@@ -248,6 +328,27 @@ def set_book_price(conn: sqlite3.Connection, fy: str, kind: str, code: str, pric
         conn.execute("INSERT OR REPLACE INTO master_price(fy, kind, code, name, spec, unit, price, region)"
                      " VALUES (?,?,?,?,?,?,?,?)", (fy, kind, code, name, spec, unit, price, region))
         audit.log(conn, None, "物価資料の単価を入力", f"{fy} {code} {name} {spec} {price:,.0f}（{note}）")
+
+
+def set_missing_price(conn: sqlite3.Connection, fy: str, item: BookItem, price: float) -> str:
+    """不明な資源に単価を入れる。県のコードがない品目は自分用のコードを作り、年度の単価に名称・規格つきで入れて、
+    この工事の該当する行に当てる（次の金抜き設計書でも、同じ名称・規格の行に自動で当たる）。戻り値はコード。"""
+    if item.cause == CAUSE_DISPOSAL:
+        raise ValueError(f"{item.name}：処分費は「処分場」の画面で処分場を選んでください")
+    if item.code:
+        set_book_price(conn, fy, item.kind, item.code, price, item.region)
+        return item.code
+    from . import kinnuki
+    audit.require(conn, "master")
+    code = own_code(item.kind, item.name, item.spec, item.unit)
+    with conn:
+        conn.execute("INSERT OR REPLACE INTO master_price(fy, kind, code, name, spec, unit, price, region)"
+                     " VALUES (?,?,?,?,?,?,?,'')", (fy, item.kind, code, item.name, item.spec, item.unit, price))
+        audit.log(conn, None, "県の資料にない品目の単価を入力",
+                  f"{fy} {code} {item.name} {item.spec} {price:,.0f}（{item.cause}）")
+    for bcode, seq in item.targets or []:
+        kinnuki.set_component(conn, fy, bcode, seq, res_code=code)
+    return code
 
 
 # ====================================================================== 奈良県「土木工事設計単価資料」のPDF
