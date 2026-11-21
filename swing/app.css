@@ -327,3 +327,8 @@ table.cmp td:first-child { white-space: nowrap; color: var(--muted); }
 .field input[type="text"], .field input[type="password"] { font-size: 16px; }
 .upd-st .t { flex: 1; min-width: 0; }
 .upd-st .spinner { flex: none; }
+a.upd-btn { text-decoration: none; display: inline-block; }
+.advanced { margin-top: 22px; }
+.advanced > summary { font-size: 14px; font-weight: 700; cursor: pointer; color: var(--muted); }
+.advanced[open] > summary { margin-bottom: 8px; }
+.upd-st small a { color: inherit; }
