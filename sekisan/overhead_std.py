@@ -88,21 +88,21 @@ def params(fy: str, work_type: str, item: str):
     return None
 
 
-def advance_factor(text: str) -> float:
+def advance_factor(text: str, table=None) -> float:
     t = unicodedata.normalize("NFKC", text or "").replace(" ", "")
     if not t or "行わない" in t or "しない" in t:
         return 1.0
-    for label, f in ADVANCE_FACTOR:
+    for label, f in (table or ADVANCE_FACTOR):
         if unicodedata.normalize("NFKC", label) in t:
             return f
     return 1.0
 
 
-def guarantee_add(text: str) -> float:
+def guarantee_add(text: str, table=None) -> float:
     t = unicodedata.normalize("NFKC", text or "")
     if not t or "しない" in t or "行わない" in t:
         return 0.0
-    return next((v for k, v in GUARANTEE_ADD if k in t), 0.0)
+    return next((v for k, v in (table or GUARANTEE_ADD) if k in t), 0.0)
 
 
 # ------------------------------------------------------------------ 施工地域を考慮した補正（表－２：共通仮設費率、表－３：現場管理費率）
@@ -151,11 +151,11 @@ def classify(text: str) -> str:
     return ""
 
 
-def area_coefs(kind: str, work_type: str) -> tuple[float, float, str]:
+def area_coefs(kind: str, work_type: str, table=None) -> tuple[float, float, str]:
     """(共通仮設費率の係数, 現場管理費率の係数, 当てはめた区分)。当てはまらなければ (1, 1, '')"""
     if not kind or kind == NO_AREA:
         return 1.0, 1.0, ""
-    rows = [r for r in AREA if r[0].startswith(kind) and _applies(r, work_type)]
+    rows = [r for r in (table or AREA) if r[0].startswith(kind) and _applies(r, work_type)]
     if not rows:
         return 1.0, 1.0, ""
     r = min(rows, key=lambda r: r[3])

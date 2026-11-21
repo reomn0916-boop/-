@@ -17,6 +17,7 @@ from . import audit, awards, calc, db, importer, pipeline, settings, theme
 from .gui_pages import AddItemDialog, PagesMixin
 from .gui_pages2 import BookPageMixin, PagesMixin2
 from .gui_pages3 import AutoFetchMixin, TablesPageMixin
+from .gui_pages5 import StandardsPageMixin
 from .gui_pages4 import DisposalPageMixin, KoukokuMixin, ReversePanelMixin, SekopkgMixin, SubmissionPageMixin
 from . import kinnuki
 from . import backup
@@ -48,6 +49,7 @@ PAGES = [
     ("book", "不明な単価", "単価が不明な資源", "単価が「不明」の資源を原因ごとにまとめ、物価資料・損料表・見積で調べた単価を入れます。", None),
     ("awards", "落札実績", "落札実績", "過去の落札結果から、落札率や自社積算の精度を見ます。入札検討の予定価格の見込みにも使います。", None),
     ("master", "マスタ", "マスタ管理", "年度ごとの単価・歩掛・諸経費率・補正・機械損料・公表単価、発注者ごとの設定を取り込みます。", None),
+    ("standards", "基準・ルール", "基準・ルール", "諸経費率・施工地域の補正・最低制限価格の式・端数処理を、基準が変わったときにソフトの中で直します。", None),
     ("settings", "設定", "設定", "データファイル・担当者名・利用者と権限・バックアップの設定です。", None),
 ]
 PROJECT_PAGES = {"items", "tables", "tree", "bid", "submit", "project", "schedule", "change", "after", "verify", "inquiry", "history", "book",
@@ -101,7 +103,7 @@ class ItemFilter(QSortFilterProxyModel):
 
 
 class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, AutoFetchMixin, DisposalPageMixin, ReversePanelMixin,
-                 SubmissionPageMixin, SekopkgMixin, KoukokuMixin, QMainWindow):
+                 SubmissionPageMixin, SekopkgMixin, KoukokuMixin, StandardsPageMixin, QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("公共工事 積算アプリ")
@@ -136,10 +138,10 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, AutoFe
                     "history": self._page_history, "quotes": self._page_quotes, "awards": self._page_awards,
                     "schedule": self._page_schedule, "after": self._page_after, "inquiry": self._page_inquiry,
                     "book": self._page_book, "tables": self._page_tables, "disposal": self._page_disposal,
-                    "submit": self._page_submit}
+                    "submit": self._page_submit, "standards": self._page_standards}
         for key, *_ in PAGES:
             page = builders[key]()
-            if key in ("master", "settings", "bid", "submit"):  # 中身が多い画面はスクロールできるようにする
+            if key in ("master", "settings", "bid", "submit", "standards"):  # 中身が多い画面はスクロールできるようにする
                 from PySide6.QtWidgets import QScrollArea
                 sc = QScrollArea()
                 sc.setWidgetResizable(True)
@@ -279,6 +281,8 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, AutoFe
             self._refresh_awards()
         if key == "history":
             self._refresh_history()
+        if key == "standards":
+            self._refresh_standards()
         if key == "settings":
             self._refresh_users()
             self._refresh_backups()

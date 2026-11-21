@@ -596,7 +596,8 @@ class Calculator:
         if chosen == overhead_std.NO_AREA:
             return 1.0, 1.0, ""
         kind = chosen or overhead_std.classify(self._meta().get("施工地域区分", ""))
-        ct, sm, label = overhead_std.area_coefs(kind, work_type)
+        from . import standards
+        ct, sm, label = overhead_std.area_coefs(kind, work_type, standards.area_table(self.conn))
         if kind and not label:
             self.warnings.append(f"施工地域区分「{kind}」は工種区分「{work_type}」には当てはまらないため、補正していません")
         return ct, sm, label
@@ -605,10 +606,11 @@ class Calculator:
         """一般管理費等率の補正：(前払金支出割合の係数, 契約保証の加算値)。金抜き設計書の表紙の記載から。"""
         if self.project_id is None:
             return 1.0, 0.0
-        from . import overhead_std
+        from . import overhead_std, standards
         meta = self._meta()
-        return (overhead_std.advance_factor(meta.get("一般管理費前払補正", "")),
-                overhead_std.guarantee_add(meta.get("契約保証", "")))
+        adv, gua = standards.general_adjust_tables(self.conn)
+        return (overhead_std.advance_factor(meta.get("一般管理費前払補正", ""), adv),
+                overhead_std.guarantee_add(meta.get("契約保証", ""), gua))
 
     def threshold(self, s: Summary) -> int:
         """調査基準価格・最低制限価格の試算。予定価格は工事価格と同じとみなす。"""
