@@ -566,14 +566,18 @@ class BidCheck:
     over_planned: bool
 
 
-def bid_check(design: Result, company: Result, bid: int) -> BidCheck:
-    """入札額の検討。実行原価 = 自社単価での直接工事費 + 設計の共通仮設費・現場管理費（見込み）。"""
+def bid_check(design: Result, company: Result, bid: int, planned: int | None = None,
+              threshold: int | None = None) -> BidCheck:
+    """入札額の検討。実行原価 = 自社単価での直接工事費 + 設計の共通仮設費・現場管理費（見込み）。
+    予定価格が公表されていれば planned・threshold にその値（と逆算した最低制限価格）を渡す。"""
     d = design.summary
     cost = company.summary.direct + d.common_temp + d.site_mgmt
+    planned = planned or d.price
+    threshold = threshold or d.threshold
     return BidCheck(
-        bid=bid, planned=d.price, threshold=d.threshold, cost=cost,
-        ratio=(bid / d.price) if d.price else 0.0, margin=bid - cost,
-        below_threshold=bid < d.threshold, over_planned=bid > d.price,
+        bid=bid, planned=planned, threshold=threshold, cost=cost,
+        ratio=(bid / planned) if planned else 0.0, margin=bid - cost,
+        below_threshold=bid < threshold, over_planned=bid > planned,
     )
 
 

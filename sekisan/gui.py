@@ -17,7 +17,7 @@ from . import audit, awards, calc, db, importer, pipeline, settings, theme
 from .gui_pages import AddItemDialog, PagesMixin
 from .gui_pages2 import BookPageMixin, PagesMixin2
 from .gui_pages3 import AutoFetchMixin, TablesPageMixin
-from .gui_pages4 import DisposalPageMixin
+from .gui_pages4 import DisposalPageMixin, ReversePanelMixin
 from . import kinnuki
 from . import backup
 from .export import breakdown_rows
@@ -99,7 +99,8 @@ class ItemFilter(QSortFilterProxyModel):
         return True
 
 
-class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, AutoFetchMixin, DisposalPageMixin, QMainWindow):
+class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, AutoFetchMixin, DisposalPageMixin, ReversePanelMixin,
+                 QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("公共工事 積算アプリ")
@@ -136,7 +137,7 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, AutoFe
                     "book": self._page_book, "tables": self._page_tables, "disposal": self._page_disposal}
         for key, *_ in PAGES:
             page = builders[key]()
-            if key in ("master", "settings"):  # 中身が多い画面はスクロールできるようにする
+            if key in ("master", "settings", "bid"):  # 中身が多い画面はスクロールできるようにする
                 from PySide6.QtWidgets import QScrollArea
                 sc = QScrollArea()
                 sc.setWidgetResizable(True)
@@ -943,9 +944,9 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, AutoFe
         row.addWidget(lab)
         row.addWidget(self.bid_edit)
         for text, fn in (("決定", self._bid_entered),
-                         ("基準価格ちょうど", lambda: self._set_bid(self.design.summary.threshold)),
+                         ("基準価格ちょうど", lambda: self._set_bid(self._cur_threshold())),
                          ("基準価格＋0.5%", lambda: self._set_bid(
-                             (int(self.design.summary.threshold + self.design.summary.price * 0.005) + 999) // 1000 * 1000))):
+                             (int(self._cur_threshold() + self._cur_planned() * 0.005) + 999) // 1000 * 1000))):
             b = QPushButton(text)
             if text == "決定":
                 b.setObjectName("Primary")
@@ -971,6 +972,8 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, AutoFe
         for i, k in enumerate((self.b_ratio, self.b_margin, self.b_gap, self.b_cost, self.b_pred)):
             grid.addWidget(k, 0, i)
         v.addLayout(grid)
+
+        v.addWidget(self._reverse_card())
 
         note = QLabel("※ 基準価格の式は「マスタ」の発注者ごとの設定（なければ年度のルール.csv）に従います。"
                       "予定価格は工事価格と同じとみなした試算です。必ず発注者の公表内容と照らしてください。")
@@ -1004,7 +1007,10 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, AutoFe
             return
         p = self._project_row()
         bid = int(p["bid_price"] or 0)
-        b = calc.bid_check(d, c, bid)
+        self._refresh_reverse()
+        rv = self._rv_result   # 公表額があれば、予定価格・最低制限価格はそちら（逆算）を使う
+        b = calc.bid_check(d, c, bid, rv.implied.price if rv else None,
+                           (rv.target if rv.basis == "最低制限価格（税抜）" else rv.implied.threshold) if rv else None)
         self.gauge.set_values(b.planned, b.threshold, b.cost, bid)
         if not self.bid_edit.hasFocus():
             self.bid_edit.setText(yen(bid) if bid else "")

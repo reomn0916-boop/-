@@ -426,4 +426,6 @@ def _migrate(conn: sqlite3.Connection) -> None:
     _add_column(conn, "award", "project_id", "INTEGER")
     _add_column(conn, "project", "site_lat", "REAL")   # 現場の位置（処分場までの距離を出すため）
     _add_column(conn, "project", "site_lon", "REAL")
+    _add_column(conn, "project", "published_basis", "TEXT NOT NULL DEFAULT ''")   # 公表額の種類（予定価格など）
+    _add_column(conn, "project", "published_amount", "INTEGER NOT NULL DEFAULT 0")
     conn.commit()

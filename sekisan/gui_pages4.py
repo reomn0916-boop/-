@@ -181,3 +181,118 @@ class DisposalPageMixin:
         cat, item = self.dp_chosen.item(r, 0).data(Qt.UserRole)
         if self.guard(disposal.unchoose, self.conn, self.pid, cat, item):
             self.recalc()
+
+
+# ====================================================================== 公表額から逆算（入札検討の画面）
+REV_ROWS = [("直接工事費", "direct"), ("共通仮設費", "common_temp"), ("現場管理費", "site_mgmt"),
+            ("一般管理費等", "general"), ("工事価格（予定価格・税抜）", "price"), ("工事費計（税込）", "total"),
+            ("最低制限価格・調査基準価格の見込み", "threshold")]
+
+
+class ReversePanelMixin:
+    def _reverse_card(self):
+        from PySide6.QtWidgets import QTableWidget
+
+        from . import reverse
+        from .gui import _style_table
+        c = Card("公表額から逆算", "発注者が公表した予定価格（または最低制限価格）を入れると、同じ諸経費の式で直接工事費と内訳を逆算します。"
+                 "自社積算との差が、単価が不明な分・数量の違いの見込みです。予定価格から逆算すると、最低制限価格も見込めます。")
+        h = QHBoxLayout()
+        self.rv_basis = QComboBox()
+        self.rv_basis.addItems(list(reverse.BASES))
+        self.rv_amount = QLineEdit()
+        self.rv_amount.setPlaceholderText("公表された金額（例: 12,340,000）")
+        self.rv_amount.setAlignment(Qt.AlignRight)
+        self.rv_amount.returnPressed.connect(self._do_reverse)
+        go = QPushButton("逆算する")
+        go.setObjectName("Primary")
+        go.clicked.connect(self._do_reverse)
+        self.rv_bid = QPushButton("見込みの最低制限価格を入札額にする")
+        self.rv_bid.clicked.connect(self._reverse_to_bid)
+        self.rv_bid.setEnabled(False)
+        h.addWidget(self.rv_basis)
+        h.addWidget(self.rv_amount, 1)
+        h.addWidget(go)
+        h.addWidget(self.rv_bid)
+        c.lay.addLayout(h)
+        self.rv_msg = Banner()
+        c.lay.addWidget(self.rv_msg)
+        self.rv_table = QTableWidget(len(REV_ROWS), 4)
+        self.rv_table.setHorizontalHeaderLabels(["", "自社積算", "逆算した見込み", "差（見込み − 自社）"])
+        _style_table(self.rv_table)
+        self.rv_table.verticalHeader().setVisible(False)
+        self.rv_table.setMinimumHeight(250)
+        c.lay.addWidget(self.rv_table)
+        self._rv_result = None
+        return c
+
+    def _do_reverse(self) -> None:
+        from . import reverse
+        if self.pid is None:
+            return
+        t = self.rv_amount.text().replace(",", "").replace("¥", "").replace("円", "").strip()
+        try:
+            amount = int(float(t))
+        except ValueError:
+            self.rv_msg.show_msg("公表された金額を数字で入れてください。", "warn")
+            return
+        if self.guard(reverse.save, self.conn, self.pid, self.rv_basis.currentText(), amount) is None:
+            return
+        self._refresh_bid()
+
+    def _refresh_reverse(self) -> None:
+        from . import reverse
+        from .widgets import yen
+        if not hasattr(self, "rv_table"):
+            return
+        p = self._project_row()
+        self._rv_result = None
+        self.rv_bid.setEnabled(False)
+        basis = (p["published_basis"] if p and "published_basis" in p.keys() else "") or ""
+        amount = (p["published_amount"] if p and "published_amount" in p.keys() else 0) or 0
+        if basis in reverse.BASES:
+            self.rv_basis.setCurrentText(basis)
+        if not self.rv_amount.hasFocus():
+            self.rv_amount.setText(yen(amount) if amount else "")
+        if not p or not amount:
+            self.rv_table.clearContents()
+            self.rv_msg.show_msg("公表額を入れると、ここに内訳の見込みが出ます。", "info")
+            return
+        try:
+            r = reverse.solve(self.conn, self.pid, amount, self.rv_basis.currentText())
+        except ValueError as e:
+            self.rv_msg.show_msg(str(e), "warn")
+            return
+        self._rv_result = r
+        for i, (label, key) in enumerate(REV_ROWS):
+            a, b = getattr(r.ours, key), getattr(r.implied, key)
+            _set_row(self.rv_table, i, [label, yen(a), yen(b), f"{'+' if b - a >= 0 else '−'}{yen(abs(b - a))}"],
+                     tone=("warn" if key == "direct" and abs(r.gap_rate) > 3 else ""), tone_col=3)
+        self.rv_table.resizeColumnsToContents()
+        rng = (f"¥{yen(r.direct_low)}〜¥{yen(r.direct_high)}" if r.direct_high > r.direct_low
+               else f"¥{yen(r.direct_low)}")
+        if not r.exact:
+            self.rv_msg.show_msg(f"諸経費の式では公表額ちょうどになりませんでした（いちばん近い直接工事費 {rng}）。"
+                                 "工種区分・諸経費の式・端数の決まりが発注者と合っているか確かめてください。", "warn")
+        elif r.gap > 0:
+            self.rv_msg.show_msg(f"公表額になる直接工事費は {rng}。自社積算より ¥{yen(r.gap)}（{r.gap_rate:.1f}%）多く、"
+                                 "単価が不明な資源や数量の違いの分と見込まれます（「不明な単価」で埋めると近づきます）。", "warn")
+        else:
+            self.rv_msg.show_msg(f"公表額になる直接工事費は {rng}。自社積算より ¥{yen(-r.gap)}（{-r.gap_rate:.1f}%）少なく、"
+                                 "自社積算が高めです（数量・単価・工種区分を確かめてください）。", "info" if r.gap > -1000 else "warn")
+        self.rv_bid.setEnabled(True)
+
+    def _cur_threshold(self) -> int:
+        """今の基準価格：公表額があれば逆算した値、なければ自社積算からの試算"""
+        r = getattr(self, "_rv_result", None)
+        if r:
+            return r.target if r.basis == "最低制限価格（税抜）" else r.implied.threshold
+        return self.design.summary.threshold
+
+    def _cur_planned(self) -> int:
+        r = getattr(self, "_rv_result", None)
+        return r.implied.price if r else self.design.summary.price
+
+    def _reverse_to_bid(self) -> None:
+        if self._rv_result and self.pid is not None:
+            self._set_bid(self._cur_threshold())
