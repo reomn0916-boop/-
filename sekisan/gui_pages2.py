@@ -735,6 +735,19 @@ class PagesMixin2:
 
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
+            from . import disposal
+            if path.lower().endswith(".pdf") and disposal.is_disposal_pdf(path):
+                doc = disposal.parse(path, step)
+                if doc.rows:   # 建設廃棄物・建設発生土の受入価格（処分場ごと）
+                    n = self.guard(disposal.import_doc, self.conn, doc, Path(path).name)
+                    if n:
+                        sites = len({(r.category, r.no) for r in doc.rows})
+                        self.m_banner.show_msg(
+                            f"受入価格 {n:,} 件（{'・'.join(doc.categories)}・処分場 {sites} か所、{doc.valid_from}〜）を"
+                            "取り込みました。工事ごとの処分場は「処分場」の画面で選びます。", "ok")
+                        self._load_master_overview()
+                        self.recalc()
+                    return
             rows = publicprice.parse(path, self.pp_kind.currentText(), self.pp_pref.text().strip() or "奈良", step)
             valid = publicprice.effective_date(path) if path.lower().endswith(".pdf") else ""
         except Exception as e:

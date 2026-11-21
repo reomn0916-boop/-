@@ -133,6 +133,8 @@ def parse_labor_wide(rows: list[list[str]], prefecture: str = "奈良") -> list[
 
 def parse(path: str | Path, kind: str = "材料", prefecture: str = "奈良", progress=None) -> list[PriceRow]:
     """奈良県の単価資料PDFなら専用の読み方（種類はコードから決まる）、それ以外は表の形から読む。"""
+    if is_loss_pdf(path):
+        return parse_loss_pdf(path, progress)
     if is_nara_pdf(path):
         return [PriceRow(i.kind, i.code, i.name, i.spec, i.unit, i.price, i.region, source=i.source, ref=i.ref)
                 for i in parse_nara_pdf(path, progress)]
@@ -403,6 +405,81 @@ def is_nara_pdf(path: str | Path) -> bool:
             if "単価コード" in t and "単価（円）" in t:
                 return True
     return False
+
+
+# ---------------------------------------------------------------- 建設機械等損料算定表（県が独自に定める分）
+def is_loss_pdf(path: str | Path) -> bool:
+    import pdfplumber
+    if Path(path).suffix.lower() != ".pdf":
+        return False
+    with pdfplumber.open(str(path)) as pdf:
+        t = _n("".join((p.extract_text() or "") for p in pdf.pages[:1]))
+    return "損料算定表" in t
+
+
+def parse_loss_pdf(path: str | Path, progress=None) -> list[PriceRow]:
+    """「機械損料一覧」の表。単価は (13) 運転1時間当り換算値損料（単位が「日」「供用日」の機械は、その単位当りの値が入っている）。"""
+    import pdfplumber
+    out: list[PriceRow] = []
+    with pdfplumber.open(str(path)) as pdf:
+        n = len(pdf.pages)
+        for pno, page in enumerate(pdf.pages):
+            if progress:
+                progress(pno + 1, n)
+            if "損料一覧" not in _n((page.extract_text() or "")[:80]):
+                continue
+            words = page.extract_words(x_tolerance=1.5)
+            lines: dict[float, list[dict]] = {}
+            for w in words:
+                key = next((k for k in lines if abs(k - w["top"]) < 2.5), w["top"])
+                lines.setdefault(key, []).append(w)
+            def center(*names: str) -> float | None:
+                for w in words:
+                    if _n(w["text"]) in names and w["top"] < 110:
+                        return (w["x0"] + w["x1"]) / 2
+                return None
+            x_name, x_spec, x_unit = center("名称"), center("規格"), center("単位")
+            nums = {}
+            for label, key in (("重量", "weight"), ("価格", "base"), ("年数", "years"), ("(13)", "per_run"),
+                               ("(15)", "per_day"), ("(3)", "run_hours"), ("(4)", "run_days"), ("(5)", "use_days"),
+                               ("(6)", "repair"), ("(7)", "manage"), ("(%)", "residual")):
+                c = center(label, _n(label))
+                if c is not None:
+                    nums[key] = c
+            if None in (x_name, x_spec, x_unit) or "per_run" not in nums:
+                continue
+            split = (x_name + x_spec) / 2
+            for t in sorted(lines):
+                ws = sorted(lines[t], key=lambda w: w["x0"])
+                code = next((_n(w["text"]) for w in ws if re.fullmatch(r"M\d{9}", _n(w["text"]))), None)
+                if not code:
+                    continue
+                name, spec, unit, vals = [], [], "", {}
+                for w in ws:
+                    s, cx = _n(w["text"]), (w["x0"] + w["x1"]) / 2
+                    if s == code or (re.fullmatch(r"\d+", s) and w["x1"] < 75):
+                        continue
+                    if abs(cx - x_unit) < 12 and not re.match(r"^[\d,.]+$", s):
+                        unit = s
+                    elif re.fullmatch(r"[\d,]+(\.\d+)?", s) and cx > split + 40:
+                        key = min(nums, key=lambda k: abs(nums[k] - cx))
+                        vals[key] = float(s.replace(",", ""))
+                    elif w["x0"] < split:
+                        name.append(s)
+                    else:
+                        spec.append(s)
+                per = vals.get("per_run")
+                if per is None:
+                    continue
+                ref = "県の損料算定表"
+                if vals.get("base"):
+                    ref += f"　基礎価格 {vals['base']:,.0f}円"
+                if vals.get("years"):
+                    ref += f"・標準使用 {vals['years']:g}年"
+                if vals.get("per_day"):
+                    ref += f"・供用1日当り {vals['per_day']:,.0f}円"
+                out.append(PriceRow("機械", code, " ".join(name), " ".join(spec), unit or "時間", per, ref=ref))
+    return out
 
 
 def summarize(items: list[NaraItem]) -> dict[str, int]:

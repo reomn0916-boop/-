@@ -20,7 +20,7 @@ from datetime import date, datetime
 from html.parser import HTMLParser
 from pathlib import Path
 
-from . import audit, publicprice
+from . import audit, disposal, publicprice
 
 
 class SiteBusy(Exception):
@@ -58,13 +58,16 @@ NAME_PATTERNS = {
 }
 KIND_WORDS = {"materialprice": "資材単価", "roumuprice": "労務単価", "recycleprice": "再生資材単価",
               "soilprice": "土砂受入単価", "再生資材": "再生資材単価", "土砂": "土砂受入単価",
-              "再生材": "再生資材単価", "資材単価": "資材単価", "労務単価": "労務単価", "設計単価": "資材単価"}
+              "wasteprice": "廃棄物受入価格", "depreciation": "機械損料",
+              "再生材": "再生資材単価", "廃棄物": "廃棄物受入価格", "損料": "機械損料",
+              "資材単価": "資材単価", "労務単価": "労務単価", "設計単価": "資材単価"}
 # 「訂正前後」は変わったところだけを並べた資料なので取り込まない（「訂正後」が本体）
 SKIP_RE = re.compile(r"訂正前後|teiseizengo", re.I)
 # 県のサイトに続けて取りに行かない間隔（秒）。短い間に何度も取りに行くと、県のサイトが受け付けなくなる
 PACE_SECONDS = 3.0
 _last_request = 0.0
-FILE_RE = re.compile(r"r(\d{1,2})(\d{2})(?:nara)?_?(materialprice|roumuprice|recycleprice|soilprice)\.pdf$", re.I)
+FILE_RE = re.compile(r"r(\d{1,2})(\d{2})(?:nara)?_?(materialprice|roumuprice|recycleprice|soilprice|wasteprice|depreciation)"
+                     r"[^/]*\.pdf$", re.I)
 USER_AGENT = "SekisanApp/1.0 (public price collector)"
 
 
@@ -332,6 +335,10 @@ def import_file(conn: sqlite3.Connection, path: str | Path, url: str = "", fy: s
     """ダウンロードした単価資料を取り込む。年度の単価を最新にし、その月の単価を単価改定（適用日つき）としても残す。"""
     audit.require(conn, "master")
     path = Path(path)
+    if path.suffix.lower() == ".pdf" and disposal.is_disposal_pdf(path):
+        doc = disposal.parse(path, progress)
+        if doc.rows:   # 受入価格一覧表がある資料（建設廃棄物・建設発生土）
+            return _import_disposal(conn, doc, path, url)
     valid = publicprice.effective_date(path) if path.suffix.lower() == ".pdf" else ""
     r = conn.execute("SELECT yymm FROM fetched_doc WHERE url=?", (url,)).fetchone() if url else None
     fy = fy or target_fy(valid, r["yymm"] if r else "")
@@ -375,3 +382,19 @@ def import_file(conn: sqlite3.Connection, path: str | Path, url: str = "", fy: s
             conn.execute("UPDATE fetched_doc SET imported_at=datetime('now','localtime'), fy=?, result=? WHERE url=?",
                          (fy, result, url))
     return {"fy": fy, "valid_from": valid, "priced": n, "rows": len(rows), "result": result}
+
+
+def _import_disposal(conn: sqlite3.Connection, doc, path: Path, url: str) -> dict:
+    n = disposal.import_doc(conn, doc, path.name)
+    sites = len({(r.category, r.no) for r in doc.rows})
+    result = f"受入価格 {n}件（{'・'.join(doc.categories)}　処分場 {sites}か所　{doc.valid_from}〜{doc.valid_to}）"
+    fy = target_fy(doc.valid_from)
+    if url:
+        _ensure(conn)
+        with conn:
+            if doc.valid_from:
+                conn.execute("UPDATE fetched_doc SET yymm=? WHERE url=? AND yymm=''",
+                             (f"{int(doc.valid_from[:4]) - 2018:02d}{doc.valid_from[5:7]}", url))
+            conn.execute("UPDATE fetched_doc SET imported_at=datetime('now','localtime'), fy=?, result=? WHERE url=?",
+                         (fy, result, url))
+    return {"fy": fy, "valid_from": doc.valid_from, "priced": n, "rows": n, "result": result}

@@ -31,7 +31,7 @@ def verify(conn: sqlite3.Connection, project_id: int, res: calc.Result | None = 
     # 金抜き設計書から作った単価表（単1・施1 …）の1単位あたりの単価
     p = conn.execute("SELECT * FROM project WHERE id=?", (project_id,)).fetchone()
     cl = calc.Calculator(conn, p["fy"], p["region"], calc.DESIGN, calc.project_conditions(conn, project_id),
-                         p["orderer"], p["price_date"])
+                         p["orderer"], p["price_date"], project_id)
     for b in conn.execute("SELECT code FROM bukake WHERE fy=? AND project_id=?", (p["fy"], project_id)):
         up = cl.unit_price(b["code"])
         if up:

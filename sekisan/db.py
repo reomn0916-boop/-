@@ -340,6 +340,38 @@ CREATE TABLE IF NOT EXISTS reference_result (
     amount REAL NOT NULL,
     PRIMARY KEY (project_id, key)
 );
+
+-- 建設廃棄物・建設発生土の受入価格（県の単価資料。処分場ごと・品目ごと）
+CREATE TABLE IF NOT EXISTS disposal_price (
+    valid_from TEXT NOT NULL,
+    valid_to TEXT NOT NULL DEFAULT '',
+    category TEXT NOT NULL,        -- 木くず / その他 / 建設発生土 など
+    timeband TEXT NOT NULL,        -- 昼間 / 夜間 / 休日
+    no TEXT NOT NULL,              -- 管理番号
+    company TEXT NOT NULL DEFAULT '',
+    city TEXT NOT NULL DEFAULT '',
+    lat REAL,
+    lon REAL,
+    tel TEXT NOT NULL DEFAULT '',
+    site_type TEXT NOT NULL DEFAULT '',
+    item TEXT NOT NULL,
+    price REAL NOT NULL,
+    unit TEXT NOT NULL DEFAULT '',
+    factor REAL,                   -- 重量換算 t/m3（書いてあるときだけ）
+    note TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (valid_from, category, timeband, no, item)
+);
+
+-- 工事ごとに選んだ処分場
+CREATE TABLE IF NOT EXISTS project_disposal (
+    project_id INTEGER NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+    category TEXT NOT NULL,
+    item TEXT NOT NULL,
+    timeband TEXT NOT NULL DEFAULT '昼間',
+    no TEXT NOT NULL,
+    PRIMARY KEY (project_id, category, item)
+);
 """
 
 
@@ -392,4 +424,6 @@ def _migrate(conn: sqlite3.Connection) -> None:
     _add_column(conn, "award", "lottery", "TEXT NOT NULL DEFAULT ''")        # くじ：当たり / 外れ / （空欄＝くじなし）
     _add_column(conn, "award", "publish", "TEXT NOT NULL DEFAULT ''")        # 最低制限価格の公表：事前 / 事後
     _add_column(conn, "award", "project_id", "INTEGER")
+    _add_column(conn, "project", "site_lat", "REAL")   # 現場の位置（処分場までの距離を出すため）
+    _add_column(conn, "project", "site_lon", "REAL")
     conn.commit()

@@ -300,7 +300,7 @@ COLS = ["No", "区分", "工種", "種別", "細別", "名称", "規格", "単�
 CAT, QTY, PRICE, AMOUNT, HOW, CODE, COND, NOTE = 1, 8, 9, 10, 11, 12, 13, 14
 NUMERIC = {0, QTY, PRICE, AMOUNT}
 EDITABLE = {CAT, QTY, CODE, COND, NOTE}
-HOW_TONE = {"歩掛": "ok", "パッケージ": "info", "単価": "ok", "見積": "info", "対応表": "info", "未設定": "bad",
+HOW_TONE = {"歩掛": "ok", "パッケージ": "info", "単価": "ok", "見積": "info", "受入価格": "info", "対応表": "info", "未設定": "bad",
             "物価資料待ち": "warn", "単価表待ち": "warn"}
 
 

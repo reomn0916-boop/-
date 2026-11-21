@@ -17,6 +17,7 @@ from . import audit, awards, calc, db, importer, pipeline, settings, theme
 from .gui_pages import AddItemDialog, PagesMixin
 from .gui_pages2 import BookPageMixin, PagesMixin2
 from .gui_pages3 import AutoFetchMixin, TablesPageMixin
+from .gui_pages4 import DisposalPageMixin
 from . import kinnuki
 from . import backup
 from .export import breakdown_rows
@@ -42,12 +43,14 @@ PAGES = [
     ("inquiry", "質疑書", "質疑書", "設計書の食い違い・不明な点を、発注者への質問にまとめます。", None),
     ("history", "変更履歴", "変更履歴", "誰が・いつ・何を変えたかの記録です。", None),
     ("quotes", "見積単価", "見積単価", "単価表にない資材・工種の業者見積を比べ、採用単価を決めます。", "データ"),
+    ("disposal", "処分場", "処分場（受入価格）", "県の受入価格から、品目ごとに処分場を選びます。安い順・現場からの距離つきで比べられます。", None),
     ("book", "物価資料の単価", "物価資料の単価", "県の単価資料で「○」の品目のうち、この工事で使うものに、積算資料・建設物価の単価を入れます。", None),
     ("awards", "落札実績", "落札実績", "過去の落札結果から、落札率や自社積算の精度を見ます。入札検討の予定価格の見込みにも使います。", None),
     ("master", "マスタ", "マスタ管理", "年度ごとの単価・歩掛・諸経費率・補正・機械損料・公表単価、発注者ごとの設定を取り込みます。", None),
     ("settings", "設定", "設定", "データファイル・担当者名・利用者と権限・バックアップの設定です。", None),
 ]
-PROJECT_PAGES = {"items", "tables", "tree", "bid", "project", "schedule", "change", "after", "verify", "inquiry", "history", "book"}
+PROJECT_PAGES = {"items", "tables", "tree", "bid", "project", "schedule", "change", "after", "verify", "inquiry", "history", "book",
+                 "disposal"}
 
 
 def open_path(path: Path) -> None:
@@ -96,7 +99,7 @@ class ItemFilter(QSortFilterProxyModel):
         return True
 
 
-class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, AutoFetchMixin, QMainWindow):
+class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, AutoFetchMixin, DisposalPageMixin, QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("公共工事 積算アプリ")
@@ -130,7 +133,7 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, AutoFe
                     "settings": self._page_settings, "project": self._page_project, "change": self._page_change,
                     "history": self._page_history, "quotes": self._page_quotes, "awards": self._page_awards,
                     "schedule": self._page_schedule, "after": self._page_after, "inquiry": self._page_inquiry,
-                    "book": self._page_book, "tables": self._page_tables}
+                    "book": self._page_book, "tables": self._page_tables, "disposal": self._page_disposal}
         for key, *_ in PAGES:
             page = builders[key]()
             if key in ("master", "settings"):  # 中身が多い画面はスクロールできるようにする
@@ -324,6 +327,7 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, AutoFe
         self._refresh_users()
         self._refresh_book()
         self._refresh_tables()
+        self._refresh_disposal()
 
     def _project_row(self):
         return self.conn.execute("SELECT * FROM project WHERE id=?", (self.pid,)).fetchone() if self.pid else None

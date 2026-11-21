@@ -10,7 +10,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal
 
-from . import audit, quotes
+from . import audit, disposal, quotes
 
 DEFAULT_RULES = {
     "単価の有効桁数": "4",
@@ -195,7 +195,7 @@ def load_rules(conn: sqlite3.Connection, fy: str, orderer: str = "") -> dict[str
 
 class Calculator:
     def __init__(self, conn: sqlite3.Connection, fy: str, region: str = "", mode: str = DESIGN,
-                 conditions: tuple[str, ...] = (), orderer: str = "", as_of: str = ""):
+                 conditions: tuple[str, ...] = (), orderer: str = "", as_of: str = "", project_id: int | None = None):
         self.conn = conn
         self.fy = fy
         self.region = region
@@ -203,6 +203,7 @@ class Calculator:
         self.conditions = tuple(conditions)
         self.as_of = as_of
         self.rules = load_rules(conn, fy, orderer)
+        self.project_id = project_id   # 工事で選んだ処分場を読むため
         self.warnings: list[str] = []
         self._cache: dict[tuple, UnitPrice | None] = {}
         self._adj = list(conn.execute("SELECT * FROM adjustment WHERE fy=?", (fy,)))
@@ -222,6 +223,11 @@ class Calculator:
     # -------------------------------------------------- 資源の単価
     def resource_price(self, kind: str, code: str, _depth: int = 0) -> tuple[float, str, str, str]:
         """(単価, 名称, 単位, 出どころ)。自社 → 単価改定 → 年度の単価 → 機械経費 → 見積 の順に探す。"""
+        if code.startswith(disposal.PREFIX):   # 処分費：工事で選んだ処分場の受入価格
+            price, name, unit, warn = disposal.price_for(self.conn, self.project_id, code, self.as_of)
+            if warn:
+                self.warnings.append(warn)
+            return price, name, unit, "受入価格" if not warn else "不明"
         if self.mode == COMPANY:
             r = self.conn.execute(
                 "SELECT price, name, unit FROM company_price WHERE kind=? AND code=?", (kind, code)
@@ -427,6 +433,10 @@ class Calculator:
                 how = "パッケージ" if how == "未設定" else how
                 if pkg.incomplete:
                     how = "単価表待ち"
+            elif code.startswith(disposal.PREFIX):
+                p, *_ = self.resource_price("材料", code)
+                unit_price = p * self.factor(conds, "全体", code)
+                how = ("受入価格" if p else "未設定") if how == "未設定" else how
             else:
                 # 歩掛ではなく、単価そのもの（市場単価・見積など）の場合
                 r = self.conn.execute(
@@ -526,7 +536,7 @@ def calculate(conn: sqlite3.Connection, project_id: int, mode: str = DESIGN, as_
         raise ValueError(f"工事が見つかりません: {project_id}")
     conds = project_conditions(conn, project_id)
     calc = Calculator(conn, p["fy"], p["region"], mode, conds, p["orderer"],
-                      p["price_date"] if as_of is None else as_of)
+                      p["price_date"] if as_of is None else as_of, project_id)
     items = [
         calc.item(r)
         for r in conn.execute("SELECT * FROM project_item WHERE project_id=? ORDER BY seq", (project_id,))

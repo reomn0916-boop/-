@@ -152,7 +152,7 @@ class TablesPageMixin:
         if not p:
             return None
         return calc.Calculator(self.conn, p["fy"], p["region"], calc.DESIGN, calc.project_conditions(self.conn, self.pid),
-                               p["orderer"], p["price_date"])
+                               p["orderer"], p["price_date"], self.pid)
 
     def _resource_candidates(self) -> list[str]:
         p = self._project_row()
@@ -169,7 +169,8 @@ class TablesPageMixin:
                 out.append(f"{r['code']}　{r['name']}　{r['spec']}　[{r['kind']}・{r['unit']}・{r['source']}]")
         for r in self.conn.execute("SELECT code, name, spec, unit FROM quote"):
             out.append(f"{r['code']}　{r['name']}　{r['spec']}　[見積・{r['unit']}]")
-        return out
+        from . import disposal
+        return out + disposal.candidates(self.conn)
 
     # ------------------------------------------------------------ 1つの単価表
     def _show_table(self) -> None:
