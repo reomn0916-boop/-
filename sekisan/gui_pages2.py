@@ -803,6 +803,10 @@ class PagesMixin2:
         h.addWidget(ab)
         h.addWidget(db_)
         c.lay.addLayout(h)
+        self.u_recover = QPushButton("管理者の登録を間違えたとき：自分を管理者にする")
+        self.u_recover.setToolTip("登録されている管理者の名前が一度も使われていない（変更履歴にない）ときだけ押せます")
+        self.u_recover.clicked.connect(self._recover_admin)
+        c.lay.addWidget(self.u_recover, 0, Qt.AlignLeft)
         return c
 
     def _refresh_users(self) -> None:
@@ -815,6 +819,19 @@ class PagesMixin2:
         self.u_me.setText(f"いまの担当者：{me}（{audit.role(self.conn)}）"
                           + ("　※利用者が未登録なので全員が管理者です" if not us else ""))
         self.side_role.setText(f"{me}（{audit.role(self.conn)}）")
+        if hasattr(self, "u_recover"):
+            self.u_recover.setVisible(audit.can_recover_admin(self.conn) and bool(us))
+
+    def _recover_admin(self) -> None:
+        admins = [u["name"] for u in audit.users(self.conn) if u["role"] == "管理者"]
+        if QMessageBox.question(self, "管理者", f"管理者として登録されている「{'、'.join(admins)}」は、一度もこのソフトを使っていません。"
+                                f"\n登録を間違えたとみなして、いまの担当者「{audit.current_user()}」を管理者にしますか？"
+                                "\n（間違えた名前は、そのあと「選んだ人を削除」で消せます）") != QMessageBox.Yes:
+            return
+        if self.guard(audit.recover_admin, self.conn):
+            self._refresh_users()
+            self.recalc()
+            self.status.showMessage(f"{audit.current_user()} を管理者にしました", 8000)
 
     def _save_user_role(self) -> None:
         self.guard(audit.set_user, self.conn, self.u_name.text().strip(), self.u_role.currentText())

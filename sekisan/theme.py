@@ -37,6 +37,24 @@ def color(name: str) -> QColor:
     return QColor(C[name])
 
 
+def light_palette():
+    """Windows がダークモードでも、いつも明るい色で表示する（ダイアログの文字が見えなくならないように）。"""
+    from PySide6.QtGui import QPalette
+    p = QPalette()
+    roles = {
+        QPalette.Window: C["bg"], QPalette.WindowText: C["text"], QPalette.Base: C["surface"],
+        QPalette.AlternateBase: C["row_alt"], QPalette.Text: C["text"], QPalette.Button: C["surface"],
+        QPalette.ButtonText: C["text"], QPalette.ToolTipBase: C["surface"], QPalette.ToolTipText: C["text"],
+        QPalette.Highlight: C["accent"], QPalette.HighlightedText: "#FFFFFF", QPalette.PlaceholderText: C["faint"],
+        QPalette.Link: C["accent"], QPalette.BrightText: C["bad"],
+    }
+    for role, col in roles.items():
+        p.setColor(role, QColor(col))
+    for role in (QPalette.WindowText, QPalette.Text, QPalette.ButtonText):
+        p.setColor(QPalette.Disabled, role, QColor(C["faint"]))
+    return p
+
+
 def base_font() -> QFont:
     """Windowsでは Yu Gothic UI → Meiryo UI の順に使う。"""
     families = set(QFontDatabase.families())
@@ -52,6 +70,9 @@ def base_font() -> QFont:
 
 
 QSS = f"""
+QMessageBox, QDialog, QInputDialog, QProgressDialog {{ background: {C['surface']}; color: {C['text']}; }}
+QMessageBox QLabel, QDialog QLabel, QInputDialog QLabel, QProgressDialog QLabel {{ color: {C['text']}; background: transparent; }}
+
 * {{ color: {C['text']}; }}
 QMainWindow, #Content {{ background: {C['bg']}; }}
 QToolTip {{ background: {C['nav']}; color: white; border: none; padding: 6px 8px; }}

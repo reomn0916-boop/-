@@ -62,6 +62,10 @@ def set_user(conn: sqlite3.Connection, name: str, user_role: str) -> None:
     empty = conn.execute("SELECT COUNT(*) FROM app_user").fetchone()[0] == 0
     if empty and user_role != "管理者":
         raise ValueError("最初の1人は管理者にしてください（登録すると、登録していない人は閲覧だけになります）")
+    if empty and name.strip() != current_user():
+        raise ValueError(f"最初の管理者は、このパソコンの担当者名「{current_user()}」で登録してください"
+                         "（ほかの名前で登録すると、自分が閲覧だけになって戻せなくなります）。"
+                         "担当者名を変えるときは、先に上の「担当者名」を保存してください。")
     if not empty:
         require(conn, "admin")
         if _would_remove_last_admin(conn, name, user_role):
@@ -69,6 +73,29 @@ def set_user(conn: sqlite3.Connection, name: str, user_role: str) -> None:
     with conn:
         conn.execute("INSERT OR REPLACE INTO app_user(name, role) VALUES (?,?)", (name.strip(), user_role))
         log(conn, None, "利用者の設定", f"{name}={user_role}")
+
+
+def can_recover_admin(conn: sqlite3.Connection) -> bool:
+    """管理者の登録を間違えたときの救済：登録されている管理者の名前が、一度もこのソフトを使っていない
+    （変更履歴に、その名前で操作した記録がない）なら、間違えて登録したとみなして、自分を管理者にできる。"""
+    if can(conn, "admin"):
+        return False
+    admins = [r["name"] for r in conn.execute("SELECT name FROM app_user WHERE role='管理者'")]
+    if not admins:
+        return True
+    used = conn.execute(f"SELECT COUNT(*) FROM audit_log WHERE user IN ({','.join('?' * len(admins))})",
+                        admins).fetchone()[0]
+    return used == 0
+
+
+def recover_admin(conn: sqlite3.Connection) -> str:
+    if not can_recover_admin(conn):
+        raise PermissionError("登録されている管理者がこのソフトを使った記録があるので、その管理者に頼んでください。")
+    me = current_user()
+    with conn:
+        conn.execute("INSERT OR REPLACE INTO app_user(name, role) VALUES (?, '管理者')", (me,))
+        log(conn, None, "管理者の登録を直す", f"{me}=管理者（使われていない管理者の名前があったため）")
+    return me
 
 
 def delete_user(conn: sqlite3.Connection, name: str) -> None:

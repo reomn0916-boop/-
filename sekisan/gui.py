@@ -1343,7 +1343,12 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, AutoFe
 
 def run_gui() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
+    try:   # Windows がダークモードでも明るい色で（Qt 6.8 からはOSの色合いに合わせようとするため）
+        app.styleHints().setColorScheme(Qt.ColorScheme.Light)
+    except AttributeError:
+        pass
     app.setStyle("Fusion")
+    app.setPalette(theme.light_palette())
     app.setFont(theme.base_font())
     app.setStyleSheet(theme.QSS)
     win = MainWindow()

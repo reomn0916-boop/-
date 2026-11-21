@@ -140,3 +140,27 @@ def test_delete_project(tmp_path, monkeypatch):
     assert one("SELECT project_id IS NULL FROM award WHERE name='消す工事'") == 1             # 落札実績は残る
     assert one("SELECT parent_id IS NULL FROM project WHERE id=?", child) == 1               # 設計変更の工事は残る
     assert one("SELECT COUNT(*) FROM audit_log WHERE action='工事を削除'") == 1
+
+
+def test_admin_mistake_recovery(conn, monkeypatch):
+    """最初の管理者を別の名前で登録して締め出されないように。間違えたときは、使われていない管理者なら自分を管理者にできる。"""
+    from sekisan import audit, settings
+    monkeypatch.setattr(audit, "current_user", lambda: "山田")
+    with pytest.raises(ValueError, match="担当者名"):
+        audit.set_user(conn, "やまだ", "管理者")          # 最初の管理者は自分の名前で
+    # 前の版で間違えて登録してしまった状態
+    conn.execute("INSERT INTO app_user(name, role) VALUES ('やまだ', '管理者')")
+    conn.commit()
+    assert audit.role(conn) == "閲覧"
+    with pytest.raises(PermissionError):
+        audit.set_user(conn, "佐藤", "確認")
+    assert audit.can_recover_admin(conn)
+    assert audit.recover_admin(conn) == "山田" and audit.role(conn) == "管理者"
+    audit.set_user(conn, "佐藤", "確認")
+    audit.delete_user(conn, "やまだ")
+    assert {u["name"]: u["role"] for u in audit.users(conn)} == {"山田": "管理者", "佐藤": "確認"}
+    # 本当の管理者が使っている（履歴がある）なら、ほかの人は乗っ取れない
+    monkeypatch.setattr(audit, "current_user", lambda: "佐藤")
+    assert not audit.can_recover_admin(conn)
+    with pytest.raises(PermissionError):
+        audit.recover_admin(conn)
