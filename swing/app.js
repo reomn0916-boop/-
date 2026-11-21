@@ -133,9 +133,9 @@ function renderUpd() {
   let status = '';
   if (u && u.state) {
     const min = Math.max(0, Math.round((Date.now() - u.since) / 6e4));
-    const txt = { start: '更新を頼んでいます…', queued: '順番待ち', in_progress: `株価とニュースを集めています（${min}分経過・5〜10分かかります）`,
+    const txt = { start: '更新を頼んでいます…', queued: '順番待ち', in_progress: `株価とニュースを集めています（${min}分経過・2〜3分かかります）`,
       publish: '仕上げ中（公開を待っています）', done: '更新しました', fail: '更新に失敗しました',
-      wait: `GitHub で「Run workflow」→ 緑の「Run workflow」を押してください。終わると（5〜10分）ここが自動で新しくなります（${min}分経過）` }[u.state] || u.state;
+      wait: `GitHub で「Run workflow」→ 緑の「Run workflow」を押してください。終わると（2〜3分）ここが自動で新しくなります（${min}分経過）` }[u.state] || u.state;
     status = `<div class="upd-st ${u.state}">${u.state === 'done' || u.state === 'fail' ? '' : '<i class="spinner"></i>'}<span class="t">${esc(txt)}</span>${u.state === 'fail' && u.url ? ` <a href="${esc(u.url)}" target="_blank" rel="noopener">くわしく</a>` : ''}${u.err ? `<small>${esc(u.err)}</small>` : ''}${u.state === 'wait' ? `<small><a href="${esc(wfUrl())}" target="_blank" rel="noopener">GitHub をもう一度開く</a>・<a href="#" id="updCancel">待つのをやめる</a></small>` : ''}</div>`;
   }
   const busy = u && ['start', 'queued', 'in_progress', 'publish', 'wait'].includes(u.state);
