@@ -429,6 +429,15 @@ class UpdateMixin:
 
     def _update_on_start(self) -> None:
         from . import settings, updater
+        last = updater.last_result() if updater.is_frozen() else {}
+        if last.get("done"):
+            self.status.showMessage(f"新しい版（{last['done']}）に更新しました。", 15000)
+        elif last.get("failed") or last.get("pending"):
+            QMessageBox.warning(self, "ソフトの更新", "前回の更新がうまくいきませんでした（今の版のまま使えます）。\n"
+                                f"{last.get('failed', '入れ替えが始まりませんでした（ウイルス対策ソフトなどに止められた可能性があります）')}\n\n"
+                                "手で入れ替えるときは、GitHubの「Releases」の「最新版」から sekisan-windows.zip を"
+                                "ダウンロードし、今のフォルダに上書きで展開してください。\n"
+                                f"記録：{updater.log_path()}")
         if not updater.is_frozen() or not settings.load().get("update_check", True):
             return
         self._check_update(manual=False)
@@ -495,5 +504,9 @@ class UpdateMixin:
             audit.log(self.conn, None, "ソフトを更新", f"{updater.current_version()} → {rel.version}")
         except Exception:   # noqa: BLE001
             pass
-        QMessageBox.information(self, "ソフトの更新", "ソフトを閉じて入れ替えます。数秒後に新しい版が起動します。")
+        QMessageBox.information(self, "ソフトの更新", "ソフトを閉じて入れ替えます。数秒〜十数秒後に新しい版が起動します。\n"
+                                "（起動しないときは、もう一度ソフトを開いてください。うまくいかなかった理由を表示します）")
+        for wk in (getattr(self, "_up_worker", None), getattr(self, "_af_worker", None)):
+            if wk is not None and wk.isRunning():
+                wk.wait(3000)
         QApplication.quit()

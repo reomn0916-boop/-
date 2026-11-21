@@ -165,27 +165,133 @@ def extract(zip_path: Path, dest: Path) -> Path:
     return exe.parent
 
 
-def update_script(src: Path, dst: Path, pid: int) -> str:
-    """ソフトが閉じるのを待ってから、新しい版をかぶせて、起動し直す PowerShell。"""
-    def q(p: Path) -> str:
-        return str(p).replace("'", "''")
-    return f"""$ErrorActionPreference = 'SilentlyContinue'
-while (Get-Process -Id {pid} -ErrorAction SilentlyContinue) {{ Start-Sleep -Milliseconds 500 }}
-Start-Sleep -Seconds 1
-robocopy '{q(src)}' '{q(dst)}' /E /IS /IT /R:10 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
-Start-Process -FilePath '{q(dst / EXE_NAME)}'
-"""
+def log_path() -> Path:
+    from . import settings
+    return settings._dir() / "update.log"
+
+
+def log(msg: str) -> None:
+    """更新の記録（うまくいかなかったときに原因を見るため）"""
+    from datetime import datetime
+    try:
+        p = log_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {msg}\n")
+    except OSError:
+        pass
+
+
+def _wait_pid(pid: int, timeout: float = 60) -> None:
+    """古いソフトが閉じるのを待つ（Windows）"""
+    import time
+    if pid <= 0:
+        return
+    if os.name == "nt":
+        import ctypes
+        SYNCHRONIZE = 0x00100000
+        h = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+        if h:
+            ctypes.windll.kernel32.WaitForSingleObject(h, int(timeout * 1000))
+            ctypes.windll.kernel32.CloseHandle(h)
+        time.sleep(1)
+        return
+    end = time.time() + timeout
+    while time.time() < end:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return
+        time.sleep(0.3)
+
+
+def _copy_over(src: Path, dst: Path) -> int:
+    """新しい版のファイルを古いフォルダにかぶせる。ウイルス対策などで一瞬つかまれているファイルは何度かやり直す。"""
+    import time
+    n = 0
+    for f in src.rglob("*"):
+        rel = f.relative_to(src)
+        target = dst / rel
+        if f.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        for k in range(20):
+            try:
+                shutil.copy2(f, target)
+                n += 1
+                break
+            except OSError as e:
+                if k == 19:
+                    raise OSError(f"{rel} を置き換えられません：{e}") from e
+                time.sleep(0.5)
+    return n
+
+
+def finish(dst: str, pid: int, restart: bool = True) -> int:
+    """新しい版のほう（一時フォルダに展開した exe）で動く：古いソフトが閉じるのを待ち、古いフォルダにかぶせて、起動し直す。"""
+    src = install_dir()
+    dstp = Path(dst)
+    log(f"入れ替え開始：{src} → {dstp}（古いソフト pid {pid}）")
+    try:
+        _wait_pid(pid)
+        n = _copy_over(src, dstp)
+        log(f"入れ替え完了：{n} ファイル")
+    except Exception as e:   # noqa: BLE001
+        log(f"入れ替え失敗：{e}")
+        _save_state({"failed": str(e), "version": current_version()})
+        if restart:   # 置き換えられなかったときは、古い版を起動し直す（使えないままにしない）
+            _start(dstp / EXE_NAME)
+        return 1
+    _save_state({"done": current_version()})
+    if restart:
+        _start(dstp / EXE_NAME)
+    return 0
+
+
+def _start(exe: Path) -> None:
+    import subprocess
+    try:
+        flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        subprocess.Popen([str(exe)], cwd=str(exe.parent), creationflags=flags, close_fds=True)
+        log(f"起動：{exe}")
+    except OSError as e:
+        log(f"起動できません：{exe} {e}")
+
+
+def _state_path() -> Path:
+    from . import settings
+    return settings._dir() / "update_state.json"
+
+
+def _save_state(d: dict) -> None:
+    try:
+        _state_path().parent.mkdir(parents=True, exist_ok=True)
+        _state_path().write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def last_result() -> dict:
+    """前回の更新の結果（起動したときに知らせる）。読んだら消す。"""
+    try:
+        d = json.loads(_state_path().read_text(encoding="utf-8"))
+        _state_path().unlink()
+        return d
+    except (OSError, ValueError):
+        return {}
 
 
 def apply(zip_path: Path) -> None:
-    """展開して入れ替えの準備をし、入れ替え役を起動する。呼んだあとはソフトを終了すること。"""
+    """展開して、新しい版の exe に入れ替えを頼む（PowerShell などは使わない）。呼んだあとはソフトを終了すること。"""
     if not is_frozen():
         raise RuntimeError("開発用（Pythonで動かしている）ときは自動で入れ替えません")
+    import subprocess
     work = Path(tempfile.gettempdir()) / "積算アプリ_更新"
     src = extract(zip_path, work / "new")
-    ps1 = work / "update.ps1"
-    ps1.write_text(update_script(src, install_dir(), os.getpid()), encoding="utf-8-sig")   # BOM つき（PowerShell 5 用）
-    import subprocess
+    exe = src / EXE_NAME
+    _save_state({"pending": current_version()})
+    log(f"更新を開始：{current_version()} → 展開先 {src}")
     flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    subprocess.Popen(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", str(ps1)],
+    subprocess.Popen([str(exe), "--finish-update", str(install_dir()), str(os.getpid())], cwd=str(src),
                      creationflags=flags, close_fds=True)

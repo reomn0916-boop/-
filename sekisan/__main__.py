@@ -14,6 +14,12 @@ from . import db, importer, pipeline, settings
 
 
 def main(argv: list[str] | None = None) -> int:
+    args0 = list(sys.argv[1:] if argv is None else argv)
+    if args0[:1] == ["--finish-update"]:   # 自動更新：新しい版が古いフォルダを置き換える
+        from . import updater
+        return updater.finish(args0[1], int(args0[2]), restart="--no-restart" not in args0)
+    if args0[:1] == ["--selftest"]:        # ビルドの確かめ：画面を作って閉じる
+        return selftest()
     ap = argparse.ArgumentParser(prog="積算アプリ")
     ap.add_argument("--db", help="データファイルの場所（省略時は設定の場所）")
     sub = ap.add_subparsers(dest="cmd")
@@ -61,6 +67,37 @@ def main(argv: list[str] | None = None) -> int:
             for ch in bad:
                 print(f"  ズレ {ch.key}: 計算 {ch.ours:,.0f} / 過去 {ch.reference:,.0f}（差 {ch.diff:,.0f}）")
     return 0
+
+
+def selftest() -> int:
+    """ビルドしたソフトが起動できるか（画面を作れるか）を確かめる。結果は終了コードで返す。"""
+    import os
+    import tempfile
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    tmp = tempfile.mkdtemp()
+    os.environ["APPDATA"] = tmp
+    try:
+        s = settings.load()
+        s.update({"db_path": os.path.join(tmp, "test.sqlite"), "update_check": False, "price_auto_check": False})
+        settings.save(s)
+        from PySide6.QtWidgets import QApplication
+
+        from . import gui
+        app = QApplication.instance() or QApplication([])
+        w = gui.MainWindow()
+        w.show()
+        app.processEvents()
+        for key, *_ in gui.PAGES:
+            w.go(key)
+            app.processEvents()
+        w.close()
+        with open(os.path.join(os.path.dirname(sys.executable), "selftest.txt"), "w", encoding="utf-8") as f:
+            f.write("ok")
+        return 0
+    except Exception as e:   # noqa: BLE001
+        with open(os.path.join(os.path.dirname(sys.executable), "selftest.txt"), "w", encoding="utf-8") as f:
+            f.write(f"NG {type(e).__name__}: {e}")
+        return 3
 
 
 if __name__ == "__main__":

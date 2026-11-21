@@ -33,6 +33,27 @@ jobs:
       - name: 見本データを同梱
         shell: pwsh
         run: Copy-Item -Recurse sample dist/積算アプリ/見本データ
+      - name: 起動の確かめ（作ったexeで画面を作って閉じる）
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $p = Start-Process -FilePath "dist/積算アプリ/積算アプリ.exe" -ArgumentList "--selftest" -Wait -PassThru
+          $r = Get-Content -Raw -ErrorAction SilentlyContinue "dist/積算アプリ/selftest.txt"
+          Remove-Item -ErrorAction SilentlyContinue "dist/積算アプリ/selftest.txt"
+          Write-Host "終了コード $($p.ExitCode) / $r"
+          if ($p.ExitCode -ne 0) { throw "起動の確かめに失敗：$r" }
+      - name: 自動更新の入れ替えの確かめ
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force old | Out-Null
+          Copy-Item -Recurse "dist/積算アプリ" "old/積算アプリ"
+          Remove-Item "old/積算アプリ/_internal/base_library.zip"
+          Set-Content "old/積算アプリ/古い印.txt" "old"
+          $p = Start-Process -FilePath "dist/積算アプリ/積算アプリ.exe" -ArgumentList "--finish-update", "$PWD\old\積算アプリ", "0", "--no-restart" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "入れ替えに失敗（終了コード $($p.ExitCode)）" }
+          if (-not (Test-Path "old/積算アプリ/_internal/base_library.zip")) { throw "入れ替えでファイルが置かれていません" }
+          Write-Host "入れ替えOK"
       - uses: actions/upload-artifact@v4
         with:
           name: 積算アプリ-windows
