@@ -17,7 +17,7 @@ from . import audit, awards, calc, db, importer, pipeline, settings, theme
 from .gui_pages import AddItemDialog, PagesMixin
 from .gui_pages2 import BookPageMixin, PagesMixin2
 from .gui_pages3 import AutoFetchMixin, TablesPageMixin
-from .gui_pages4 import DisposalPageMixin, ReversePanelMixin
+from .gui_pages4 import DisposalPageMixin, ReversePanelMixin, SubmissionPageMixin
 from . import kinnuki
 from . import backup
 from .export import breakdown_rows
@@ -35,6 +35,7 @@ PAGES = [
     ("tables", "単価表", "単価表", "金抜き設計書から作った単価表（歩掛）です。伏せてある数量・当たらない資源・諸雑費率を入れます。", None),
     ("tree", "内訳書", "工事費内訳書", "直接工事費 → 工種 → 種別 → 細別 の階層で金額を確認します。", None),
     ("bid", "入札検討", "入札検討", "予定価格・基準価格・実行原価の位置関係を見ながら入札額を決めます。", None),
+    ("submit", "提出書類", "提出書類", "入札額に合わせた工事費内訳書（Excel・PDF）・入札書・委任状を作り、出す前のチェックをします。", None),
     ("project", "工事の設定", "工事の設定", "発注者・単価の適用日・補正（割増）・確認と提出を設定します。", "工事"),
     ("schedule", "スケジュール", "入札スケジュール", "公告から開札・工期までの日程と、提出物のチェックリストです。", None),
     ("change", "設計変更", "設計変更", "変更前と変更後を並べて、数量・金額の増減を確認します。スライドの目安も出せます。", None),
@@ -49,7 +50,7 @@ PAGES = [
     ("master", "マスタ", "マスタ管理", "年度ごとの単価・歩掛・諸経費率・補正・機械損料・公表単価、発注者ごとの設定を取り込みます。", None),
     ("settings", "設定", "設定", "データファイル・担当者名・利用者と権限・バックアップの設定です。", None),
 ]
-PROJECT_PAGES = {"items", "tables", "tree", "bid", "project", "schedule", "change", "after", "verify", "inquiry", "history", "book",
+PROJECT_PAGES = {"items", "tables", "tree", "bid", "submit", "project", "schedule", "change", "after", "verify", "inquiry", "history", "book",
                  "disposal"}
 
 
@@ -100,7 +101,7 @@ class ItemFilter(QSortFilterProxyModel):
 
 
 class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, AutoFetchMixin, DisposalPageMixin, ReversePanelMixin,
-                 QMainWindow):
+                 SubmissionPageMixin, QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("公共工事 積算アプリ")
@@ -134,10 +135,11 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, AutoFe
                     "settings": self._page_settings, "project": self._page_project, "change": self._page_change,
                     "history": self._page_history, "quotes": self._page_quotes, "awards": self._page_awards,
                     "schedule": self._page_schedule, "after": self._page_after, "inquiry": self._page_inquiry,
-                    "book": self._page_book, "tables": self._page_tables, "disposal": self._page_disposal}
+                    "book": self._page_book, "tables": self._page_tables, "disposal": self._page_disposal,
+                    "submit": self._page_submit}
         for key, *_ in PAGES:
             page = builders[key]()
-            if key in ("master", "settings", "bid"):  # 中身が多い画面はスクロールできるようにする
+            if key in ("master", "settings", "bid", "submit"):  # 中身が多い画面はスクロールできるようにする
                 from PySide6.QtWidgets import QScrollArea
                 sc = QScrollArea()
                 sc.setWidgetResizable(True)
@@ -329,6 +331,7 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, AutoFe
         self._refresh_book()
         self._refresh_tables()
         self._refresh_disposal()
+        self._refresh_submit()
 
     def _project_row(self):
         return self.conn.execute("SELECT * FROM project WHERE id=?", (self.pid,)).fetchone() if self.pid else None

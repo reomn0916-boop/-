@@ -296,3 +296,180 @@ class ReversePanelMixin:
     def _reverse_to_bid(self) -> None:
         if self._rv_result and self.pid is not None:
             self._set_bid(self._cur_threshold())
+
+
+# ====================================================================== 提出書類
+class SubmissionPageMixin:
+    def _page_submit(self):
+        from PySide6.QtCore import QDate
+        from PySide6.QtWidgets import QDateEdit, QFormLayout, QGridLayout, QTableWidget
+
+        from . import submission
+        from .gui import _style_table
+        w, v = _page()
+        self.sb_banner = Banner()
+        v.addWidget(self.sb_banner)
+
+        co = Card("会社の情報（全員で共通・管理者が入れる）", "書類の差出人に入ります。代理人は、代理人が入札するときだけ入れます。")
+        g = QGridLayout()
+        self.sb_co = {}
+        for k, key in enumerate(submission.COMPANY_KEYS):
+            e = QLineEdit()
+            self.sb_co[key] = e
+            g.addWidget(QLabel(key), k // 2, (k % 2) * 2)
+            g.addWidget(e, k // 2, (k % 2) * 2 + 1)
+        co.lay.addLayout(g)
+        hb = QHBoxLayout()
+        hb.addStretch(1)
+        sv = QPushButton("会社の情報を保存")
+        sv.clicked.connect(self._save_company)
+        hb.addWidget(sv)
+        co.lay.addLayout(hb)
+        v.addWidget(co)
+
+        pc = Card("この工事の書類", "金抜き設計書の表紙から入れています。公告と同じか確かめてください。"
+                  "内訳書の工事価格は入札額に合わせます（違うと無効になる発注者が多いため）。")
+        f = QFormLayout()
+        self.sb_to = QLineEdit()
+        self.sb_no = QLineEdit()
+        self.sb_name = QLineEdit()
+        self.sb_place = QLineEdit()
+        self.sb_date = QDateEdit()
+        self.sb_date.setCalendarPopup(True)
+        self.sb_date.setDisplayFormat("yyyy-MM-dd")
+        self.sb_date.setDate(QDate.currentDate())
+        self.sb_fit = QComboBox()
+        self.sb_fit.addItems(list(submission.FITS))
+        self.sb_agent = QLineEdit()
+        self.sb_agent.setPlaceholderText("代理人が入札するときだけ（委任状も作ります）")
+        for lab, wd in (("宛先", self.sb_to), ("工事番号", self.sb_no), ("工事名", self.sb_name), ("工事場所", self.sb_place),
+                        ("提出日", self.sb_date), ("入札額への合わせ方", self.sb_fit), ("代理人", self.sb_agent)):
+            f.addRow(lab, wd)
+        pc.lay.addLayout(f)
+        hb2 = QHBoxLayout()
+        ck = QPushButton("チェックし直す")
+        ck.clicked.connect(self._check_submit)
+        mk = QPushButton("提出書類を作る")
+        mk.setObjectName("Primary")
+        mk.clicked.connect(self._make_submit)
+        hb2.addStretch(1)
+        hb2.addWidget(ck)
+        hb2.addWidget(mk)
+        pc.lay.addLayout(hb2)
+        v.addWidget(pc)
+
+        cc = Card("提出前チェック", "×は出す前に直すもの、△は確かめるものです。")
+        self.sb_checks = QTableWidget(0, 3)
+        self.sb_checks.setHorizontalHeaderLabels(["結果", "確かめること", "内容"])
+        _style_table(self.sb_checks)
+        self.sb_checks.setMinimumHeight(330)
+        cc.lay.addWidget(self.sb_checks)
+        v.addWidget(cc)
+
+        bc = Card("提出する内訳書（入札額に合わせたもの）")
+        self.sb_rows = QTableWidget(0, 7)
+        self.sb_rows.setHorizontalHeaderLabels(["費目・工種・種別・細別", "規格", "単位", "数量", "単価", "金額", "摘要"])
+        _style_table(self.sb_rows)
+        self.sb_rows.setMinimumHeight(360)
+        bc.lay.addWidget(self.sb_rows)
+        v.addWidget(bc)
+        return w
+
+    # ------------------------------------------------------------
+    def _submit_info(self) -> dict:
+        return {"宛先": self.sb_to.text().strip(), "工事番号": self.sb_no.text().strip(), "工事名": self.sb_name.text().strip(),
+                "工事場所": self.sb_place.text().strip(), "提出日": self.sb_date.date().toString("yyyy-MM-dd"),
+                "合わせ方": self.sb_fit.currentText(), "代理人": self.sb_agent.text().strip()}
+
+    def _refresh_submit(self) -> None:
+        from PySide6.QtCore import QDate
+
+        from . import submission
+        if not hasattr(self, "sb_checks"):
+            return
+        for k, val in submission.company(self.conn).items():
+            if not self.sb_co[k].hasFocus():
+                self.sb_co[k].setText(val)
+        p = self._project_row()
+        if not p:
+            self.sb_banner.show_msg("工事を選ぶと、その工事の提出書類を作れます。", "info")
+            self.sb_checks.setRowCount(0)
+            self.sb_rows.setRowCount(0)
+            return
+        info = {**submission.default_info(dict(p)), **submission.saved_info(dict(p))}
+        self.sb_to.setText(info["宛先"])
+        self.sb_no.setText(info.get("工事番号", ""))
+        self.sb_name.setText(info["工事名"])
+        self.sb_place.setText(info.get("工事場所", ""))
+        self.sb_date.setDate(QDate.fromString(info["提出日"], "yyyy-MM-dd"))
+        self.sb_fit.setCurrentText(info.get("合わせ方", submission.FIT_GENERAL))
+        self.sb_agent.setText(info.get("代理人", ""))
+        self._show_package(submission.build(self.conn, self.pid, info))
+
+    def _show_package(self, pkg) -> None:
+        from . import submission
+        from .widgets import yen
+        self._sb_pkg = pkg
+        self.sb_checks.setRowCount(len(pkg.checks))
+        for i, c in enumerate(pkg.checks):
+            mark = "○" if c.ok else ("×" if c.level == "bad" else "△")
+            _set_row(self.sb_checks, i, [mark, c.item, c.detail],
+                     tone="ok" if c.ok else ("bad" if c.level == "bad" else "warn"), tone_col=0)
+        self.sb_checks.resizeColumnsToContents()
+        rows = submission._rows(pkg)
+        self.sb_rows.setRowCount(len(rows))
+        for i, (d, name, spec, unit, qty, price, amount, note) in enumerate(rows):
+            _set_row(self.sb_rows, i, ["　" * max(d, 0) + name, spec, unit, "" if qty is None else f"{qty:g}",
+                                       "" if price is None else yen(price), yen(amount), note],
+                     tone="info" if d == 0 else "", tone_col=0)
+        self.sb_rows.resizeColumnsToContents()
+        bad = pkg.blocking
+        if bad:
+            self.sb_banner.show_msg(f"出す前に直すものが {len(bad)} 件あります：" + "、".join(c.item for c in bad), "bad")
+        else:
+            warn = [c for c in pkg.checks if not c.ok]
+            self.sb_banner.show_msg("提出書類を作れます。" + (f"確かめるもの {len(warn)} 件（△）があります。" if warn else ""),
+                                    "warn" if warn else "ok")
+
+    def _save_company(self) -> None:
+        from . import submission
+        if self.guard(submission.set_company, self.conn, {k: e.text() for k, e in self.sb_co.items()}):
+            self._refresh_submit()
+            self.status.showMessage("会社の情報を保存しました", 5000)
+
+    def _check_submit(self) -> None:
+        from . import submission
+        if self.pid is None:
+            return
+        info = self._submit_info()
+        if self.guard(submission.save_info, self.conn, self.pid, info) is None:
+            return
+        self._show_package(submission.build(self.conn, self.pid, info))
+
+    def _make_submit(self) -> None:
+        from pathlib import Path
+
+        from . import submission
+        from .gui import open_path
+        if self.pid is None:
+            return
+        self._check_submit()
+        pkg = getattr(self, "_sb_pkg", None)
+        if not pkg:
+            return
+        if pkg.blocking and QMessageBox.question(
+                self, "提出書類", "出す前に直すもの（×）があります：\n" + "\n".join(f"・{c.item}　{c.detail}" for c in pkg.blocking)
+                + "\n\nそれでも書類を作りますか？（下書きとして確かめる場合など）") != QMessageBox.Yes:
+            return
+        safe = "".join(ch for ch in pkg.info["工事名"] if ch not in '\\/:*?"<>|')[:60] or "工事"
+        out = Path(self.n_out.text() or ".") / f"{safe}_提出書類"
+        try:
+            files = submission.write_all(pkg, out)
+        except OSError as e:
+            QMessageBox.warning(self, "提出書類", f"書き出せませんでした（ファイルを開いたままではありませんか）：{e}")
+            return
+        from . import audit
+        audit.log(self.conn, self.pid, "提出書類を作成", f"入札額 ¥{pkg.fitted.summary.price:,}　{out}")
+        QMessageBox.information(self, "提出書類", "作りました：\n" + "\n".join(f"・{f.name}" for f in files)
+                                + "\n\n押印・提出のあと、「工事の設定」で「提出済にする（ロック）」を押してください。")
+        open_path(out)
