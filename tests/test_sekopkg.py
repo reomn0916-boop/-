@@ -120,3 +120,39 @@ def test_official_overhead_rates(conn):
     assert not [w for w in c.warnings if "率がありません" in w]
     assert c.rate("存在しない工事", "共通仮設費", 5e6) == 0 and c.warnings
     assert overhead_std.advance_factor("0％から5％以下") == 1.05 and overhead_std.guarantee_add("役務的保証") == 0.09
+
+
+def test_area_correction_and_orderer(conn):
+    """施工地域を考慮した補正（表－２・表－３）と、御所市の最低制限価格の式。"""
+    from sekisan import overhead_std
+    assert overhead_std.classify("補正を行わない") == ""
+    assert overhead_std.classify("市街地（ＤＩＤ補正）（１）－３") == "市街地(DID補正)"
+    assert overhead_std.classify("山間僻地及び離島") == "山間僻地及び離島"
+    # 同じ「市街地」でも工種区分で係数が変わる
+    assert overhead_std.area_coefs("市街地(DID補正)", "公園工事") == (1.2, 1.1, "市街地(DID補正)(1)-3")
+    assert overhead_std.area_coefs("市街地(DID補正)", "舗装工事") == (1.4, 1.2, "市街地(DID補正)(1)-1")
+    assert overhead_std.area_coefs("市街地(DID補正)", "鋼橋架設工事") == (1.3, 1.1, "市街地(DID補正)(1)-2")
+    assert overhead_std.area_coefs("山間僻地及び離島", "河川工事") == (1.3, 1.0, "山間僻地及び離島")
+    assert overhead_std.area_coefs("山間僻地及び離島", "フィルダム")[2] == ""
+    pid = conn.execute("INSERT INTO project(name, fy, work_type, orderer, doc_meta) VALUES "
+                       "('試験', 'R8', '公園工事', '御所市', ?)",
+                       (json.dumps({"施工地域区分": "市街地（DID補正）（１）－３"}, ensure_ascii=False),)).lastrowid
+    conn.commit()
+    c = calc.Calculator(conn, "R8", orderer="御所市", project_id=pid)
+    s = c.summary(30_000_000, "公園工事")
+    kr = round(48.0 * 30_000_000 ** -0.0956, 2)
+    assert s.area == "市街地(DID補正)(1)-3" and s.common_temp_rate == round(kr * 1.2, 2)
+    # 工事の設定で「補正しない」を選べば補正しない
+    conn.execute("UPDATE project SET area_class=? WHERE id=?", (overhead_std.NO_AREA, pid))
+    assert calc.Calculator(conn, "R8", project_id=pid).summary(30_000_000, "公園工事").common_temp_rate == kr
+    # 御所市：直接×0.97＋共通仮設×0.90＋現場管理×0.90＋一般管理×0.68、千円未満切捨て、予定価格の75〜92%
+    assert c.rules["基準価格の端数単位"] == "1000" and c.rules["基準価格_一般管理費等"] == "0.68"
+    raw = s.direct * 0.97 + s.common_temp * 0.90 + s.site_mgmt * 0.90 + s.general * 0.68
+    want = min(max(raw, s.price * 0.75), s.price * 0.92)
+    assert s.threshold == int(want) // 1000 * 1000
+
+
+def test_orderer_from_cover():
+    from sekisan import kinnuki
+    assert kinnuki.orderer_of({"事務所名": "御所市 都市建設部 土木課"}) == "御所市"
+    assert kinnuki.orderer_of({"事務所名": "奈良県総務部知事公室防災統括室"}) == ""

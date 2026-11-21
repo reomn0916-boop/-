@@ -515,6 +515,18 @@ def _match_resource(conn, fy: str, line: TableLine):
     return None
 
 
+def orderer_of(meta: dict) -> str:
+    """表紙の事務所名・発注者から市町村名（例：御所市）を取り出す。県の事務所なら空。"""
+    for k in ("発注者", "事務所名", "発注機関", "課名・係名"):
+        v = _n(meta.get(k, ""))
+        if not v or v.startswith("奈良県"):
+            continue
+        m = re.match(r"^(\S{1,6}?[市町村])", v)
+        if m:
+            return m.group(1)
+    return ""
+
+
 def import_doc(conn, path: str | Path, work_type: str | None = None, orderer: str = "奈良県") -> dict:
     """金抜き設計書PDFから、工事・明細・単価表（歩掛）・施工パッケージを作る。"""
     import json
@@ -529,6 +541,8 @@ def import_doc(conn, path: str | Path, work_type: str | None = None, orderer: st
     stats = {"単価表": 0, "施工パッケージ": 0, "資源": 0, NEED_QTY: 0, NEED_RES: 0, NEED_MISC: 0, FROM_MEMORY: 0}
 
     name = doc.meta.get("工事名") or Path(path).stem
+    if orderer == "奈良県":   # 市町村の設計書なら、その市町村を発注者にする（最低制限価格の式が変わる）
+        orderer = orderer_of(doc.meta) or orderer
     pid = importer.create_project(conn, name, fy, [], region, work_type or doc.meta.get("適用工種", ""),
                                   str(path), orderer)
 

@@ -38,6 +38,15 @@ DEFAULT_RULES = {
     "部分払_割合": "0.9",
 }
 
+# 発注者ごとの最低制限価格の式（要綱から）。マスタの「発注者ごとの設定」で入れた値がさらに優先する。
+ORDERER_PRESETS: dict[str, dict[str, str]] = {
+    # 御所市最低制限価格制度実施要綱：直接工事費×0.97＋共通仮設費×0.90＋現場管理費×0.90＋一般管理費×0.68
+    # （千円未満切捨て）。予定価格（税抜）の7.5/10〜9.2/10の範囲。
+    "御所市": {"基準価格_直接工事費": "0.97", "基準価格_共通仮設費": "0.90", "基準価格_現場管理費": "0.90",
+               "基準価格_一般管理費等": "0.68", "基準価格_下限": "0.75", "基準価格_上限": "0.92",
+               "基準価格の端数単位": "1000", "基準価格_出典": "御所市最低制限価格制度実施要綱"},
+}
+
 _MODES = {"切捨て": ROUND_FLOOR, "四捨五入": ROUND_HALF_UP, "切上げ": ROUND_CEILING}
 
 DESIGN = "設計"    # 発注者の単価で計算（入札・内訳書用）
@@ -151,6 +160,7 @@ class Summary:
     tax: int = 0
     total: int = 0
     threshold: int = 0             # 調査基準価格・最低制限価格の試算（税抜）
+    area: str = ""                 # 施工地域を考慮した補正（市街地(DID補正)(1)-3 など）
 
     def as_rows(self) -> list[tuple[str, float | None, int]]:
         return [
@@ -189,6 +199,8 @@ def load_rules(conn: sqlite3.Connection, fy: str, orderer: str = "") -> dict[str
     rules = dict(DEFAULT_RULES)
     for r in conn.execute("SELECT key, value FROM rule WHERE fy=?", (fy,)):
         rules[r["key"]] = r["value"]
+    if orderer and orderer in ORDERER_PRESETS:   # 要綱で決まっている発注者の式（画面で設定したものが優先）
+        rules.update(ORDERER_PRESETS[orderer])
     if orderer:
         for r in conn.execute("SELECT key, value FROM orderer_rule WHERE orderer=?", (orderer,)):
             rules[r["key"]] = r["value"]
@@ -528,8 +540,10 @@ class Calculator:
         places = int(self.rules["率の小数桁"])
         s = Summary(direct=direct, direct_excluded=excluded)
         base_ct = direct - excluded
+        ct_k, sm_k, area = self.area_adjust(work_type)
+        s.area = area
         s.common_temp_rate = round_dec(
-            self.rate(work_type, "共通仮設費", base_ct) * self.factor(self.conditions, "共通仮設費率"), places)
+            self.rate(work_type, "共通仮設費", base_ct) * ct_k * self.factor(self.conditions, "共通仮設費率"), places)
         ct_unit = int(self.rules.get("共通仮設費_端数単位", "1") or 1)
         s.common_temp_rated = floor_yen(base_ct * s.common_temp_rate / 100) // ct_unit * ct_unit
         s.common_temp_stacked = ct_stack
@@ -537,7 +551,7 @@ class Calculator:
         s.net = s.direct + s.common_temp
         base_sm = s.net - excluded
         s.site_mgmt_rate = round_dec(
-            self.rate(work_type, "現場管理費", base_sm) * self.factor(self.conditions, "現場管理費率"), places)
+            self.rate(work_type, "現場管理費", base_sm) * sm_k * self.factor(self.conditions, "現場管理費率"), places)
         s.site_mgmt_stacked = sm_stack
         sm_unit = int(self.rules.get("現場管理費_端数単位", "1") or 1)
         s.site_mgmt = (floor_yen(base_sm * s.site_mgmt_rate / 100) + sm_stack) // sm_unit * sm_unit
@@ -555,18 +569,38 @@ class Calculator:
         s.threshold = self.threshold(s)
         return s
 
+    def _meta(self) -> dict:
+        if self.project_id is None:
+            return {}
+        import json as _json
+        r = self.conn.execute("SELECT doc_meta FROM project WHERE id=?", (self.project_id,)).fetchone()
+        try:
+            return _json.loads(r["doc_meta"]) if r and r["doc_meta"] else {}
+        except ValueError:
+            return {}
+
+    def area_adjust(self, work_type: str) -> tuple[float, float, str]:
+        """施工地域を考慮した補正：(共通仮設費率の係数, 現場管理費率の係数, 区分)。
+        工事の設定で選んだ区分、なければ金抜き設計書の表紙の「施工地域区分」から決める。"""
+        from . import overhead_std
+        if self.project_id is None:
+            return 1.0, 1.0, ""
+        r = self.conn.execute("SELECT area_class FROM project WHERE id=?", (self.project_id,)).fetchone()
+        chosen = (r["area_class"] if r and "area_class" in r.keys() else "") or ""
+        if chosen == overhead_std.NO_AREA:
+            return 1.0, 1.0, ""
+        kind = chosen or overhead_std.classify(self._meta().get("施工地域区分", ""))
+        ct, sm, label = overhead_std.area_coefs(kind, work_type)
+        if kind and not label:
+            self.warnings.append(f"施工地域区分「{kind}」は工種区分「{work_type}」には当てはまらないため、補正していません")
+        return ct, sm, label
+
     def general_adjust(self) -> tuple[float, float]:
         """一般管理費等率の補正：(前払金支出割合の係数, 契約保証の加算値)。金抜き設計書の表紙の記載から。"""
         if self.project_id is None:
             return 1.0, 0.0
-        import json as _json
-
         from . import overhead_std
-        r = self.conn.execute("SELECT doc_meta FROM project WHERE id=?", (self.project_id,)).fetchone()
-        try:
-            meta = _json.loads(r["doc_meta"]) if r and r["doc_meta"] else {}
-        except ValueError:
-            meta = {}
+        meta = self._meta()
         return (overhead_std.advance_factor(meta.get("一般管理費前払補正", "")),
                 overhead_std.guarantee_add(meta.get("契約保証", "")))
 
@@ -734,7 +768,7 @@ def set_project_conditions(conn: sqlite3.Connection, project_id: int, codes: lis
         audit.touch(conn, project_id)
 
 
-PROJECT_FIELDS = ("name", "fy", "region", "work_type", "orderer", "price_date")
+PROJECT_FIELDS = ("name", "fy", "region", "work_type", "orderer", "price_date", "area_class")
 
 
 def set_project_fields(conn: sqlite3.Connection, project_id: int, **fields: str) -> None:

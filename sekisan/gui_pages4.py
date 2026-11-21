@@ -625,7 +625,8 @@ class KoukokuMixin:
         t = QTableWidget(len(nt.items), 3)
         t.setHorizontalHeaderLabels(["項目", "読み取った値", "読んだところ"])
         _style_table(t)
-        applicable = set(koukoku.SCHEDULE_KEYS) | {"工事番号", "工事場所", "予定価格（税抜）", "予定価格（税込）", "最低制限価格", "提出書類"}
+        applicable = set(koukoku.SCHEDULE_KEYS) | {"工事番号", "工事場所", "予定価格（税抜）", "予定価格（税込）", "最低制限価格", "提出書類",
+                                                  "発注者", "施工地域区分"}
         for i, f in enumerate(nt.items):
             a = QTableWidgetItem(f.key)
             if f.key in applicable:

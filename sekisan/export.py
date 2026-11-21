@@ -125,10 +125,11 @@ def breakdown_rows(res: Result, max_depth: int = 4) -> list[tuple[int, str, str,
     s = res.summary
     out.append((0, "直接工事費", "", "式", 1, None, s.direct, ""))
     tree([i for i in res.items if is_direct(i.category)], 1)
-    out.append((0, "共通仮設費", "", "式", 1, None, s.common_temp, f"率 {s.common_temp_rate:.2f}%"))
+    area = f"（{s.area}）" if getattr(s, "area", "") else ""
+    out.append((0, "共通仮設費", "", "式", 1, None, s.common_temp, f"率 {s.common_temp_rate:.2f}%{area}"))
     tree([i for i in res.items if i.category == "共通仮設"], 1)
     out.append((0, "純工事費", "", "式", 1, None, s.net, ""))
-    out.append((0, "現場管理費", "", "式", 1, None, s.site_mgmt, f"率 {s.site_mgmt_rate:.2f}%"))
+    out.append((0, "現場管理費", "", "式", 1, None, s.site_mgmt, f"率 {s.site_mgmt_rate:.2f}%{area}"))
     tree([i for i in res.items if i.category == "現場管理"], 1)
     out.append((0, "工事原価", "", "式", 1, None, s.cost, ""))
     out.append((0, "一般管理費等", "", "式", 1, None, s.general, f"率 {s.general_rate:.2f}%"))

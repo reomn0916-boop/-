@@ -103,3 +103,60 @@ def guarantee_add(text: str) -> float:
     if not t or "しない" in t or "行わない" in t:
         return 0.0
     return next((v for k, v in GUARANTEE_ADD if k in t), 0.0)
+
+
+# ------------------------------------------------------------------ 施工地域を考慮した補正（表－２：共通仮設費率、表－３：現場管理費率）
+# 出典：国土交通省「土木工事工事費積算要領及び基準の運用」（令和8年2月27日付）。奈良県の読替規定は変更なし。
+_ROAD4 = {"電線共同溝工事", "道路維持工事", "舗装工事", "橋梁保全工事"}
+_DAMS = {"コンクリートダム", "フィルダム"}
+# (施工地域区分, 共通仮設費率の係数, 現場管理費率の係数, 優先, 対象の工種区分, 対象外の工種区分)
+AREA = [
+    ("大都市(1)", 2.0, 1.2, 1, {"舗装工事", "電線共同溝工事", "道路維持工事"}, None),
+    ("大都市(2)", 1.5, 1.2, 2, {"鋼橋架設工事", "舗装工事", "電線共同溝工事", "道路維持工事", "下水道工事(1)", "下水道工事(2)",
+                                "下水道(4)工事"}, None),
+    ("市街地(DID補正)(1)-1", 1.4, 1.2, 3, _ROAD4, None),
+    ("一般交通影響有り(1)-1", 1.4, 1.2, 3, _ROAD4, None),
+    ("一般交通影響有り(2)-1", 1.4, 1.2, 3, _ROAD4, None),
+    ("市街地(DID補正)(1)-2", 1.3, 1.1, 4, {"鋼橋架設工事"}, None),
+    ("一般交通影響有り(1)-2", 1.3, 1.1, 5, None, _ROAD4 | _DAMS),
+    ("一般交通影響有り(2)-2", 1.2, 1.1, 6, None, _ROAD4 | _DAMS),
+    ("市街地(DID補正)(1)-3", 1.2, 1.1, 7, None, _ROAD4 | {"鋼橋架設工事"} | _DAMS),
+    ("山間僻地及び離島", 1.3, 1.0, 8, None, _DAMS),
+]
+AREA_KINDS = ("大都市(1)", "大都市(2)", "市街地(DID補正)", "一般交通影響有り(1)", "一般交通影響有り(2)", "山間僻地及び離島")
+NO_AREA = "補正しない"
+
+
+def _applies(row, work_type: str) -> bool:
+    _l, _c, _s, _p, only, excl = row
+    k = key(work_type)
+    if only is not None:
+        return any(key(w) == k for w in only)
+    return not any(key(w) == k for w in (excl or ()))
+
+
+def classify(text: str) -> str:
+    """表紙・公告の「施工地域区分」の書き方から、区分の種類（AREA_KINDS）を決める。補正なしは空。"""
+    t = unicodedata.normalize("NFKC", text or "").replace(" ", "")
+    if not t or "行わない" in t or "しない" in t or t in ("なし", "無し", "-"):
+        return ""
+    if "大都市" in t:
+        return "大都市(1)" if "(1)" in t or "1" in t.split("大都市")[1][:3] else "大都市(2)"
+    if "山間" in t or "僻地" in t or "離島" in t:
+        return "山間僻地及び離島"
+    if "交通" in t:
+        return "一般交通影響有り(2)" if "(2)" in t else "一般交通影響有り(1)"
+    if "市街地" in t or "DID" in t.upper():
+        return "市街地(DID補正)"
+    return ""
+
+
+def area_coefs(kind: str, work_type: str) -> tuple[float, float, str]:
+    """(共通仮設費率の係数, 現場管理費率の係数, 当てはめた区分)。当てはまらなければ (1, 1, '')"""
+    if not kind or kind == NO_AREA:
+        return 1.0, 1.0, ""
+    rows = [r for r in AREA if r[0].startswith(kind) and _applies(r, work_type)]
+    if not rows:
+        return 1.0, 1.0, ""
+    r = min(rows, key=lambda r: r[3])
+    return r[1], r[2], r[0]

@@ -133,6 +133,13 @@ def parse_text(text: str) -> Notice:
         nt.add("工事番号", v, src)
     v, src = _value_after(t, r"工事場所|施工場所|履行場所")
     nt.add("工事場所", v, src)
+    m2 = re.search(r"(\S{1,6}?[市町村])長", t[:400])
+    if m2:
+        nt.add("発注者", m2.group(1), m2.group(0))
+    elif "奈良県知事" in t[:400]:
+        nt.add("発注者", "奈良県", "奈良県知事")
+    v, src = _value_after(t, r"施工地域区分")
+    nt.add("施工地域区分", v, src)
     # 工期
     m = re.search(r"工\s*期\s*[:：]?\s*(.{0,80})", t)
     if m:
@@ -230,6 +237,16 @@ def apply(conn: sqlite3.Connection, project_id: int, nt: Notice, keys: set[str] 
             done.append(f"{k}：{nt.get(k)}")
     if info != submission.saved_info(p):
         submission.save_info(conn, project_id, info)
+    if nt.get("発注者") and use("発注者") and nt.get("発注者") != p.get("orderer"):
+        with conn:
+            conn.execute("UPDATE project SET orderer=? WHERE id=?", (nt.get("発注者"), project_id))
+        done.append(f"発注者：{nt.get('発注者')}（最低制限価格の式が変わります）")
+    if nt.get("施工地域区分") and use("施工地域区分"):
+        from . import overhead_std
+        kind = overhead_std.classify(nt.get("施工地域区分")) or overhead_std.NO_AREA
+        with conn:
+            conn.execute("UPDATE project SET area_class=? WHERE id=?", (kind, project_id))
+        done.append(f"施工地域区分：{kind}（諸経費の補正）")
     for key, basis in (("予定価格（税抜）", "予定価格（税抜）"), ("予定価格（税込）", "予定価格（税込）"),
                        ("最低制限価格", "最低制限価格（税抜）")):
         v = nt.get(key)

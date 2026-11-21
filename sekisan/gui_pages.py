@@ -119,6 +119,14 @@ class PagesMixin:
         self.ps_region = RegionBox()
         self.ps_orderer = QComboBox()
         self.ps_orderer.setEditable(True)
+        from . import overhead_std
+        self.ps_area = QComboBox()
+        self.ps_area.addItem("自動（金抜き設計書の表紙の「施工地域区分」から）", "")
+        for k in overhead_std.AREA_KINDS:
+            self.ps_area.addItem(k, k)
+        self.ps_area.addItem("補正しない", overhead_std.NO_AREA)
+        self.ps_area.setToolTip("共通仮設費率・現場管理費率を、施工地域（市街地・山間僻地など）と工種区分に応じて補正します"
+                                "（国交省の表－２・表－３）")
         self.ps_use_date = QCheckBox("単価の適用日を指定する（単価改定を反映）")
         self.ps_date = QDateEdit()
         self.ps_date.setCalendarPopup(True)
@@ -129,6 +137,7 @@ class PagesMixin:
         f.addRow("工種区分", self.ps_work)
         f.addRow("地区", self.ps_region)
         f.addRow("発注者", self.ps_orderer)
+        f.addRow("施工地域区分", self.ps_area)
         f.addRow("", self.ps_use_date)
         f.addRow("単価の適用日", self.ps_date)
         info.lay.addLayout(f)
@@ -200,7 +209,9 @@ class PagesMixin:
             return
         fys = [r[0] for r in self.conn.execute(
             "SELECT DISTINCT fy FROM master_price UNION SELECT DISTINCT fy FROM bukake ORDER BY 1 DESC")]
-        works = [r[0] for r in self.conn.execute("SELECT DISTINCT work_type FROM overhead_param ORDER BY 1")]
+        from . import overhead_std
+        works = list(dict.fromkeys(overhead_std.WORK_TYPES + [r[0] for r in self.conn.execute(
+            "SELECT DISTINCT work_type FROM overhead_param ORDER BY 1")]))
         orderers = self._orderers()
         for combo, vals, cur in ((self.ps_fy, fys, p["fy"]), (self.ps_work, works, p["work_type"]),
                                  (self.ps_orderer, orderers, p["orderer"])):
@@ -209,6 +220,10 @@ class PagesMixin:
             combo.setCurrentText(cur)
         self.ps_name.setText(p["name"])
         self.ps_region.setText(p["region"])
+        ai = self.ps_area.findData(p["area_class"] if "area_class" in p.keys() else "")
+        self.ps_area.setCurrentIndex(max(ai, 0))
+        if self.design and self.design.summary.area:
+            self.ps_area.setToolTip(f"いま当てはめている補正：{self.design.summary.area}")
         self.ps_use_date.setChecked(bool(p["price_date"]))
         self.ps_date.setEnabled(bool(p["price_date"]))
         self.ps_date.setDate(_date(p["price_date"]))
@@ -243,9 +258,10 @@ class PagesMixin:
         self.ps_unlock.setEnabled(st == "提出済")
 
     def _orderers(self) -> list[str]:
-        return [r[0] for r in self.conn.execute(
+        found = [r[0] for r in self.conn.execute(
             "SELECT orderer FROM orderer_rule UNION SELECT orderer FROM award WHERE orderer<>'' "
             "UNION SELECT orderer FROM project WHERE orderer<>'' ORDER BY 1")]
+        return list(dict.fromkeys(["奈良県"] + list(calc.ORDERER_PRESETS) + found))
 
     def _save_project_info(self) -> None:
         if self.pid is None:
@@ -253,7 +269,7 @@ class PagesMixin:
         ok = self.guard(calc.set_project_fields, self.conn, self.pid,
                         name=self.ps_name.text().strip() or "無題", fy=self.ps_fy.currentText().strip(),
                         work_type=self.ps_work.currentText().strip(), region=self.ps_region.text().strip(),
-                        orderer=self.ps_orderer.currentText().strip(),
+                        orderer=self.ps_orderer.currentText().strip(), area_class=self.ps_area.currentData() or "",
                         price_date=self.ps_date.date().toString("yyyy-MM-dd") if self.ps_use_date.isChecked() else "")
         if ok is None and self._project_row()["status"] == "提出済":
             return
