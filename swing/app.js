@@ -4,7 +4,11 @@
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const yen = (x) => (x == null ? '—' : Number(x).toLocaleString('ja-JP', { maximumFractionDigits: x < 1000 ? 1 : 0 }));
-const sgn = (x, d = 2) => (x == null ? '—' : (x > 0 ? '+' : '') + Number(x).toFixed(d) + '%');
+const sgn = (x, d = 2) => {
+  if (x == null) return '—';
+  const t = Number(x).toFixed(d);
+  return (+t === 0 ? Math.abs(0).toFixed(d) : (+t > 0 ? '+' : '') + t) + '%';
+};
 const cls = (x) => (x > 0 ? 'up' : x < 0 ? 'down' : '');
 
 const store = {
@@ -25,6 +29,9 @@ const S = {
   capital: store.get('capital', 1000000),
   riskPct: store.get('riskPct', 1),
   greenUp: store.get('greenUp', false),
+  positions: store.get('positions', []),
+  trackFilter: 'all',
+  trackAll: false,
   open: null,
 };
 
@@ -83,6 +90,7 @@ function renderAll() {
   renderHome();
   renderStocks();
   renderNews();
+  renderTrack();
   renderWatch();
   if (S.open) openStock(S.open, true);
 }
@@ -95,15 +103,27 @@ function spark(arr) {
   return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><polyline points="${pts}" stroke="${c}" vector-effect="non-scaling-stroke"/></svg>`;
 }
 
+const SETUP_NAME = { pullback: '押し目', breakout: '高値ブレイク', rebound: '売られすぎ反発', trend: '上昇トレンド', none: '様子見' };
+const localDate = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const pctf = (x, d = 0) => (x == null ? '—' : Number(x).toFixed(d) + '%');
+
+// 検証結果の一行（勝率・平均損益）
+function btLine(st, prefix = '') {
+  if (!st || !st.n) return '';
+  return `${prefix}勝率 <b class="num">${pctf(st.win_rate)}</b>・平均 <b class="num ${cls(st.avg_ret)}">${sgn(st.avg_ret, 1)}</b>（${st.n}回）`;
+}
+
 function regimeClass(label) {
   return label.includes('追い風') ? 'rg-good' : label === '向かい風' ? 'rg-bad' : 'rg-mid';
 }
 
 function pickCard(s) {
   const why = s.reasons[0] || '';
+  const bt = S.data.backtest && S.data.backtest.by_setup[s.setup];
   return `<button class="pick" data-code="${s.code}">
     <div class="l1">
       <span class="chip setup-${s.setup}">${esc(s.setup_label)}</span>
+      ${s.new_pick ? '<span class="chip new">新</span>' : ''}
       <span class="nm">${esc(s.name)}<small>${s.code}・${esc(s.sector)}</small></span>
       <span class="score num">${Math.round(s.score)}<small>点</small></span>
     </div>
@@ -120,6 +140,8 @@ function pickCard(s) {
       <div>損切り<b class="down">${yen(s.stop)}</b></div>
     </div>
     ${why ? `<div class="why">${esc(why)}</div>` : ''}
+    <div class="why small">翌日 <b class="num">${yen(s.chase)}</b> 円より高く寄ったら見送り${s.limit ? `・指値なら <b class="num">${yen(s.limit)}</b> 円` : ''}</div>
+    ${bt && bt.n ? `<div class="why small">この型の過去2年：${btLine(bt)}</div>` : ''}
   </button>`;
 }
 
@@ -128,7 +150,17 @@ function renderHome() {
   const picks = d.picks.map((c) => S.byCode[c]).filter(Boolean);
   const topNews = [...d.news].filter((n) => n.codes.length || n.themes.length)
     .sort((a, b) => Math.abs(b.sentiment) * (b.codes.length ? 1.5 : 1) - Math.abs(a.sentiment) * (a.codes.length ? 1.5 : 1)).slice(0, 5);
+  const alerts = S.positions.map((p) => ({ p, st: posStatus(p) })).filter((x) => x.st.alerts.length);
+  const tr = d.track && d.track.stats;
+  const secs = d.sectors || [];
+  const secMax = Math.max(1, ...secs.map((x) => Math.abs(x.ret20)));
+  const secRow = (x) => `<button class="secrow" data-code="${x.best}"><span class="sn">${esc(x.sector)}</span>
+      <span class="sbar"><i class="${x.ret20 >= 0 ? 'p' : 'm'}" style="width:${Math.abs(x.ret20) / secMax * 50}%"></i></span>
+      <span class="sv num ${cls(x.ret20)}">${sgn(x.ret20, 1)}</span></button>`;
   $('#v-home').innerHTML = `
+    ${alerts.length ? `<h2>保有銘柄のお知らせ</h2><div class="picks">${alerts.map(({ p, st }) => `<button class="pick alert" data-tab-go="watch">
+      <div class="l1"><span class="nm">${esc(p.name)}</span><span class="num ${cls(st.retPct)}">${sgn(st.retPct, 1)}</span></div>
+      ${st.alerts.map((a) => `<div class="why ${a.level}">${esc(a.text)}</div>`).join('')}</button>`).join('')}</div>` : ''}
     <h2>相場の地合い</h2>
     <div class="card regime">
       <div class="badge ${regimeClass(rg.label)}"><small>買いには</small>${esc(rg.label)}</div>
@@ -143,7 +175,10 @@ function renderHome() {
     <div class="themes">${d.themes.slice(0, 5).map((t) => `<div class="theme"><b>${esc(t.theme)}</b><span class="muted">${t.count}件</span>
       <div class="secs">${t.up.map((s) => `<span class="chip pos">↑ ${esc(s)}</span>`).join('')}${t.down.map((s) => `<span class="chip neg">↓ ${esc(s)}</span>`).join('')}</div>
       <div class="hl">${esc(t.headline)}</div></div>`).join('')}</div>` : ''}
-    <h2>今日の注目銘柄<small>点数の高い順・${picks.length}銘柄</small></h2>
+    ${secs.length ? `<h2>業種の強さ<small>20日の騰落の平均・押すと業種で一番点数の高い銘柄</small></h2>
+    <div class="card secs">${secs.slice(0, 5).map(secRow).join('')}<div class="secgap">…</div>${secs.slice(-3).map(secRow).join('')}</div>` : ''}
+    <h2>今日の注目銘柄<small>点数の高い順・${picks.length}銘柄${rg.min_score ? `・${rg.min_score}点以上` : ''}</small></h2>
+    ${tr && tr.n ? `<button class="card trackmini" data-tab-go="track">これまでの注目銘柄の成績：${btLine(tr)}<span class="muted"> ›</span></button>` : ''}
     ${picks.length ? `<div class="picks">${picks.map(pickCard).join('')}</div>` : '<div class="card empty">条件に合う銘柄がありません。地合いが悪い日は見送りも選択肢です。</div>'}
     <h2>材料になりそうなニュース</h2>
     <div class="newslist">${topNews.map(newsItem).join('') || '<div class="card empty">ニュースはありません</div>'}</div>
@@ -168,7 +203,8 @@ function renderStocks() {
   let list = d.stocks.filter((s) => (S.stockFilter === 'all' || s.setup === S.stockFilter) && (S.sector === 'all' || s.sector === S.sector));
   if (S.query) {
     const q = S.query.toLowerCase();
-    list = list.filter((s) => s.name.toLowerCase().includes(q) || s.code.includes(q));
+    list = list.filter((s) => s.name.toLowerCase().includes(q) || s.code.includes(q)
+      || (s.aliases || []).some((a) => a.toLowerCase().includes(q)));
   }
   const key = S.sort;
   list.sort((a, b) => (key === 'rsi_low' ? a.rsi - b.rsi : b[key] - a[key]));
@@ -210,9 +246,97 @@ function renderNews() {
     <p class="note">プラス・マイナスは見出しの言葉（上方修正・増配・下方修正など）から自動で判定しています。本文は必ずリンク先で確認してください。</p>`;
 }
 
+// ---- 成績（注目銘柄のその後・過去2年の検証） -----------------------------------
+const TRACK_STATUS = { win: ['利確', 'pos'], loss: ['損切り', 'neg'], timeout: ['期限で手じまい', ''], open: ['保有中', 'open'], wait: ['明日の寄りから', ''], skip: ['寄りで見送り', ''] };
+
+function statGrid(st) {
+  if (!st || !st.n) return '<div class="empty">まだ結果の出た取引がありません</div>';
+  return `<div class="kv num">
+    <div>勝率<b>${pctf(st.win_rate)}</b></div>
+    <div>1回の平均<b class="${cls(st.avg_ret)}">${sgn(st.avg_ret, 2)}</b></div>
+    <div>プロフィットファクター<b>${st.pf ?? '—'}</b></div>
+    <div>勝ちの平均<b class="up">${sgn(st.avg_win, 1)}</b></div>
+    <div>負けの平均<b class="down">${sgn(st.avg_loss, 1)}</b></div>
+    <div>平均の保有<b>${st.avg_days}日</b></div>
+  </div>`;
+}
+
+function renderTrack() {
+  const d = S.data, tr = d.track || { stats: {}, rows: [] }, bt = d.backtest;
+  const f = S.trackFilter;
+  const rows = tr.rows.filter((r) => f === 'all' || (f === 'closed' && ['win', 'loss', 'timeout'].includes(r.status)) || (f === 'open' && r.status === 'open'));
+  const sim = tr.rows.some((r) => r.src === 'sim');
+  $('#v-track').innerHTML = `
+    <h2>注目銘柄のその後<small>翌日の寄り付きで買い、目安どおり売ったとして計算</small></h2>
+    ${statGrid(tr.stats)}
+    <p class="muted" style="font-size:12px;margin:6px 0 0">結果が出た ${tr.stats.n || 0} 回・保有中 ${tr.stats.open || 0} 回。最長 ${bt ? bt.hold_days : 15} 営業日で手じまい。${sim ? '記録を始める前の分は、同じルールで過去の日に選んだ銘柄を再現しています。' : ''}</p>
+    <div class="filters" style="margin-top:12px">${[['all', '全部'], ['open', '保有中'], ['closed', '結果が出た']].map(([k, l]) => `<button data-tf="${k}" class="${f === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <div class="list">${rows.slice(0, S.trackAll ? 999 : 20).map((r) => {
+      const [lb, k] = TRACK_STATUS[r.status] || [r.status, ''];
+      return `<button class="row" data-code="${r.code}">
+        <div class="main"><b>${esc(r.name)}</b><small>${r.date.slice(5).replace('-', '/')} 選出・${SETUP_NAME[r.setup] || ''}・${Math.round(r.score)}点</small></div>
+        <div class="rt num"><span class="chip ${k}">${lb}</span><b class="${cls(r.ret)}">${r.ret == null ? '—' : sgn(r.ret, 1)}</b></div>
+      </button>`;
+    }).join('') || '<div class="empty">記録はまだありません</div>'}</div>
+    ${rows.length > 20 && !S.trackAll ? `<button class="btn-sm" id="trackMore" style="width:100%;margin-top:8px">もっと見る（全 ${rows.length} 件）</button>` : ''}
+    ${bt && bt.all && bt.all.n ? `
+    <h2>ルールの検証<small>過去2年（${bt.period[0] || ''}〜）・全 ${S.data.stocks.length} 銘柄</small></h2>
+    ${statGrid(bt.all)}
+    <div class="card" style="margin-top:10px;font-size:13px">
+      <table class="bt num"><tr><th>型</th><th>回数</th><th>勝率</th><th>平均</th><th>PF</th></tr>
+      ${Object.entries(bt.by_setup).map(([k, st]) => `<tr><td>${SETUP_NAME[k]}</td><td>${st.n}</td><td>${pctf(st.win_rate)}</td><td class="${cls(st.avg_ret)}">${sgn(st.avg_ret, 2)}</td><td>${st.pf ?? '—'}</td></tr>`).join('')}
+      ${(bt.by_score || []).map((st) => `<tr class="sub"><td>${st.label}</td><td>${st.n}</td><td>${pctf(st.win_rate)}</td><td class="${cls(st.avg_ret)}">${sgn(st.avg_ret, 2)}</td><td>${st.pf ?? '—'}</td></tr>`).join('')}
+      </table>
+      <p class="muted" style="margin:8px 0 0">比べるもの：いつ買っても ${bt.hold_days} 日持った場合の平均は <b class="${cls(bt.baseline_avg_ret)}">${sgn(bt.baseline_avg_ret, 2)}</b>。これを上回っていればルールに意味がある目安です。PF（プロフィットファクター）は「勝ちの合計 ÷ 負けの合計」で、1 を超えるとプラス。</p>
+    </div>` : ''}
+    <p class="note">検証はニュースを使わずテクニカルの点数だけで行い、手数料・税金は含みません。同じ日に損切りと利確の両方に届いたときは損切りとして数えています（厳しめ）。過去の成績は将来を約束しません。</p>`;
+}
+
+// ---- 保有銘柄 -----------------------------------------------------------------
+function savePositions() { store.set('positions', S.positions); }
+
+function posStatus(p) {
+  const s = S.byCode && S.byCode[p.code];
+  const now = s ? s.close : p.price;
+  const retPct = (now / p.price - 1) * 100;
+  const pl = (now - p.price) * p.shares;
+  const days = Math.floor((Date.now() - new Date(p.date)) / 864e5);
+  const alerts = [];
+  if (s) {
+    if (now <= p.stop) alerts.push({ level: 'bad', text: `終値 ${yen(now)} 円が損切りライン ${yen(p.stop)} 円を下回りました` });
+    else if (now >= p.target) alerts.push({ level: 'good', text: `終値 ${yen(now)} 円が利確目安 ${yen(p.target)} 円に届きました` });
+    else if (p.stop < p.price && now - p.price >= p.price - p.stop) alerts.push({ level: 'info', text: `損切り幅と同じだけ上がりました。損切りを買値 ${yen(p.price)} 円に上げると負けがなくなります` });
+    (s.exit_warn || []).forEach((w) => alerts.push({ level: 'warn', text: w }));
+  }
+  if (days > 21) alerts.push({ level: 'warn', text: `買ってから ${days} 日。スイングの目安（3週間）を過ぎています` });
+  const span = p.target - p.stop;
+  const prog = span > 0 ? Math.max(0, Math.min(100, ((now - p.stop) / span) * 100)) : 50;
+  return { now, retPct, pl, days, alerts, prog, entryProg: span > 0 ? ((p.price - p.stop) / span) * 100 : 50 };
+}
+
+function posCard(p) {
+  const st = posStatus(p);
+  return `<div class="card pos-card">
+    <div class="l1"><button class="nm linklike" data-code="${p.code}">${esc(p.name)}<small>${p.code}</small></button>
+      <span class="num ${cls(st.pl)}"><b>${st.pl >= 0 ? '+' : '−'}${yen(Math.abs(Math.round(st.pl)))}円</b>（${sgn(st.retPct, 1)}）</span></div>
+    <div class="muted num" style="font-size:12px">${p.date} に ${yen(p.price)} 円 × ${p.shares.toLocaleString()} 株・今 ${yen(st.now)} 円</div>
+    <div class="range"><i class="track"></i><i class="ent" style="left:${st.entryProg}%"></i><i class="now" style="left:${st.prog}%"></i></div>
+    <div class="range-l num"><span class="down">損切り ${yen(p.stop)}</span><span class="up">利確 ${yen(p.target)}</span></div>
+    ${st.alerts.map((a) => `<div class="why ${a.level}">${esc(a.text)}</div>`).join('')}
+    <div class="pos-acts">
+      <label>損切り<input type="number" inputmode="decimal" data-pos-stop="${p.id}" value="${p.stop}"></label>
+      <label>利確<input type="number" inputmode="decimal" data-pos-target="${p.id}" value="${p.target}"></label>
+      <button class="btn-sm" data-pos-del="${p.id}">売った・削除</button>
+    </div>
+  </div>`;
+}
+
 function renderWatch() {
   const list = [...S.watch].map((c) => S.byCode[c]).filter(Boolean).sort((a, b) => b.score - a.score);
+  const tot = S.positions.reduce((a, p) => a + posStatus(p).pl, 0);
   $('#v-watch').innerHTML = `
+    <h2>保有銘柄${S.positions.length ? `<small class="num ${cls(tot)}">合計 ${tot >= 0 ? '+' : '−'}${yen(Math.abs(Math.round(tot)))}円</small>` : ''}</h2>
+    ${S.positions.length ? `<div class="picks">${S.positions.map(posCard).join('')}</div>` : '<div class="card empty">銘柄の画面の「買った」から登録すると、損切り・利確・売りのサインをお知らせします。</div>'}
     <h2>ウォッチ銘柄</h2>
     ${list.length ? `<div class="list">${list.map(stockRow).join('')}</div>` : '<div class="card empty">銘柄の画面の ☆ を押すと、ここに並びます。</div>'}
     <h2>設定</h2>
@@ -226,7 +350,7 @@ function renderWatch() {
     </div>
     <h2>点数のつけ方</h2>
     <div class="card" style="font-size:13px">
-      <p style="margin-top:0">50点を基準に、次の条件で足し引きします（0〜100点）。60点以上で型に当てはまる銘柄を「注目銘柄」に出します。</p>
+      <p style="margin-top:0">50点を基準に、次の条件で足し引きします（0〜100点）。型（押し目・高値ブレイク・売られすぎ反発）に当てはまり、点数が基準以上の銘柄を「注目銘柄」に出します。基準は地合いで変わります（追い風 60点・10銘柄／中立 63点・8銘柄／向かい風 68点・5銘柄）。</p>
       <ul style="padding-left:18px;margin:0">
         <li><b>押し目</b>：25日線・75日線が上向きの上昇トレンド中に、25日線付近まで下げた（RSI 35〜58）</li>
         <li><b>高値ブレイク</b>：20日高値を出来高 1.3 倍以上で上抜けた</li>
@@ -236,7 +360,7 @@ function renderWatch() {
         <li>損切りは値動きの大きさ（ATR）から、利確は損切り幅の 2 倍を目安にしています</li>
       </ul>
     </div>
-    <p class="note">データは平日の朝（7時ごろ）と大引け後（16時半ごろ）に更新されます。株価は Yahoo! Finance、ニュースは NHK・Yahoo!ニュース・Google ニュースの RSS から取得しています。売買をすすめるものではありません。</p>`;
+    <p class="note">データは平日の朝（7時ごろ）と大引け後（16時半ごろ）に更新されます。株価は Yahoo! Finance、ニュースは NHK・Yahoo!ニュース・Google ニュースの RSS と適時開示（TDnet）から取得しています。保有・ウォッチ・設定はこの端末の中だけに保存されます。売買をすすめるものではありません。</p>`;
 }
 
 // ---- 銘柄の詳細 ---------------------------------------------------------------
@@ -289,11 +413,29 @@ async function openStock(code, keepScroll) {
       <div class="tg">利確目安<b>${yen(s.target)}</b><span>${pctTo(s.target)}</span></div>
       <div class="st">損切り<b>${yen(s.stop)}</b><span>${pctTo(s.stop)}</span></div>
     </div>
+    <div class="card orderhint">
+      <div>翌日 <b class="num">${yen(s.chase)}</b> 円より<b>高く寄ったら見送り</b>（損切りまでが遠くなり割に合わない）</div>
+      ${s.limit ? `<div>押し目を待つなら <b class="num">${yen(s.limit)}</b> 円に指値</div>` : ''}
+    </div>
+    ${s.bt && s.bt.all && s.bt.all.n ? `<h2>この銘柄での過去の成績<small>過去2年・同じルール</small></h2>
+    <div class="card" style="font-size:14px">${btLine(s.bt.all, 'すべての型：')}${s.bt.same && s.bt.same.n ? `<br>${btLine(s.bt.same, esc(s.setup_label) + '：')}` : ''}</div>` : ''}
+    ${s.exit_warn && s.exit_warn.length ? `<h2>持っている人へ（売りのサイン）</h2><ul class="pts bad">${s.exit_warn.map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
     <h2>買える株数</h2>
     <div class="card calc">
       <label class="field">資金（円）<input id="cCap" type="number" inputmode="numeric" value="${S.capital}"></label>
       <label class="field">許せる損失（%）<input id="cRisk" type="number" inputmode="decimal" step="0.1" value="${S.riskPct}"></label>
       <div class="res num" id="cRes">${calcHtml(s)}</div>
+      <button class="btn-main" id="btnBought">買った（保有に追加）</button>
+    </div>
+    <div class="card buyform" id="buyForm" hidden>
+      <div class="calc">
+        <label class="field">買値（円）<input id="bPrice" type="number" inputmode="decimal" value="${s.entry}"></label>
+        <label class="field">株数<input id="bShares" type="number" inputmode="numeric" step="100" value="${(sharesFor(s) || {}).n || 100}"></label>
+        <label class="field">損切り（円）<input id="bStop" type="number" inputmode="decimal" value="${s.stop}"></label>
+        <label class="field">利確（円）<input id="bTarget" type="number" inputmode="decimal" value="${s.target}"></label>
+        <label class="field">買った日<input id="bDate" type="date" value="${localDate()}"></label>
+        <button class="btn-main" id="btnSavePos" style="align-self:end">保有に追加</button>
+      </div>
     </div>
     ${s.reasons.length || s.theme_notes.some((t) => t.includes('追い風')) ? `<h2>注目する理由</h2><ul class="pts good">${[...s.reasons, ...s.theme_notes.filter((t) => t.includes('追い風'))].map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
     ${s.cautions.length || s.theme_notes.some((t) => t.includes('向かい風')) ? `<h2>注意すること</h2><ul class="pts bad">${[...s.cautions, ...s.theme_notes.filter((t) => t.includes('向かい風'))].map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
@@ -416,6 +558,35 @@ function applyColor() { document.documentElement.classList.toggle('green-up', S.
 document.addEventListener('click', (e) => {
   const tab = e.target.closest('#tabs button');
   if (tab) return setTab(tab.dataset.tab);
+  const go = e.target.closest('[data-tab-go]');
+  if (go) return setTab(go.dataset.tabGo);
+  const tf = e.target.closest('[data-tf]');
+  if (tf) { S.trackFilter = tf.dataset.tf; S.trackAll = false; return renderTrack(); }
+  if (e.target.closest('#trackMore')) { S.trackAll = true; return renderTrack(); }
+  if (e.target.closest('#btnBought')) {
+    const f = $('#buyForm'); f.hidden = !f.hidden;
+    if (!f.hidden) f.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+  if (e.target.closest('#btnSavePos')) {
+    const s = S.byCode[S.open];
+    const p = { id: Date.now().toString(36), code: s.code, name: s.name, price: +$('#bPrice').value, shares: +$('#bShares').value,
+      stop: +$('#bStop').value, target: +$('#bTarget').value, date: $('#bDate').value || localDate() };
+    if (!(p.price > 0 && p.shares > 0)) return toast('買値と株数を入れてください');
+    S.positions.push(p); savePositions();
+    $('#buyForm').hidden = true;
+    toast('保有に追加しました（「保有」タブ）');
+    renderWatch(); renderHome();
+    return;
+  }
+  const del = e.target.closest('[data-pos-del]');
+  if (del) {
+    const p = S.positions.find((x) => x.id === del.dataset.posDel);
+    if (p && confirm(`${p.name} を保有から外しますか？`)) {
+      S.positions = S.positions.filter((x) => x !== p); savePositions(); renderWatch(); renderHome();
+    }
+    return;
+  }
   const code = e.target.closest('[data-code]');
   if (code) { e.preventDefault(); return openStock(code.dataset.code); }
   const st = e.target.closest('[data-setup]');
@@ -438,6 +609,12 @@ document.addEventListener('input', (e) => {
 });
 
 document.addEventListener('change', (e) => {
+  const ps = e.target.dataset.posStop, pt = e.target.dataset.posTarget;
+  if (ps || pt) {
+    const p = S.positions.find((x) => x.id === (ps || pt));
+    if (p && +e.target.value > 0) { p[ps ? 'stop' : 'target'] = +e.target.value; savePositions(); renderWatch(); renderHome(); }
+    return;
+  }
   if (e.target.id === 'sector') { S.sector = e.target.value; renderStocks(); }
   if (e.target.id === 'sort') { S.sort = e.target.value; store.set('sort', S.sort); renderStocks(); }
 });

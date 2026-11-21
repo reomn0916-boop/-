@@ -22,6 +22,7 @@ import re
 import sys
 import time
 import urllib.parse
+import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
@@ -33,6 +34,8 @@ UA = "Mozilla/5.0 (compatible; swing-board/1.0)"
 CHART_DAYS = 120          # アプリのチャートに載せる日数
 PER_STOCK_NEWS = 25       # 個別にニュースを検索する銘柄の数（点数の上位から）
 NEWS_KEEP_DAYS = 4        # これより古いニュースは捨てる
+HOLD_DAYS = 15            # 検証で最長何営業日持つか
+TRACK_DAYS = 60           # 注目銘柄の成績を何日分追うか
 
 INDICES = [
     {"sym": "^N225", "name": "日経平均", "kind": "jp"},
@@ -44,6 +47,9 @@ INDICES = [
     {"sym": "^VIX", "name": "VIX", "kind": "vol"},
     {"sym": "^TNX", "name": "米10年金利", "kind": "rate"},
 ]
+
+# 適時開示（決算短信・業績修正・自社株買いなど）。やのしん TDnet WEB-API の RSS
+TDNET_FEED = ("適時開示", "https://webapi.yanoshin.jp/webapi/tdnet/list/recent.rss?limit=300")
 
 MARKET_FEEDS = [
     ("NHK 経済", "https://www3.nhk.or.jp/rss/news/cat5.xml"),
@@ -69,8 +75,8 @@ NEG_WORDS = {
 # 材料の種類（見出しにつける札）
 TAGS = {
     "決算": ["決算", "業績", "営業利益", "純利益", "増益", "減益", "最高益"],
-    "業績修正": ["上方修正", "下方修正", "上振れ", "下振れ"],
-    "株主還元": ["自社株買い", "自己株式取得", "増配", "減配", "復配", "株主還元", "株式分割"],
+    "業績修正": ["上方修正", "下方修正", "上振れ", "下振れ", "業績予想の修正", "業績予想修正"],
+    "株主還元": ["自社株買い", "自己株式取得", "増配", "減配", "復配", "株主還元", "株式分割", "配当予想の修正"],
     "M&A": ["TOB", "買収", "経営統合", "合併", "MBO"],
     "格付け": ["格上げ", "格下げ", "目標株価", "レーティング"],
     "受注・提携": ["受注", "提携", "契約", "協業"],
@@ -96,19 +102,33 @@ SETUP_LABEL = {"pullback": "押し目", "breakout": "高値ブレイク", "rebou
 
 
 # ---- 取得 -----------------------------------------------------------------
-def http_get(url: str, timeout: int = 20) -> bytes:
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read()
+def http_get(url: str, timeout: int = 20, tries: int = 3) -> bytes:
+    """混雑（429）やサーバーの一時的な失敗は、少し待ってやり直す。"""
+    for k in range(tries):
+        req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.read()
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 500, 502, 503, 504) and k < tries - 1:
+                time.sleep(2 * (k + 1) ** 2)
+                continue
+            raise
+        except (urllib.error.URLError, TimeoutError):
+            if k < tries - 1:
+                time.sleep(2 * (k + 1))
+                continue
+            raise
+    raise RuntimeError("unreachable")
 
 
 def fetch_daily(sym: str) -> dict | None:
-    """Yahoo Finance の日足（約1年）。取れなければ None。"""
+    """Yahoo Finance の日足（約2年：検証にも使う）。取れなければ None。"""
     q = urllib.parse.quote(sym)
     for host in ("query1", "query2"):
-        url = f"https://{host}.finance.yahoo.com/v8/finance/chart/{q}?range=1y&interval=1d&includePrePost=false"
+        url = f"https://{host}.finance.yahoo.com/v8/finance/chart/{q}?range=2y&interval=1d&includePrePost=false"
         try:
-            data = json.loads(http_get(url))
+            data = json.loads(http_get(url, tries=2 if host == "query1" else 3))
             res = data["chart"]["result"][0]
             off = res.get("meta", {}).get("gmtoffset", 0)
             qt = res["indicators"]["quote"][0]
@@ -137,18 +157,27 @@ def fetch_rss(url: str, source: str) -> list[dict]:
     for it in root.iter("item"):
         title = (it.findtext("title") or "").strip()
         link = (it.findtext("link") or "").strip()
-        pub = it.findtext("pubDate") or ""
+        pub = it.findtext("pubDate") or it.findtext("{http://purl.org/dc/elements/1.1/}date") or ""
         src = source
         s_el = it.find("source")
         if s_el is not None and (s_el.text or "").strip():
             src = s_el.text.strip()
             title = re.sub(r"\s+-\s+" + re.escape(src) + r"\s*$", "", title)
+        dt = None
         try:
             dt = email.utils.parsedate_to_datetime(pub).astimezone(JST)
         except Exception:  # noqa: BLE001
-            dt = datetime.now(JST)
+            try:
+                dt = datetime.fromisoformat(pub.strip().replace("Z", "+00:00")).astimezone(JST)
+            except Exception:  # noqa: BLE001
+                dt = datetime.now(JST)
         if title:
-            items.append({"title": title, "link": link, "source": src, "dt": dt})
+            item = {"title": title, "link": link, "source": src, "dt": dt}
+            if source == "適時開示":
+                # 見出しやリンクに入っている証券コード（4桁。2024年からの英字入りも）
+                item["codes"] = sorted(set(re.findall(r"(?<![0-9A-Za-z])(\d{3}[0-9A-Z])(?![0-9A-Za-z])", title + " " + link)))
+                item["official"] = True
+            items.append(item)
     return items
 
 
@@ -223,38 +252,47 @@ def tick_round(p: float) -> float:
 
 
 # ---- 銘柄の分析 -------------------------------------------------------------
-def analyze(stock: dict, px: dict, bench_ret20: float | None) -> dict:
+def indicators(px: dict) -> dict:
+    """日足から指標の配列をまとめて計算する（どの日でも判定できるように）。"""
     c, h, l, v = px["c"], px["h"], px["l"], px["v"]
-    n = len(c)
-    ma5, ma25, ma75 = sma(c, 5), sma(c, 25), sma(c, 75)
-    r = rsi(c)
-    a = atr(h, l, c)
     m_fast, m_slow = ema(c, 12), ema(c, 26)
     macd = [f - s for f, s in zip(m_fast, m_slow)]
     sig = ema(macd, 9)
-    hist = [m - s for m, s in zip(macd, sig)]
-    vma20 = sma(v, 20)
+    return {
+        **px,
+        "n": len(c),
+        "ma25": sma(c, 25), "ma75": sma(c, 75),
+        "rsi": rsi(c), "atr": atr(h, l, c),
+        "hist": [m - s for m, s in zip(macd, sig)],
+        "vma20": sma(v, 20),
+        "tv": [ci * vi for ci, vi in zip(c, v)],
+    }
 
-    last = c[-1]
-    prev = c[-2]
-    i = n - 1
-    m25, m75 = ma25[i], ma75[i] if n >= 75 else None
-    m25_prev5 = ma25[i - 5] if i >= 29 else None
-    rsi_now = r[i] or 50
-    atr_now = a[i] or (last * 0.02)
-    vol_ratio = (v[i] / vma20[i]) if vma20[i] else 1.0
-    hi20_prev = max(h[-21:-1]) if n > 21 else max(h)
-    lo20 = min(l[-20:])
-    hi52 = max(h[-250:])
+
+def evaluate(ind: dict, i: int, bench_ret20: float | None) -> dict:
+    """i 日目の終値の時点で、型・点数・売買の目安を判定する。"""
+    c, h, l, v = ind["c"], ind["h"], ind["l"], ind["v"]
+    ma25, ma75, hist = ind["ma25"], ind["ma75"], ind["hist"]
+    last, prev = c[i], c[i - 1]
+    m25, m75 = ma25[i], ma75[i]
+    m25_prev5 = ma25[i - 5] if i >= 5 else None
+    rsi_now = ind["rsi"][i] or 50
+    atr_now = ind["atr"][i] or (last * 0.02)
+    vol_ratio = (v[i] / ind["vma20"][i]) if ind["vma20"][i] else 1.0
+    hi20_prev = max(h[max(0, i - 20):i]) if i > 0 else h[i]
+    lo20 = min(l[max(0, i - 19):i + 1])
+    hi52 = max(h[max(0, i - 249):i + 1])
     dev25 = pct(last, m25) if m25 else 0.0
-    ret5 = pct(last, c[-6]) if n > 6 else 0.0
-    ret20 = pct(last, c[-21]) if n > 21 else 0.0
-    turnover = sum(c[k] * v[k] for k in range(max(0, n - 20), n)) / min(20, n) / 1e8  # 億円/日
-    macd_gc = any(hist[k] > 0 and hist[k - 1] <= 0 for k in range(max(1, n - 3), n))
-    macd_dc = any(hist[k] < 0 and hist[k - 1] >= 0 for k in range(max(1, n - 3), n))
-
+    ret5 = pct(last, c[i - 5]) if i >= 5 else 0.0
+    ret20 = pct(last, c[i - 20]) if i >= 20 else 0.0
+    k0 = max(0, i - 19)
+    turnover = sum(ind["tv"][k0:i + 1]) / (i + 1 - k0) / 1e8  # 億円/日
+    macd_gc = any(hist[k] > 0 and hist[k - 1] <= 0 for k in range(max(1, i - 2), i + 1))
+    macd_dc = any(hist[k] < 0 and hist[k - 1] >= 0 for k in range(max(1, i - 2), i + 1))
     up_trend = bool(m25 and m75 and last > m75 and m25 > m75 and m25_prev5 and m25 > m25_prev5)
     down_trend = bool(m25 and m75 and last < m75 and m25 < m75)
+    body_top = max(ind["o"][i], last)
+    lower_wick = (min(ind["o"][i], last) - l[i]) / atr_now if atr_now else 0
 
     reasons, cautions = [], []
     score = 50.0
@@ -268,6 +306,9 @@ def analyze(stock: dict, px: dict, bench_ret20: float | None) -> dict:
         if last > prev:
             score += 4
             reasons.append("前日比プラスで、押し目から切り返しの動き")
+        if lower_wick > 0.5:
+            score += 2
+            reasons.append("下ヒゲが出て、下値で買いが入っている")
     elif last > hi20_prev and vol_ratio >= 1.3 and rsi_now < 80:
         setup = "breakout"
         score += 16 + min(6, (vol_ratio - 1.3) * 4)
@@ -275,6 +316,9 @@ def analyze(stock: dict, px: dict, bench_ret20: float | None) -> dict:
         if last >= hi52 * 0.98:
             score += 4
             reasons.append("52週高値圏。上値のしこりが少ない")
+        if (h[i] - body_top) / atr_now > 0.6:
+            score -= 4
+            cautions.append("上ヒゲが長く、上値で売りが出ている")
     elif rsi_now < 32 and dev25 < -7 and last > prev:
         setup = "rebound"
         score += 10
@@ -297,6 +341,7 @@ def analyze(stock: dict, px: dict, bench_ret20: float | None) -> dict:
     if macd_dc:
         score -= 6
         cautions.append("MACD がシグナルを下抜け（直近3日）")
+    rs = None
     if bench_ret20 is not None:
         rs = ret20 - bench_ret20
         score += max(-6, min(6, rs * 0.6))
@@ -328,45 +373,144 @@ def analyze(stock: dict, px: dict, bench_ret20: float | None) -> dict:
     target = entry + 2.0 * risk
     if setup == "pullback" and hi20_prev > entry + risk:
         target = max(target, hi20_prev)
-    if setup == "rebound" and m25:
-        target = min(target, m25) if m25 > entry + risk else target
+    if setup == "rebound" and m25 and m25 > entry + risk:
+        target = min(target, m25)
+    # 翌日これより高く寄ったら追いかけない（損切りまでの幅が広がり、リスク:リワードが崩れる）
+    chase = entry + 0.5 * atr_now
+    # 押し目は少し下で指値を置く案も出す
+    limit = max(stop + 0.5 * risk, min(entry, (m25 or entry) + 0.2 * atr_now)) if setup == "pullback" else None
 
-    k0 = max(0, n - CHART_DAYS)
+    return {
+        "setup": setup, "score": score, "reasons": reasons, "cautions": cautions,
+        "close": last, "prev": prev, "entry": entry, "stop": stop, "target": target, "risk": risk,
+        "chase": chase, "limit": limit, "rsi": rsi_now, "atr": atr_now, "vol_ratio": vol_ratio,
+        "dev25": dev25, "ret5": ret5, "ret20": ret20, "rs": rs, "turnover": turnover, "hi52": hi52,
+        "above25": bool(m25 and last > m25), "up_trend": up_trend, "down_trend": down_trend,
+        "macd_dc": macd_dc,
+    }
+
+
+def simulate_trade(ind: dict, i: int, stop: float, target: float, hold: int = HOLD_DAYS) -> dict | None:
+    """i 日目のシグナルで、翌日の寄り付きに買ったとしたらどうなったか。
+    損切り・利確に同じ日に両方届いたときは損切りが先とみなす（厳しめ）。"""
+    o, h, l, c = ind["o"], ind["h"], ind["l"], ind["c"]
+    if i + 1 >= ind["n"]:
+        return None
+    entry = o[i + 1]
+    if entry <= stop or entry >= target:
+        return None  # 寄り付きで計画が崩れたら見送り
+    last_j = min(i + hold, ind["n"] - 1)
+    for j in range(i + 1, last_j + 1):
+        if l[j] <= stop:
+            px = min(o[j], stop) if j > i + 1 else stop
+            return {"ret": pct(px, entry), "days": j - i, "result": "loss", "exit_i": j}
+        if h[j] >= target:
+            px = max(o[j], target) if j > i + 1 else target
+            return {"ret": pct(px, entry), "days": j - i, "result": "win", "exit_i": j}
+    done = last_j == i + hold
+    return {"ret": pct(c[last_j], entry), "days": last_j - i, "result": "timeout" if done else "open", "exit_i": last_j}
+
+
+def backtest(ind: dict, bench_by_date: dict, min_score: float) -> list[dict]:
+    """過去のシグナルをすべて試す（同じ銘柄で取引中は次のシグナルを取らない）。"""
+    trades, busy_until = [], -1
+    start = 80
+    for i in range(start, ind["n"] - 1):
+        if i <= busy_until:
+            continue
+        ev = evaluate(ind, i, bench_by_date.get(ind["d"][i]))
+        if ev["setup"] in ("none", "trend") or ev["score"] < min_score:
+            continue
+        t = simulate_trade(ind, i, ev["stop"], ev["target"])
+        if not t or t["result"] == "open":
+            continue
+        t.update({"setup": ev["setup"], "date": ind["d"][i], "score": ev["score"]})
+        trades.append(t)
+        busy_until = t["exit_i"]
+    return trades
+
+
+def trade_stats(trades: list[dict]) -> dict:
+    n = len(trades)
+    if not n:
+        return {"n": 0}
+    wins = [t["ret"] for t in trades if t["ret"] > 0]
+    losses = [t["ret"] for t in trades if t["ret"] <= 0]
+    gross_loss = -sum(losses)
+    return {
+        "n": n,
+        "win_rate": round(len(wins) / n * 100, 1),
+        "avg_ret": round(sum(t["ret"] for t in trades) / n, 2),
+        "avg_win": round(sum(wins) / len(wins), 2) if wins else 0,
+        "avg_loss": round(sum(losses) / len(losses), 2) if losses else 0,
+        "pf": round(sum(wins) / gross_loss, 2) if gross_loss > 0 else None,
+        "avg_days": round(sum(t["days"] for t in trades) / n, 1),
+        "hit_target": round(sum(t["result"] == "win" for t in trades) / n * 100, 1),
+        "hit_stop": round(sum(t["result"] == "loss" for t in trades) / n * 100, 1),
+    }
+
+
+def stock_record(stock: dict, ind: dict, ev: dict) -> dict:
+    i = ind["n"] - 1
+    k0 = max(0, ind["n"] - CHART_DAYS)
     return {
         "code": stock["code"],
         "name": stock["name"],
+        "aliases": stock.get("aliases", []),
         "sector": stock.get("sector", ""),
-        "setup": setup,
-        "setup_label": SETUP_LABEL[setup],
-        "tech_score": round(score, 1),
-        "close": round(last, 1),
-        "chg_pct": round(pct(last, prev), 2),
-        "ret5": round(ret5, 2),
-        "ret20": round(ret20, 2),
-        "rsi": round(rsi_now, 1),
-        "dev25": round(dev25, 2),
-        "vol_ratio": round(vol_ratio, 2),
-        "atr_pct": round(atr_now / last * 100, 2),
-        "turnover_oku": round(turnover, 1),
-        "hi52_gap": round(pct(last, hi52), 2),
-        "entry": tick_round(entry),
-        "stop": tick_round(stop),
-        "target": tick_round(target),
-        "rr": round((target - entry) / risk, 2),
-        "reasons": reasons,
-        "cautions": cautions,
-        "date": px["d"][-1],
+        "setup": ev["setup"],
+        "setup_label": SETUP_LABEL[ev["setup"]],
+        "tech_score": round(ev["score"], 1),
+        "close": round(ev["close"], 1),
+        "chg_pct": round(pct(ev["close"], ev["prev"]), 2),
+        "ret5": round(ev["ret5"], 2),
+        "ret20": round(ev["ret20"], 2),
+        "rs20": None if ev["rs"] is None else round(ev["rs"], 2),
+        "rsi": round(ev["rsi"], 1),
+        "dev25": round(ev["dev25"], 2),
+        "above25": ev["above25"],
+        "vol_ratio": round(ev["vol_ratio"], 2),
+        "atr_pct": round(ev["atr"] / ev["close"] * 100, 2),
+        "turnover_oku": round(ev["turnover"], 1),
+        "hi52_gap": round(pct(ev["close"], ev["hi52"]), 2),
+        "entry": tick_round(ev["entry"]),
+        "stop": tick_round(ev["stop"]),
+        "target": tick_round(ev["target"]),
+        "chase": tick_round(ev["chase"]),
+        "limit": tick_round(ev["limit"]) if ev["limit"] else None,
+        "rr": round((ev["target"] - ev["entry"]) / ev["risk"], 2),
+        "exit_warn": exit_warnings(ind, i, ev),
+        "reasons": ev["reasons"],
+        "cautions": ev["cautions"],
+        "date": ind["d"][i],
         "chart": {
-            "d": [d[2:].replace("-", "") for d in px["d"][k0:]],  # YYMMDD
-            "o": [px_round(x) for x in px["o"][k0:]],
-            "h": [px_round(x) for x in h[k0:]],
-            "l": [px_round(x) for x in l[k0:]],
-            "c": [px_round(x) for x in c[k0:]],
-            "v": [round(x / 1000) for x in v[k0:]],  # 千株
-            "ma25": [px_round(x) for x in ma25[k0:]],
-            "ma75": [px_round(x) for x in ma75[k0:]],
+            "d": [d[2:].replace("-", "") for d in ind["d"][k0:]],  # YYMMDD
+            "o": [px_round(x) for x in ind["o"][k0:]],
+            "h": [px_round(x) for x in ind["h"][k0:]],
+            "l": [px_round(x) for x in ind["l"][k0:]],
+            "c": [px_round(x) for x in ind["c"][k0:]],
+            "v": [round(x / 1000) for x in ind["v"][k0:]],  # 千株
+            "ma25": [px_round(x) for x in ind["ma25"][k0:]],
+            "ma75": [px_round(x) for x in ind["ma75"][k0:]],
         },
     }
+
+
+def exit_warnings(ind: dict, i: int, ev: dict) -> list[str]:
+    """保有している人向けの「売りどき」のサイン。"""
+    w = []
+    c, ma25 = ind["c"], ind["ma25"]
+    if ma25[i] and ma25[i - 1] and c[i] < ma25[i] and c[i - 1] >= ma25[i - 1]:
+        w.append("終値で25日線を割り込んだ")
+    if ev["macd_dc"]:
+        w.append("MACD がシグナルを下抜けた")
+    if ev["rsi"] > 78:
+        w.append(f"RSI {ev['rsi']:.0f} で過熱。一部利確を検討")
+    if ev["dev25"] > 15:
+        w.append(f"25日線から {ev['dev25']:+.1f}% 離れ、急騰の反動に注意")
+    if ev["vol_ratio"] > 2 and c[i] < ind["o"][i] and c[i] < c[i - 1]:
+        w.append("大商いで陰線（売り圧力）")
+    return w
 
 
 def index_summary(ix: dict, px: dict) -> dict:
@@ -384,8 +528,15 @@ def index_summary(ix: dict, px: dict) -> dict:
     }
 
 
-def market_regime(idx: dict[str, dict]) -> dict:
+def market_regime(idx: dict[str, dict], breadth: float | None = None) -> dict:
     s, notes = 0, []
+    if breadth is not None:
+        if breadth >= 65:
+            s += 1; notes.append(f"対象銘柄の {breadth:.0f}% が25日線の上（買いが広がっている）")
+        elif breadth <= 35:
+            s -= 1; notes.append(f"25日線の上にある銘柄は {breadth:.0f}% だけ（全体に弱い）")
+        else:
+            notes.append(f"25日線の上にある銘柄は {breadth:.0f}%")
     nk = idx.get("^N225")
     if nk:
         if nk["above25"] and nk["above75"]:
@@ -412,7 +563,9 @@ def market_regime(idx: dict[str, dict]) -> dict:
         label, text = "中立", "方向感が弱い。ポジションは小さめに、損切りは浅めに。"
     else:
         label, text = "向かい風", "全体が弱い。新規の買いは控えめに。反発狙いは短期で。"
-    return {"label": label, "score": s, "text": text, "notes": notes}
+    # 地合いが悪いほど、注目銘柄に出す基準を厳しくし、数を絞る
+    min_score, max_picks = (60, 10) if s >= 1 else (63, 8) if s >= -1 else (68, 5)
+    return {"label": label, "score": s, "text": text, "notes": notes, "min_score": min_score, "max_picks": max_picks}
 
 
 # ---- ニュースの分析 ---------------------------------------------------------
@@ -448,7 +601,10 @@ def analyze_news(raw: list[dict], stocks: list[dict]) -> tuple[list[dict], list[
         if key in seen:
             continue
         seen.add(key)
-        rest, codes = it["title"], []
+        rest = it["title"]
+        codes = [c for c in it.get("codes", []) if c in sector_of]
+        if it.get("official") and not codes:
+            continue  # 対象外の銘柄の適時開示は捨てる
         for a, code in alias:
             if a in rest:
                 if code not in codes:
@@ -461,6 +617,9 @@ def analyze_news(raw: list[dict], stocks: list[dict]) -> tuple[list[dict], list[
                 themes.append(th["theme"]); up.update(th["up"]); down.update(th["down"])
         sent = max(-1.0, min(1.0, sc / 4))
         weight = 1.0 + (0.5 if {"決算", "業績修正", "株主還元", "M&A"} & set(tags) else 0)
+        if it.get("official"):
+            tags = ["適時開示"] + tags
+            weight += 0.5
         out.append({
             "id": hashlib.md5((it["title"] + it["link"]).encode()).hexdigest()[:10],
             "title": it["title"], "link": it["link"], "source": it["source"],
@@ -545,6 +704,7 @@ def demo_news(stocks: list[dict]) -> list[dict]:
         ("7203", "{n}、通期の営業利益を上方修正　円安が追い風（サンプル）", 2),
         ("8035", "{n}が続伸　生成AI向け半導体の需要が好調（サンプル）", 3),
         ("8306", "{n}、自社株買いを発表　株主還元を強化（サンプル）", 5),
+        ("6758", "{n}、業績予想の修正　通期の純利益を上方修正（サンプル）", 2),
         ("4502", "{n}、主力薬の承認が延期　株価は反落（サンプル）", 6),
         ("9101", "{n}が下方修正　運賃の下落が響く（サンプル）", 8),
         (None, "日経平均が反発、半導体株に買い（サンプル）", 1),
@@ -552,11 +712,95 @@ def demo_news(stocks: list[dict]) -> list[dict]:
         (None, "米長期金利上昇で国内銀行株が上昇（サンプル）", 7),
         (None, "訪日客が過去最高を更新、インバウンド関連に注目（サンプル）", 10),
     ]
-    out = []
+    out = [{"title": f"{pick['8058']['name']} 自己株式取得に係る事項の決定に関するお知らせ（サンプル）", "link": "",
+            "source": "適時開示", "dt": now - timedelta(hours=3), "codes": ["8058"], "official": True}]
     for code, t, hrs in lines:
         title = t.format(n=pick[code]["name"]) if code else t
         out.append({"title": title, "link": "", "source": "サンプル", "dt": now - timedelta(hours=hrs)})
     return out
+
+
+PICKABLE = ("pullback", "breakout", "rebound")
+
+
+def select_picks(records: list[dict], min_score: float, max_picks: int) -> list[str]:
+    ok = [r for r in records if r["setup"] in PICKABLE and r["score"] >= min_score]
+    ok.sort(key=lambda r: -r["score"])
+    return [r["code"] for r in ok[:max_picks]]
+
+
+def sector_strength(records: list[dict]) -> list[dict]:
+    groups: dict[str, list[dict]] = {}
+    for r in records:
+        groups.setdefault(r["sector"], []).append(r)
+    out = []
+    for sec, rs in groups.items():
+        n = len(rs)
+        r5 = sum(r["ret5"] for r in rs) / n
+        r20 = sum(r["ret20"] for r in rs) / n
+        best = max(rs, key=lambda r: r["score"])
+        out.append({"sector": sec, "n": n, "ret5": round(r5, 2), "ret20": round(r20, 2),
+                    "breadth": round(sum(r["above25"] for r in rs) / n * 100),
+                    "strength": round(r20 + 0.5 * r5, 2), "best": best["code"]})
+    out.sort(key=lambda x: -x["strength"])
+    return out
+
+
+def load_history(path: Path) -> list[dict]:
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("picks", [])
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def bootstrap_history(inds: dict, stocks_by_code: dict, bench_by_date: dict, days: int = 20) -> list[dict]:
+    """記録がまだ無いとき、直近の営業日にこのアプリが選んだはずの銘柄を再現して記録の種にする。"""
+    any_ind = max(inds.values(), key=lambda x: x["n"])
+    dates = any_ind["d"][-(days + 1):-1]
+    hist = []
+    for d in dates:
+        recs = []
+        for code, ind in inds.items():
+            try:
+                i = ind["d"].index(d)
+            except ValueError:
+                continue
+            if i < 80:
+                continue
+            ev = evaluate(ind, i, bench_by_date.get(d))
+            recs.append({"code": code, "setup": ev["setup"], "score": ev["score"], "ev": ev})
+        for code in select_picks(recs, 60, 10):
+            ev = next(r["ev"] for r in recs if r["code"] == code)
+            hist.append({"date": d, "code": code, "name": stocks_by_code[code]["name"], "setup": ev["setup"],
+                         "score": round(ev["score"], 1), "entry": tick_round(ev["entry"]),
+                         "stop": tick_round(ev["stop"]), "target": tick_round(ev["target"]), "src": "sim"})
+    return hist
+
+
+def evaluate_history(hist: list[dict], inds: dict) -> tuple[list[dict], dict]:
+    """過去の注目銘柄を、翌日の寄り付きで買ったとして今どうなっているかを調べる。"""
+    rows = []
+    for h in hist:
+        ind = inds.get(h["code"])
+        if not ind or h["date"] not in ind["d"]:
+            continue
+        i = ind["d"].index(h["date"])
+        t = simulate_trade(ind, i, h["stop"], h["target"])
+        if t is None:
+            if i + 1 >= ind["n"]:
+                status, ret, days = "wait", None, 0
+            else:
+                status, ret, days = "skip", None, 0  # 寄り付きで計画が崩れて見送り
+        else:
+            status, ret, days = t["result"], round(t["ret"], 2), t["days"]
+        rows.append({**h, "status": status, "ret": ret, "days": days,
+                     "now": px_round(ind["c"][-1]), "buy": px_round(ind["o"][i + 1]) if i + 1 < ind["n"] else None})
+    rows.sort(key=lambda r: (r["date"], r["score"]), reverse=True)
+    closed = [r for r in rows if r["status"] in ("win", "loss", "timeout")]
+    stats = trade_stats([{"ret": r["ret"], "days": r["days"], "result": r["status"]} for r in closed])
+    stats["open"] = sum(r["status"] == "open" for r in rows)
+    stats["live_since"] = min((r["date"] for r in rows if r.get("src") == "live"), default=None)
+    return rows, stats
 
 
 # ---- 本体 -----------------------------------------------------------------
@@ -565,9 +809,13 @@ def main() -> int:
     ap.add_argument("--demo", action="store_true", help="ネットを使わずサンプルデータを作る")
     ap.add_argument("--out", default=str(ROOT / "data" / "latest.json"))
     args = ap.parse_args()
+    t0 = time.time()
 
     stocks = json.loads((ROOT / "scripts" / "universe.json").read_text(encoding="utf-8"))["stocks"]
+    by_code = {s["code"]: s for s in stocks}
     print(f"対象 {len(stocks)} 銘柄 / demo={args.demo}")
+    out_path = Path(args.out)
+    hist_path = out_path.with_name("history.json")
 
     # 指数
     idx_px, idx_sum = {}, {}
@@ -575,7 +823,7 @@ def main() -> int:
         if args.demo:
             base = {"^N225": 38000, "1306.T": 2800, "^GSPC": 5900, "^IXIC": 19000, "^SOX": 5200,
                     "JPY=X": 150, "^VIX": 16, "^TNX": 4.3}[ix["sym"]]
-            px = demo_prices(ix["sym"], base, drift=0.0003 if ix["kind"] != "vol" else 0.0,
+            px = demo_prices(ix["sym"], base, days=500, drift=0.0003 if ix["kind"] != "vol" else 0.0,
                              vol=0.009 if ix["kind"] != "vol" else 0.03)
         else:
             px = fetch_daily(ix["sym"])
@@ -584,41 +832,72 @@ def main() -> int:
             idx_px[ix["sym"]] = px
             idx_sum[ix["sym"]] = index_summary(ix, px)
     nk = idx_px.get("^N225")
+    bench_by_date = {}
+    if nk:
+        for k in range(20, len(nk["c"])):
+            bench_by_date[nk["d"][k]] = pct(nk["c"][k], nk["c"][k - 20])
     bench_ret20 = pct(nk["c"][-1], nk["c"][-21]) if nk and len(nk["c"]) > 21 else None
 
     # 個別株
     shapes = ["pullback", "breakout", "rebound", "hot", "", "", "", ""]
-    analyzed, failed = [], []
+    inds, records, failed = {}, [], []
     for k, s in enumerate(stocks):
         if args.demo:
             rnd = random.Random(s["code"])
-            px = demo_prices(s["code"], rnd.uniform(800, 9000), drift=rnd.uniform(-0.0006, 0.0015),
+            px = demo_prices(s["code"], rnd.uniform(800, 9000), days=500, drift=rnd.uniform(-0.0006, 0.0015),
                              vol=rnd.uniform(0.012, 0.028), shape=shapes[k % len(shapes)])
         else:
             px = fetch_daily(s["code"] + ".T")
             time.sleep(0.35)
-        if not px:
+        if not px or len(px["c"]) < 80:
             failed.append(s["code"])
             continue
         try:
-            analyzed.append(analyze(s, px, bench_ret20))
+            ind = indicators(px)
+            ev = evaluate(ind, ind["n"] - 1, bench_ret20)
+            inds[s["code"]] = ind
+            records.append(stock_record(s, ind, ev))
         except Exception as e:  # noqa: BLE001
             print(f"  ! analyze {s['code']}: {e}", file=sys.stderr)
             failed.append(s["code"])
-    print(f"株価 OK {len(analyzed)} / 失敗 {len(failed)}")
-    if not analyzed:
-        print("株価が1件も取れなかったので書き出しを中止します", file=sys.stderr)
+    print(f"株価 OK {len(records)} / 失敗 {len(failed)}")
+    if len(records) < len(stocks) * 0.5:
+        # 半分も取れないときは、前回のデータを残したまま失敗にする（アプリが空にならないように）
+        print("株価の取得に失敗した銘柄が多いので、書き出しを中止します", file=sys.stderr)
         return 1
+
+    # 検証（過去2年で、同じルールで売買していたらどうだったか）
+    all_trades, per_stock = [], {}
+    base_rets = []
+    for code, ind in inds.items():
+        tr = backtest(ind, bench_by_date, min_score=60)
+        for t in tr:
+            t["code"] = code
+        all_trades += tr
+        per_stock[code] = tr
+        for i in range(80, ind["n"] - HOLD_DAYS - 1, 5):  # 比較用：いつ買っても同じ日数持った場合
+            base_rets.append(pct(ind["c"][i + HOLD_DAYS], ind["o"][i + 1]))
+    bt = {
+        "hold_days": HOLD_DAYS,
+        "period": [min((t["date"] for t in all_trades), default=None), max((t["date"] for t in all_trades), default=None)],
+        "all": trade_stats(all_trades),
+        "by_setup": {st: trade_stats([t for t in all_trades if t["setup"] == st]) for st in PICKABLE},
+        "by_score": [{"label": lb, **trade_stats([t for t in all_trades if lo <= t["score"] < hi])}
+                     for lb, lo, hi in (("60〜69点", 60, 70), ("70〜79点", 70, 80), ("80点以上", 80, 999))],
+        "baseline_avg_ret": round(sum(base_rets) / len(base_rets), 2) if base_rets else None,
+    }
+    print(f"検証: {bt['all']}  比較（いつでも買う）平均 {bt['baseline_avg_ret']}%")
 
     # ニュース
     raw = []
     if args.demo:
         raw = demo_news(stocks)
     else:
+        raw += [it for it in fetch_rss(TDNET_FEED[1], TDNET_FEED[0]) if it.get("codes")]
         for src, url in MARKET_FEEDS:
             raw += fetch_rss(url, src)
             time.sleep(0.5)
-        top = sorted(analyzed, key=lambda a: -a["tech_score"])[:PER_STOCK_NEWS]
+        top = sorted(records, key=lambda a: -a["tech_score"])[:PER_STOCK_NEWS]
         for a in top:
             q = f"\"{a['name']}\" 株 when:3d"
             url = "https://news.google.com/rss/search?q=" + urllib.parse.quote(q) + "&hl=ja&gl=JP&ceid=JP:ja"
@@ -628,41 +907,73 @@ def main() -> int:
     print(f"ニュース {len(news)} 件 / テーマ {[h['theme'] for h in hot]}")
 
     # 総合点
-    by_code = {s["code"]: s for s in stocks}
-    for a in analyzed:
+    for a in records:
         b, ids, notes = news_boost(by_code[a["code"]], news, hot)
         a["news_score"] = b
         a["news_ids"] = ids
         a["theme_notes"] = notes
         a["score"] = round(max(0, min(100, a["tech_score"] + b)), 1)
-        if any(n["sentiment"] > 0.3 for n in news if n["id"] in ids):
+        mine = [n for n in news if n["id"] in ids]
+        if any(n["sentiment"] > 0.3 for n in mine):
             a["reasons"].append("プラスの材料ニュースあり")
-        if any(n["sentiment"] < -0.3 for n in news if n["id"] in ids):
+        if any(n["sentiment"] < -0.3 for n in mine):
             a["cautions"].append("マイナスの材料ニュースあり")
-        if any("決算" in n["tags"] for n in news if n["id"] in ids):
-            a["cautions"].append("決算関連のニュースあり。発表日の前後は値動きが荒くなりやすい")
-    analyzed.sort(key=lambda a: -a["score"])
-    picks = [a["code"] for a in analyzed if a["setup"] != "none" and a["score"] >= 60][:10]
+        if any(("決算" in n["tags"] or "業績修正" in n["tags"]) for n in mine):
+            a["cautions"].append("決算・業績の発表あり。内容と翌日の反応を確認してから入る")
+        tr = per_stock.get(a["code"], [])
+        a["bt"] = {"all": trade_stats(tr), "same": trade_stats([t for t in tr if t["setup"] == a["setup"]])}
+    records.sort(key=lambda a: -a["score"])
+
+    breadth = sum(r["above25"] for r in records) / len(records) * 100
+    regime = market_regime(idx_sum, breadth)
+    regime["breadth"] = round(breadth)
+    picks = select_picks(records, regime["min_score"], regime["max_picks"])
+
+    # 注目銘柄の記録と成績
+    # サンプルのときは記録ファイルを読み書きしない（本物の記録に混ざらないように）
+    hist = [] if args.demo else [h for h in load_history(hist_path) if h.get("src") != "demo"]
+    if not hist:
+        hist = bootstrap_history(inds, by_code, bench_by_date)
+    prev_dates = sorted({h["date"] for h in hist})
+    prev_picks = {h["code"] for h in hist if prev_dates and h["date"] == prev_dates[-1]}
+    have = {(h["date"], h["code"]) for h in hist}
+    rec_by_code = {r["code"]: r for r in records}
+    for code in picks:
+        r = rec_by_code[code]
+        if (r["date"], code) not in have:
+            hist.append({"date": r["date"], "code": code, "name": r["name"], "setup": r["setup"], "score": r["score"],
+                         "entry": r["entry"], "stop": r["stop"], "target": r["target"], "src": "demo" if args.demo else "live"})
+    for code in picks:
+        rec_by_code[code]["new_pick"] = code not in prev_picks
+    any_ind = max(inds.values(), key=lambda x: x["n"])
+    cutoff = any_ind["d"][-TRACK_DAYS] if any_ind["n"] > TRACK_DAYS else any_ind["d"][0]
+    hist = [h for h in hist if h["date"] >= cutoff]
+    track_rows, track_stats = evaluate_history(hist, inds)
 
     out = {
         "generated_at": datetime.now(JST).isoformat(timespec="minutes"),
+        "price_date": any_ind["d"][-1],
         "demo": args.demo,
-        "market": {"regime": market_regime(idx_sum), "indices": [idx_sum[i["sym"]] for i in INDICES if i["sym"] in idx_sum]},
+        "market": {"regime": regime, "indices": [idx_sum[i["sym"]] for i in INDICES if i["sym"] in idx_sum]},
+        "sectors": sector_strength(records),
         "themes": hot,
         "picks": picks,
-        "stocks": analyzed,
+        "stocks": records,
         "news": [{k: v for k, v in n.items() if k != "weight"} for n in news[:150]],
+        "backtest": bt,
+        "track": {"stats": track_stats, "rows": track_rows[:80]},
         "failed": failed,
     }
     # チャートは別ファイル（銘柄を開いたときに読む）
-    charts = {a["code"]: a.pop("chart") for a in analyzed}
-    path = Path(args.out)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(out, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    cpath = path.with_name("charts.json")
-    cpath.write_text(json.dumps(charts, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-    print(f"書き出し: {path} ({path.stat().st_size // 1024} KB) / {cpath.name} ({cpath.stat().st_size // 1024} KB)"
-          f" おすすめ {len(picks)} 銘柄")
+    charts = {a["code"]: a.pop("chart") for a in records}
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    dump = lambda o: json.dumps(o, ensure_ascii=False, separators=(",", ":"))  # noqa: E731
+    out_path.write_text(dump(out), encoding="utf-8")
+    out_path.with_name("charts.json").write_text(dump(charts), encoding="utf-8")
+    if not args.demo:
+        hist_path.write_text(json.dumps({"picks": hist}, ensure_ascii=False, indent=0), encoding="utf-8")
+    print(f"書き出し: {out_path} ({out_path.stat().st_size // 1024} KB) 注目 {len(picks)} 銘柄 / "
+          f"記録 {len(hist)} 件 / {time.time() - t0:.0f} 秒")
     return 0
 
 

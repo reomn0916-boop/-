@@ -20,6 +20,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: 計算のテスト
+        run: python3 -m unittest discover -s swing/tests
       - name: 株価とニュースを集めて点数をつける
         run: python3 swing/scripts/update.py
       - name: 結果を保存する
