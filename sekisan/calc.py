@@ -789,3 +789,38 @@ def set_project_fields(conn: sqlite3.Connection, project_id: int, **fields: str)
             conn.execute(f"UPDATE project SET {k}=? WHERE id=?", (v, project_id))
         audit.log(conn, project_id, "工事の設定", "、".join(f"{k}={v}" for k, v in fields.items()))
         audit.touch(conn, project_id)
+
+
+# ====================================================================== 工事の削除
+def delete_summary(conn: sqlite3.Connection, project_id: int) -> dict:
+    """消すと何がなくなるか（確認の画面に出す）"""
+    p = conn.execute("SELECT * FROM project WHERE id=?", (project_id,)).fetchone()
+    if not p:
+        raise ValueError(f"工事が見つかりません: {project_id}")
+    one = (lambda sql: conn.execute(sql, (project_id,)).fetchone()[0])
+    return {"name": p["name"], "status": p["status"] or "作成中",
+            "items": one("SELECT COUNT(*) FROM project_item WHERE project_id=?"),
+            "tables": one("SELECT COUNT(*) FROM bukake WHERE project_id=?") + one("SELECT COUNT(*) FROM package WHERE project_id=?"),
+            "changes": one("SELECT COUNT(*) FROM project WHERE parent_id=?"),
+            "awards": one("SELECT COUNT(*) FROM award WHERE project_id=?")}
+
+
+def delete_project(conn: sqlite3.Connection, project_id: int) -> dict:
+    """工事を消す。明細・単価表・日程・質疑・出来高・処分場の選択などは一緒に消える。
+    覚えた答え（数量・単価・当てはめ）と落札実績・設計変更の工事は残す（つながりだけ外す）。
+    提出済み（ロック中）の工事は、管理者がロックを解除してからでないと消せない。"""
+    audit.require_editable(conn, project_id)
+    info = delete_summary(conn, project_id)
+    with conn:
+        conn.execute("DELETE FROM bukake_component WHERE bukake_code IN (SELECT code FROM bukake WHERE project_id=?)",
+                     (project_id,))
+        conn.execute("DELETE FROM bukake WHERE project_id=?", (project_id,))
+        conn.execute("DELETE FROM package_component WHERE package_code IN (SELECT code FROM package WHERE project_id=?)",
+                     (project_id,))
+        conn.execute("DELETE FROM package WHERE project_id=?", (project_id,))
+        conn.execute("UPDATE project SET parent_id=NULL WHERE parent_id=?", (project_id,))
+        conn.execute("UPDATE award SET project_id=NULL WHERE project_id=?", (project_id,))
+        conn.execute("DELETE FROM project WHERE id=?", (project_id,))   # 明細・日程・質疑・出来高などは一緒に消える
+        audit.log(conn, None, "工事を削除",
+                  f"{info['name']}（番号{project_id}・明細{info['items']}行・単価表{info['tables']}・{info['status']}）")
+    return info

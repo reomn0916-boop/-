@@ -144,7 +144,15 @@ class PagesMixin:
         b = QPushButton("保存")
         b.setObjectName("Primary")
         b.clicked.connect(self._save_project_info)
-        info.lay.addWidget(b, 0, Qt.AlignRight)
+        delb = QPushButton("この工事を削除…")
+        delb.setObjectName("Danger")
+        delb.setToolTip("削除する前に自動でバックアップを取ります（「設定」→「バックアップ」から戻せます）")
+        delb.clicked.connect(self._delete_project)
+        bh = QHBoxLayout()
+        bh.addWidget(delb)
+        bh.addStretch(1)
+        bh.addWidget(b)
+        info.lay.addLayout(bh)
         row.addWidget(info, 3)
 
         cond = Card("補正・割増（工事全体）", "チェックした条件が、歩掛の労務・機械・材料や諸経費率に掛かります。"
@@ -256,6 +264,44 @@ class PagesMixin:
         self.ps_check.setEnabled(st == "作成中")
         self.ps_submit.setEnabled(st == "確認済")
         self.ps_unlock.setEnabled(st == "提出済")
+
+    def _delete_project(self) -> None:
+        from . import backup, settings
+        if self.pid is None:
+            return
+        try:
+            info = calc.delete_summary(self.conn, self.pid)
+        except ValueError as e:
+            QMessageBox.warning(self, "工事の削除", str(e))
+            return
+        if info["status"] == "提出済":
+            QMessageBox.warning(self, "工事の削除", "提出済み（ロック中）の工事は消せません。管理者が「ロックを解除…」してから消してください。")
+            return
+        msg = (f"「{info['name']}」を削除しますか？\n\n"
+               f"・明細 {info['items']} 行、単価表 {info['tables']} 件、日程・質疑・出来高・処分場の選択も消えます。\n"
+               "・覚えた答え（数量・単価・当てはめ）は残るので、次の工事では今までどおり自動で入ります。\n")
+        if info["changes"]:
+            msg += f"・この工事から作った設計変更 {info['changes']} 件は、独立した工事として残ります。\n"
+        if info["awards"]:
+            msg += f"・落札実績 {info['awards']} 件は残ります（工事とのつながりだけ外します）。\n"
+        msg += "\n削除する前にバックアップを取ります。間違えたときは「設定」→「バックアップ」から戻せます。"
+        box = QMessageBox(QMessageBox.Warning, "工事の削除", msg, QMessageBox.Yes | QMessageBox.Cancel, self)
+        box.button(QMessageBox.Yes).setText("削除する")
+        box.setDefaultButton(QMessageBox.Cancel)
+        if box.exec() != QMessageBox.Yes:
+            return
+        try:
+            bk = backup.make(settings.db_path(), settings.load().get("backup_dir") or None)
+        except Exception as e:   # noqa: BLE001
+            if QMessageBox.question(self, "工事の削除", f"バックアップを取れませんでした（{e}）。それでも削除しますか？") != QMessageBox.Yes:
+                return
+            bk = None
+        if self.guard(calc.delete_project, self.conn, self.pid) is None:
+            return
+        self.pid = None
+        self._load_projects()
+        self.go("new" if self.pid is None else "items")
+        self.status.showMessage(f"「{info['name']}」を削除しました" + (f"（バックアップ：{bk.name}）" if bk else ""), 15000)
 
     def _orderers(self) -> list[str]:
         found = [r[0] for r in self.conn.execute(

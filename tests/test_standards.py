@@ -103,3 +103,40 @@ def test_year_rules(conn):
     standards.save_year_rules(conn, "R8", {"工事価格の端数単位": "10000", "消費税率": "10"})
     assert calc.load_rules(conn, "R8")["工事価格の端数単位"] == "10000"
     assert conn.execute("SELECT COUNT(*) FROM rule WHERE fy='R8' AND key='消費税率'").fetchone()[0] == 0   # 既定と同じは残さない
+
+
+def test_delete_project(tmp_path, monkeypatch):
+    """工事を消す：明細・単価表などは消え、覚えた答え・落札実績・設計変更の工事は残る。提出済みは消せない。"""
+    from pathlib import Path
+
+    from sekisan import audit, importer
+    sample = Path(__file__).resolve().parent.parent / "sample"
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    conn = db.connect(tmp_path / "d.sqlite")
+    importer.import_master_folder(conn, "R8", sample / "master" / "R8")
+    pid = importer.create_project(conn, "消す工事", "R8", importer.parse_design_csv(sample / "設計書.csv"))
+    child = importer.create_project(conn, "第1回変更", "R8", [], parent_id=pid, change_no=1)
+    conn.execute("INSERT INTO bukake(fy, code, name, spec, unit, per_qty, project_id) VALUES ('R8','D#x/単1','t','','m',1,?)", (pid,))
+    conn.execute("INSERT INTO bukake_component(fy, bukake_code, seq, kind, res_code, qty) VALUES ('R8','D#x/単1',1,'労務','R1',1)")
+    conn.execute("INSERT INTO bukake_memory(table_key, line_key, qty) VALUES ('k','l',1)")
+    conn.execute("INSERT INTO award(date, orderer, name, project_id) VALUES ('2026-11-01','奈良県','消す工事',?)", (pid,))
+    conn.execute("INSERT INTO project_schedule(project_id, kind, date) VALUES (?, '開札日', '2026-12-09')", (pid,))
+    conn.commit()
+    info = calc.delete_summary(conn, pid)
+    assert info["items"] > 0 and info["tables"] == 1 and info["changes"] == 1 and info["awards"] == 1
+    conn.execute("UPDATE project SET status='提出済' WHERE id=?", (pid,))
+    conn.commit()
+    with pytest.raises(audit.Locked):
+        calc.delete_project(conn, pid)
+    conn.execute("UPDATE project SET status='作成中' WHERE id=?", (pid,))
+    conn.commit()
+    calc.delete_project(conn, pid)
+    one = (lambda sql, *a: conn.execute(sql, a).fetchone()[0])
+    assert one("SELECT COUNT(*) FROM project WHERE id=?", pid) == 0
+    assert one("SELECT COUNT(*) FROM project_item WHERE project_id=?", pid) == 0
+    assert one("SELECT COUNT(*) FROM project_schedule WHERE project_id=?", pid) == 0
+    assert one("SELECT COUNT(*) FROM bukake_component WHERE bukake_code='D#x/単1'") == 0
+    assert one("SELECT COUNT(*) FROM bukake_memory") == 1                                   # 覚えた答えは残る
+    assert one("SELECT project_id IS NULL FROM award WHERE name='消す工事'") == 1             # 落札実績は残る
+    assert one("SELECT parent_id IS NULL FROM project WHERE id=?", child) == 1               # 設計変更の工事は残る
+    assert one("SELECT COUNT(*) FROM audit_log WHERE action='工事を削除'") == 1

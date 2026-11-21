@@ -93,6 +93,8 @@ QPushButton:disabled {{ color: {C['faint']}; }}
 QPushButton#Primary {{ background: {C['accent']}; color: white; border: 1px solid {C['accent']}; font-weight: 700; }}
 QPushButton#Primary:hover {{ background: {C['accent_hover']}; }}
 QPushButton#Primary:disabled {{ background: #9DB6F2; border-color: #9DB6F2; }}
+QPushButton#Danger {{ color: {C['bad']}; border: 1px solid {C['bad']}; background: {C['surface']}; }}
+QPushButton#Danger:hover {{ background: {C['bad_soft']}; }}
 QPushButton#Ghost {{ border: none; background: transparent; color: {C['accent']}; padding: 4px 6px; }}
 QPushButton#Ghost:hover {{ text-decoration: underline; }}
 
