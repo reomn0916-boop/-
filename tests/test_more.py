@@ -211,14 +211,14 @@ def test_backup_restore(conn, pid, tmp_path):
 
 
 # ---------------------------------------------------------------- 奈良県の単価資料PDF（同じ並びの小さなPDFを作って読む）
-def _nara_pdf(path, regional: bool):
+def _nara_pdf(path, regional: bool, cover: str = "土木工事設計資材単価表（令和８年１１月１日より適用）"):
     rl = pytest.importorskip("reportlab.pdfgen.canvas")
     from reportlab.pdfbase import pdfmetrics
     from reportlab.pdfbase.cidfonts import UnicodeCIDFont
     pdfmetrics.registerFont(UnicodeCIDFont("HeiseiKakuGo-W5"))
     c = rl.Canvas(str(path), pagesize=(842, 595))
     c.setFont("HeiseiKakuGo-W5", 9)
-    c.drawString(40, 560, "土木工事設計資材単価表（令和８年１１月１日より適用）")
+    c.drawString(40, 560, cover)
     c.showPage()
     c.setFont("HeiseiKakuGo-W5", 6)
     y = 520

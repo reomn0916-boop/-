@@ -1,0 +1,106 @@
+"""公表単価の自動収集：県のサイトの代わりに手元に小さなサーバーを立てて確かめる。"""
+import functools
+import http.server
+import threading
+from datetime import date
+from pathlib import Path
+
+import pytest
+
+from sekisan import autofetch, calc, db, importer, settings
+
+SAMPLE = Path(__file__).resolve().parent.parent / "sample"
+
+
+@pytest.fixture(autouse=True)
+def user(tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    settings.save({"user_name": "山田"})
+
+
+@pytest.fixture
+def site(tmp_path):
+    """県のサイトの代わり：/list.html（一覧ページ）と documents/8708/ の PDF"""
+    from test_more import _nara_pdf
+    root = tmp_path / "site"
+    docs = root / "documents" / "8708"
+    docs.mkdir(parents=True)
+    _nara_pdf(docs / "r0811nara_materialprice.pdf", True)      # 地区別の見本（令和8年11月1日より適用）
+    _nara_pdf(docs / "r0808nara_materialprice.pdf", False,     # 県下同一の見本（令和8年8月1日より適用）
+              "土木工事設計資材単価表（令和８年８月１日より適用）")
+    (root / "list.html").write_text(
+        '<html><body><a href="documents/8708/r0811nara_materialprice.pdf">資材単価（令和8年11月）</a>'
+        '<a href="documents/8708/other.pdf">関係のない資料</a><a href="https://example.com/x.pdf">外のサイト</a>'
+        '</body></html>', encoding="utf-8")
+    class Quiet(http.server.SimpleHTTPRequestHandler):
+        def log_message(self, *a, **k):
+            pass
+    handler = functools.partial(Quiet, directory=str(root))
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}/"
+    yield base
+    srv.shutdown()
+
+
+@pytest.fixture
+def conn(tmp_path):
+    c = db.connect(tmp_path / "t.sqlite")
+    importer.import_master_folder(c, "R8", SAMPLE / "master" / "R8")
+    return c
+
+
+HOST = ("127.0.0.1",)
+
+
+def test_names_and_fiscal_year():
+    assert autofetch.yymm_of("https://x/r0811nara_materialprice.pdf") == "0811"
+    assert autofetch.yymm_of("https://x/r0803_roumuprice.pdf") == "0803"
+    assert autofetch.kind_of("https://x/r0803_roumuprice.pdf") == "労務単価"
+    assert autofetch.target_fy("2026-11-01") == "R8"
+    assert autofetch.target_fy("2026-03-01") == "R8"   # 3月適用の労務単価は次の年度の工事で使う
+    assert autofetch.target_fy("2027-02-01") == "R8"
+    assert autofetch.recent_months(date(2026, 1, 15), 2) == [(8, 1), (7, 12), (7, 11)]
+    assert not autofetch._allowed("https://example.com/a.pdf")
+    assert autofetch._allowed("https://www.pref.nara.lg.jp/documents/8708/a.pdf")
+
+
+def test_scan_page_and_probe(site, conn):
+    found = autofetch.scan_page(site + "list.html", HOST)
+    assert [(f.kind, f.yymm) for f in found] == [("資材単価", "0811")]   # 関係のない資料・外のサイトは拾わない
+    hits = autofetch.probe(date(2026, 11, 21), back=4, bases=(site + "documents/8708/",), extra_hosts=HOST)
+    assert sorted(f.yymm for f in hits) == ["0808", "0811"]
+    with pytest.raises(ValueError):
+        autofetch.scan_page("https://example.com/list.html")
+
+
+def test_check_download_import(site, conn, tmp_path):
+    found, errors = autofetch.check(conn, [site + "list.html"], today=date(2026, 11, 21),
+                                    bases=(site + "documents/8708/",), extra_hosts=HOST)
+    assert not errors and {f.yymm for f in found} == {"0808", "0811"}
+    assert all(f.status == "新しい" for f in found) and autofetch.last_checked(conn)
+    new = next(f for f in found if f.yymm == "0811")
+    path = autofetch.download(conn, new.url, tmp_path / "dl", HOST)
+    assert path.read_bytes().startswith(b"%PDF")
+    r = autofetch.import_file(conn, path, new.url)
+    assert (r["fy"], r["valid_from"], r["priced"]) == ("R8", "2026-11-01", 1)
+    assert conn.execute("SELECT price FROM master_price WHERE fy='R8' AND code='Z002010012' AND region='2地区'"
+                        ).fetchone()[0] == 28000
+    assert conn.execute("SELECT COUNT(*) FROM price_revision WHERE fy='R8' AND valid_from='2026-11-01'").fetchone()[0] == 1
+    st = {f.yymm: f.status for f in autofetch.list_found(conn)}
+    assert st == {"0811": "取り込み済み", "0808": "新しい"}
+    # 古い月を後から取り込んでも、年度の単価は新しい月のまま（単価改定としてだけ残る）
+    old = next(f for f in found if f.yymm == "0808")
+    r2 = autofetch.import_file(conn, autofetch.download(conn, old.url, tmp_path / "dl", HOST), old.url)
+    assert "単価改定として残しました" in r2["result"]
+    assert conn.execute("SELECT price FROM master_price WHERE fy='R8' AND code='Z002010012' AND region='2地区'"
+                        ).fetchone()[0] == 28000
+
+
+def test_price_by_date(site, conn, tmp_path):
+    """単価の適用日を入れた工事は、その時点の単価で計算される。"""
+    found, _ = autofetch.check(conn, [], today=date(2026, 11, 21), bases=(site + "documents/8708/",), extra_hosts=HOST)
+    f = next(x for x in found if x.yymm == "0811")
+    autofetch.import_file(conn, autofetch.download(conn, f.url, tmp_path / "dl", HOST), f.url)
+    c = calc.Calculator(conn, "R8", "2地区", as_of="2026-11-05")
+    assert c.resource_price("材料", "Z002010012")[0] == 28000

@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 from . import audit, awards, calc, db, importer, pipeline, settings, theme
 from .gui_pages import AddItemDialog, PagesMixin
 from .gui_pages2 import BookPageMixin, PagesMixin2
-from .gui_pages3 import TablesPageMixin
+from .gui_pages3 import AutoFetchMixin, TablesPageMixin
 from . import kinnuki
 from . import backup
 from .export import breakdown_rows
@@ -96,7 +96,7 @@ class ItemFilter(QSortFilterProxyModel):
         return True
 
 
-class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, QMainWindow):
+class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, AutoFetchMixin, QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("公共工事 積算アプリ")
@@ -132,7 +132,17 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, QMainW
                     "schedule": self._page_schedule, "after": self._page_after, "inquiry": self._page_inquiry,
                     "book": self._page_book, "tables": self._page_tables}
         for key, *_ in PAGES:
-            self.pages[key] = self.stack.addWidget(builders[key]())
+            page = builders[key]()
+            if key in ("master", "settings"):  # 中身が多い画面はスクロールできるようにする
+                from PySide6.QtWidgets import QScrollArea
+                sc = QScrollArea()
+                sc.setWidgetResizable(True)
+                sc.setFrameShape(QFrame.NoFrame)
+                sc.setStyleSheet("QScrollArea { background: transparent; } QScrollArea > QWidget > QWidget { background: transparent; }")
+                page.setMinimumHeight(1180 if key == "master" else 860)
+                sc.setWidget(page)
+                page = sc
+            self.pages[key] = self.stack.addWidget(page)
         cv.addWidget(self.stack, 1)
         h.addWidget(content, 1)
         self.setCentralWidget(root)
@@ -144,6 +154,8 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, QMainW
 
         self._load_projects()
         self.go("items" if self.pid is not None else "new")
+        self._refresh_autofetch()
+        QTimer.singleShot(1500, self._autofetch_on_start)  # 画面が出てから、週1回だけ県のサイトを確かめる
 
     # ================================================================ 骨組み
     def _sidebar(self) -> QWidget:
@@ -249,6 +261,7 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, QMainW
         self.header_frame.setFixedHeight(self.header_frame.sizeHint().height())
         if key == "master":
             self._load_master_overview()
+            self._refresh_autofetch()
             self._refresh_orderer_rules()
         if key == "new":
             self._load_recent()
@@ -1175,6 +1188,7 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, QMainW
         c2.lay.addStretch(1)
         row.addWidget(c2, 2)
         v.addLayout(row)
+        v.addWidget(self._autofetch_card())
         v.addWidget(self._public_price_card())
         self.m_banner = Banner()
         v.addWidget(self.m_banner)
@@ -1184,6 +1198,7 @@ class MainWindow(PagesMixin, PagesMixin2, BookPageMixin, TablesPageMixin, QMainW
                                                 "機械損料", "単価改定", "工種区分"])
         _style_table(self.m_table)
         self.m_table.horizontalHeader().setSectionResizeMode(9, QHeaderView.Stretch)
+        self.m_table.setMinimumHeight(110)
         ov.lay.addWidget(self.m_table)
         v.addWidget(ov, 2)
         v.addWidget(self._orderer_card(), 3)

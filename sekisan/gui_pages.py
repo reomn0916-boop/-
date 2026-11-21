@@ -836,7 +836,7 @@ class PagesMixin:
         c = Card("発注者ごとの設定", "最低制限価格の式・内訳書の階層の深さ・電子入札CSVの文字コードなどを、"
                  "発注者ごとに年度のルールより優先して使います。")
         self.or_table = _table(["発注者", "項目", "値"], 2)
-        self.or_table.setMinimumHeight(140)
+        self.or_table.setMinimumHeight(160)
         c.lay.addWidget(self.or_table, 1)
         h = QHBoxLayout()
         self.or_name = QComboBox()
