@@ -119,3 +119,27 @@ class Rules(unittest.TestCase):
                 self.assertEqual(round(ev["stop"], 6), round(ev2["stop"], 6))
                 self.assertEqual(ev["rule_ok"], ev2["rule_ok"])
         self.assertGreater(hits, 0)
+
+
+class LooseRules(unittest.TestCase):
+    def test_loose_finds_more_and_keeps_min_rr(self):
+        ind = u.indicators(u.demo_prices("b", 1000, days=500, drift=0.0012, vol=0.015))
+        strict = loose = 0
+        for i in range(100, ind["n"]):
+            es = u.evaluate(ind, i, 0, mkt_up=True)
+            el = u.evaluate(ind, i, 0, mkt_up=True, rules=u.RULESETS["loose"])
+            strict += es["rule_ok"]
+            loose += el["rule_ok"]
+            if el["rule_ok"]:
+                self.assertLess(el["stop"], el["close"])
+                self.assertGreaterEqual((el["target"] - el["entry"]) / el["risk"], 1.5 - 1e-9)
+        self.assertGreater(loose, strict)
+
+    def test_loose_market_rule(self):
+        ind = u.indicators(u.demo_prices("b", 1000, days=500, drift=0.0012, vol=0.015))
+        for i in range(100, ind["n"]):
+            # 25日線が下向きでも、日経平均が25日線の上なら市場の条件は通る／両方だめなら通らない
+            el = u.evaluate(ind, i, 0, mkt_up={"up": False, "above": True}, rules=u.RULESETS["loose"])
+            self.assertTrue(el["checks"][0]["ok"])
+            el2 = u.evaluate(ind, i, 0, mkt_up={"up": False, "above": False}, rules=u.RULESETS["loose"])
+            self.assertFalse(el2["rule_ok"])
