@@ -447,16 +447,16 @@ class UpdateMixin:
         from . import settings, updater
         cur = updater.current_version()
         if not rel:
-            if self._up_manual:
+            if getattr(self, "_up_manual", False):
                 QMessageBox.warning(self, "ソフトの更新", "新しい版を確かめられませんでした。\n" + "\n".join(errors[:3]))
             return
         if not rel.newer_than(cur):
-            if self._up_manual:
+            if getattr(self, "_up_manual", False):
                 QMessageBox.information(self, "ソフトの更新", f"いまの版（{cur}）が最新です。"
                                         + ("\n（開発用に Python で動かしているときは更新しません）" if cur == "開発版" else ""))
             return
         notes = "\n".join(f"・{n}" for n in rel.notes[:8])
-        silent = settings.load().get("update_silent", False) and not self._up_manual
+        silent = settings.load().get("update_silent", False) and not getattr(self, "_up_manual", False)
         if not silent and QMessageBox.question(
                 self, "ソフトの更新", f"新しい版があります。\n\nいまの版：{cur}\n新しい版：{rel.version}（{rel.source}）\n\n"
                 f"主な変更：\n{notes}\n\n今すぐ更新しますか？（ソフトを閉じて入れ替え、起動し直します）") != QMessageBox.Yes:
