@@ -332,3 +332,11 @@ a.upd-btn { text-decoration: none; display: inline-block; }
 .advanced > summary { font-size: 14px; font-weight: 700; cursor: pointer; color: var(--muted); }
 .advanced[open] > summary { margin-bottom: 8px; }
 .upd-st small a { color: inherit; }
+
+/* ---- 下げ相場用 ---- */
+.banner.warn { background: #fff1d6; color: #6b4a00; border-color: transparent; }
+.modeseg button { padding: 8px 4px; font-size: 14px; }
+.modeseg button small { font-size: 10px; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .banner.warn { background: #4a3810; color: #ffd27a; }
+}

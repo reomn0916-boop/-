@@ -61,7 +61,18 @@ RULESETS = {
         "chase": (15, 7, 10), "min_touches": 1, "support_req": False, "min_rr": 1.5,
         "earn_days": 7, "turnover": MIN_TURNOVER_OKU,
     },
+    # 下げ相場用：日経平均の25日線が下向きの日に、日経平均より強く・つられにくい銘柄の押し目を狙う
+    "bear": {
+        "label": "下げ相場用", "mkt": "down", "trend_loose": False, "weekly_req": False,
+        "look": 5, "touch_ma": 1.03, "touch_sup_atr": 1.0, "dev_max": 6, "bull": "either", "rsi_max": 70,
+        "chase": (12, 6, 9), "min_touches": 1, "support_req": False, "min_rr": 2.0,
+        "earn_days": 7, "turnover": MIN_TURNOVER_OKU,
+        "rs_min": 3.0,       # 直近20日で日経平均より +3% 以上強い（逆行高）
+        "beta_max": 0.8,     # 日経平均への連動（β）が 0.8 以下、またはディフェンシブ業種
+    },
 }
+DEFENSIVE = {"食品", "医薬品", "通信", "電力・ガス", "小売", "陸運"}
+MODES = ("strict", "loose", "bear")
 STRICT = RULESETS["strict"]
 
 INDICES = [
@@ -391,6 +402,29 @@ def indicators(px: dict) -> dict:
     }
 
 
+def add_beta(ind: dict, bench: dict | None, n: int = 60) -> None:
+    """日ごとの β（日経平均が1%動いたとき、その銘柄が平均で何%動くか）を ind["beta"] に入れる。"""
+    ind["beta"] = [None] * ind["n"]
+    if not bench:
+        return
+    br = {}
+    bd, bc = bench["d"], bench["c"]
+    for k in range(1, len(bc)):
+        br[bd[k]] = bc[k] / bc[k - 1] - 1
+    pairs = []  # (日付の位置, 銘柄の騰落, 日経平均の騰落)
+    for k in range(1, ind["n"]):
+        b = br.get(ind["d"][k])
+        if b is not None:
+            pairs.append((k, ind["c"][k] / ind["c"][k - 1] - 1, b))
+    for j in range(n, len(pairs)):
+        win = pairs[j - n + 1:j + 1]
+        mx = sum(p[2] for p in win) / n
+        ms = sum(p[1] for p in win) / n
+        var = sum((p[2] - mx) ** 2 for p in win)
+        if var > 0:
+            ind["beta"][pairs[j][0]] = sum((p[1] - ms) * (p[2] - mx) for p in win) / var
+
+
 def levels(prices: list[float], tol: float) -> list[tuple[float, int]]:
     """近い値段どうしをまとめて (水準, 反発の回数) にする。"""
     out, grp = [], []
@@ -558,16 +592,29 @@ def evaluate(ind: dict, i: int, bench_ret20: float | None, mkt_up=None,
     gap3 = max(pct(ind["o"][k], c[k - 1]) for k in range(max(1, i - 2), i + 1))
     up_w = bool(ind["ma65"][i] and i >= 5 and ind["ma65"][i - 5] and ind["ma65"][i] > ind["ma65"][i - 5] and last > ind["ma65"][i])
     ch_max5, ch_gap, ch_dev = rules["chase"]
-    mkt_ok = mkt["up"] if rules["mkt"] == "up" else (None if mkt["up"] is None and mkt["above"] is None
-                                                   else bool(mkt["up"] or mkt["above"]))
+    beta = ind["beta"][i] if ind.get("beta") else None
+    if rules["mkt"] == "up":
+        mkt_ok, mkt_label = mkt["up"], "日経平均が上向き（25日線が上向き）"
+    elif rules["mkt"] == "down":
+        mkt_ok = None if mkt["up"] is None else not mkt["up"]
+        mkt_label = "日経平均が下向きの日（25日線が下向き）。上向きの日はきびしめ・ゆるめを使う"
+    else:
+        mkt_ok = None if mkt["up"] is None and mkt["above"] is None else bool(mkt["up"] or mkt["above"])
+        mkt_label = "日経平均が上向き（25日線が上向き か 25日線の上）"
     checks = [
-        {"id": "market", "label": "日経平均が上向き（25日線が上向き）" if rules["mkt"] == "up"
-         else "日経平均が上向き（25日線が上向き か 25日線の上）", "ok": mkt_ok},
+        {"id": "market", "label": mkt_label, "ok": mkt_ok},
         {"id": "trend", "label": "25日線が上向きで、株価がその上" if not rules["trend_loose"]
          else "上昇トレンド（25日線が上向きで株価がその上、または株価が75日線の上）", "ok": trend_ok,
          "detail": f"25日線 {m25:,.0f}円・乖離 {dev25:+.1f}%" if m25 else ""},
         {"id": "weekly", "label": "週足でも上向き（13週線）" + ("" if rules["weekly_req"] else "（参考）"), "ok": up_w,
          "req": rules["weekly_req"]},
+        *([{"id": "rs", "label": f"日経平均より強い（直近20日で +{rules['rs_min']:g}% 以上）",
+            "ok": None if rs is None else rs >= rules["rs_min"],
+            "detail": "日経平均が取れない" if rs is None else f"日経平均より {rs:+.1f}%"}] if rules.get("rs_min") is not None else []),
+        *([{"id": "beta", "label": f"日経平均につられにくい（β {rules['beta_max']:g} 以下かディフェンシブ業種）",
+            "ok": (beta is not None and beta <= rules["beta_max"]) or ind.get("sector") in DEFENSIVE,
+            "detail": ("β 不明" if beta is None else f"β {beta:.2f}") + (f"・{ind.get('sector')}" if ind.get("sector") else "")}]
+          if rules.get("beta_max") is not None else []),
         {"id": "liquidity", "label": f"売買代金が {rules['turnover']}億円/日 以上", "ok": turnover >= rules["turnover"],
          "detail": f"約 {turnover:,.0f}億円"},
         {"id": "nochase", "label": "急に上がった株を高値で追いかけていない",
@@ -1122,12 +1169,19 @@ def main() -> int:
             earn = earns.get(s["code"])
         try:
             ind = indicators(px)
+            ind["sector"] = s.get("sector", "")
+            add_beta(ind, nk)
             ev = evaluate(ind, ind["n"] - 1, bench_ret20, mkt_now, days_until(earn))
             inds[s["code"]] = ind
             rec = stock_record(s, ind, ev)
             ev_l = evaluate(ind, ind["n"] - 1, bench_ret20, mkt_now, days_until(earn), rules=RULESETS["loose"])
             rl = stock_record(s, ind, ev_l)
             rec["loose"] = {k: rl[k] for k in MODE_KEYS}
+            ev_b = evaluate(ind, ind["n"] - 1, bench_ret20, mkt_now, days_until(earn), rules=RULESETS["bear"])
+            rb = stock_record(s, ind, ev_b)
+            rec["bear"] = {k: rb[k] for k in MODE_KEYS}
+            b_now = ind["beta"][-1]
+            rec["beta"] = None if b_now is None else round(b_now, 2)
             rec["earnings"] = earn
             rec["earnings_days"] = days_until(earn)
             records.append(rec)
@@ -1143,8 +1197,12 @@ def main() -> int:
     tm.lap("指標・ルールの判定")
     # 検証（過去2年で、同じルールで売買していたらどうだったか）
     all_trades, per_stock, nomkt, loose_trades, per_stock_l = [], {}, [], [], {}
-    base_rets = []
+    bear_trades, per_stock_b = [], {}
+    base_rets, base_down = [], []
     for code, ind in inds.items():
+        trb = backtest(ind, bench_by_date, mkt_by_date, RULESETS["bear"])
+        bear_trades += trb
+        per_stock_b[code] = trb
         nomkt += backtest(ind, bench_by_date, None)
         trl = backtest(ind, bench_by_date, mkt_by_date, RULESETS["loose"])
         loose_trades += trl
@@ -1156,6 +1214,8 @@ def main() -> int:
         per_stock[code] = tr
         for i in range(80, ind["n"] - HOLD_DAYS - 1, 5):  # 比較用：いつ買っても同じ日数持った場合
             base_rets.append(pct(ind["c"][i + HOLD_DAYS], ind["o"][i + 1]))
+            if mkt_by_date.get(ind["d"][i], {}).get("up") is False:  # 日経平均が下向きの日に買った場合
+                base_down.append(base_rets[-1])
     bt = {
         "hold_days": HOLD_DAYS,
         "period": [min((t["date"] for t in all_trades), default=None), max((t["date"] for t in all_trades), default=None)],
@@ -1167,8 +1227,13 @@ def main() -> int:
         "by_score": [{"label": lb, **trade_stats([t for t in all_trades if lo <= t["score"] < hi])}
                      for lb, lo, hi in (("〜69点", 0, 70), ("70〜79点", 70, 80), ("80点以上", 80, 999))],
         "baseline_avg_ret": round(sum(base_rets) / len(base_rets), 2) if base_rets else None,
+        "baseline_down_avg_ret": round(sum(base_down) / len(base_down), 2) if base_down else None,
+        "bear": trade_stats(bear_trades),
+        "bear_by_score": [{"label": lb, **trade_stats([t for t in bear_trades if lo <= t["score"] < hi])}
+                          for lb, lo, hi in (("〜69点", 0, 70), ("70〜79点", 70, 80), ("80点以上", 80, 999))],
     }
-    print(f"検証 きびしめ: {bt['all']}\n     ゆるめ: {bt['loose']}\n  比較（いつでも買う）平均 {bt['baseline_avg_ret']}%")
+    print(f"検証 きびしめ: {bt['all']}\n     ゆるめ: {bt['loose']}\n     下げ相場用: {bt['bear']}\n"
+          f"  比較（いつでも買う）平均 {bt['baseline_avg_ret']}% / 日経平均が下向きの日に買う {bt['baseline_down_avg_ret']}%")
 
     tm.lap("過去2年の検証")
     # ニュース
@@ -1205,6 +1270,7 @@ def main() -> int:
         a["theme_notes"] = notes
         a["score"] = round(max(0, min(100, a["tech_score"] + b)), 1)
         a["loose"]["score"] = round(max(0, min(100, a["loose"]["tech_score"] + b)), 1)
+        a["bear"]["score"] = round(max(0, min(100, a["bear"]["tech_score"] + b)), 1)
         mine = [n for n in news if n["id"] in ids]
         if any(n["sentiment"] > 0.3 for n in mine):
             a["reasons"].append("プラスの材料ニュースあり")
@@ -1216,6 +1282,8 @@ def main() -> int:
         a["bt"] = {"all": trade_stats(tr), "same": trade_stats([t for t in tr if t["setup"] == a["setup"]])}
         a["loose"]["bt"] = {"all": trade_stats(per_stock_l.get(a["code"], []))}
         a["loose"]["bt"]["same"] = a["loose"]["bt"]["all"]
+        a["bear"]["bt"] = {"all": trade_stats(per_stock_b.get(a["code"], []))}
+        a["bear"]["bt"]["same"] = a["bear"]["bt"]["all"]
     records.sort(key=lambda a: -a["score"])
 
     breadth = sum(r["above25"] for r in records) / len(records) * 100
@@ -1234,7 +1302,9 @@ def main() -> int:
     loose_view = sorted(({**r, **r["loose"]} for r in records), key=lambda r: -r["score"])
     picks, almost = select_picks(records), near_miss(records)
     picks_l, almost_l = select_picks(loose_view), near_miss(loose_view)
-    print(f"注目 きびしめ {len(picks)} 銘柄 / ゆるめ {len(picks_l)} 銘柄")
+    bear_view = sorted(({**r, **r["bear"]} for r in records), key=lambda r: -r["score"])
+    picks_b, almost_b = select_picks(bear_view), near_miss(bear_view)
+    print(f"注目 きびしめ {len(picks)} 銘柄 / ゆるめ {len(picks_l)} 銘柄 / 下げ相場用 {len(picks_b)} 銘柄")
 
     # 注目銘柄の記録と成績（きびしめ・ゆるめ別）
     # サンプルのときは記録ファイルを読み書きしない（本物の記録に混ざらないように）
@@ -1245,7 +1315,7 @@ def main() -> int:
     cutoff = any_ind["d"][-TRACK_DAYS] if any_ind["n"] > TRACK_DAYS else any_ind["d"][0]
     track = {}
     new_hist = []
-    for mode, view, mp in (("strict", records, picks), ("loose", loose_view, picks_l)):
+    for mode, view, mp in (("strict", records, picks), ("loose", loose_view, picks_l), ("bear", bear_view, picks_b)):
         hm = [h for h in hist if h["mode"] == mode]
         if not hm:
             hm = bootstrap_history(inds, by_code, bench_by_date, mkt_by_date, mode=mode)
@@ -1261,7 +1331,7 @@ def main() -> int:
                            "src": "demo" if args.demo else "live", "mode": mode})
         target = {r["code"]: r for r in records}
         for code in mp:
-            (target[code] if mode == "strict" else target[code]["loose"])["new_pick"] = code not in prev
+            (target[code] if mode == "strict" else target[code][mode])["new_pick"] = code not in prev
         hm = [h for h in hm if h["date"] >= cutoff]
         rows, stats = evaluate_history(hm, inds)
         track[mode] = {"stats": stats, "rows": rows[:80]}
@@ -1279,6 +1349,8 @@ def main() -> int:
         "almost": almost,
         "picks_loose": picks_l,
         "almost_loose": almost_l,
+        "picks_bear": picks_b,
+        "almost_bear": almost_b,
         "market_state": mkt_now,
         "stocks": records,
         "news": [{k: v for k, v in n.items() if k != "weight"} for n in news[:150]],
@@ -1295,7 +1367,7 @@ def main() -> int:
     if not args.demo:
         earn_path.write_text(json.dumps(earn_cache, ensure_ascii=False, indent=0, sort_keys=True), encoding="utf-8")
         hist_path.write_text(json.dumps({"picks": hist}, ensure_ascii=False, indent=0), encoding="utf-8")
-    print(f"書き出し: {out_path} ({out_path.stat().st_size // 1024} KB) 注目 {len(picks)}+{len(picks_l)} 銘柄 / "
+    print(f"書き出し: {out_path} ({out_path.stat().st_size // 1024} KB) 注目 {len(picks)}+{len(picks_l)}+{len(picks_b)} 銘柄 / "
           f"記録 {len(hist)} 件 / {time.time() - t0:.0f} 秒")
     return 0
 
