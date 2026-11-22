@@ -69,31 +69,40 @@ async function load(force) {
 
 // いまのモード（きびしめ・ゆるめ）で見た銘柄の一覧を作る
 function buildView() {
-  const loose = S.mode === 'loose';
-  S.list = S.data.stocks.map((s) => (loose && s.loose ? { ...s, ...s.loose } : s));
-  if (loose) S.list.sort((a, b) => b.score - a.score);
+  const m = curMode();
+  S.list = S.data.stocks.map((s) => (m !== 'strict' && s[m] ? { ...s, ...s[m] } : s));
+  if (m !== 'strict') S.list.sort((a, b) => b.score - a.score);
   S.byCode = Object.fromEntries(S.list.map((s) => [s.code, s]));
 }
-const isLoose = () => S.mode === 'loose' && S.data && S.data.picks_loose;
-const modePicks = () => (isLoose() ? S.data.picks_loose : S.data.picks) || [];
-const modeAlmost = () => (isLoose() ? S.data.almost_loose : S.data.almost) || [];
+// いまのモード（データが古くてそのモードがなければ、きびしめ）
+const curMode = () => (S.mode !== 'strict' && S.data && S.data[`picks_${S.mode}`] ? S.mode : 'strict');
+const isLoose = () => curMode() === 'loose';
+const isBear = () => curMode() === 'bear';
+const sfx = () => (curMode() === 'strict' ? '' : '_' + curMode());
+const modePicks = () => S.data[`picks${sfx()}`] || [];
+const modeAlmost = () => S.data[`almost${sfx()}`] || [];
 const modeTrack = () => {
   const t = S.data.track || {};
-  return t.stats ? t : (t[isLoose() ? 'loose' : 'strict'] || { stats: {}, rows: [] });
+  return t.stats ? t : (t[curMode()] || { stats: {}, rows: [] });
 };
-const modeBt = () => S.data.backtest && (isLoose() ? S.data.backtest.loose : S.data.backtest.all);
-const MODE_LABEL = { strict: 'きびしめ', loose: 'ゆるめ' };
+const modeBt = () => S.data.backtest && (curMode() === 'strict' ? S.data.backtest.all : S.data.backtest[curMode()]);
+const modeByScore = () => S.data.backtest && S.data.backtest[curMode() === 'strict' ? 'by_score' : `${curMode()}_by_score`];
+const MODE_LABEL = { strict: 'きびしめ', loose: 'ゆるめ', bear: '下げ相場用' };
+const MIN_RR = { strict: 2, loose: 1.5, bear: 2 };
+// 下げ相場用は、許せる損失を半分にして株数を出す
+const riskPctNow = () => (isBear() ? S.riskPct / 2 : S.riskPct);
 
 function setMode(m) {
   if (S.mode === m) return;
   S.mode = m; store.set('mode', m);
   buildView(); renderAll();
-  toast(m === 'loose' ? 'ゆるめのルールにしました' : 'きびしめ（ルールどおり）にしました');
+  toast({ strict: 'きびしめ（ルールどおり）にしました', loose: 'ゆるめのルールにしました', bear: '下げ相場用にしました' }[m]);
 }
 
 function modeSeg() {
   return `<div class="seg modeseg"><button data-mode="strict" class="${S.mode === 'strict' ? 'on' : ''}">きびしめ<small>ルールどおり</small></button>
-    <button data-mode="loose" class="${S.mode === 'loose' ? 'on' : ''}">ゆるめ<small>買える銘柄を増やす</small></button></div>`;
+    <button data-mode="loose" class="${S.mode === 'loose' ? 'on' : ''}">ゆるめ<small>銘柄を増やす</small></button>
+    <button data-mode="bear" class="${S.mode === 'bear' ? 'on' : ''}">下げ相場用<small>日経平均が下向き</small></button></div>`;
 }
 
 // ---- 今すぐ更新（GitHub Actions の「スイングデータ更新」を動かす） ----------------
@@ -353,10 +362,13 @@ function renderHome() {
   const almost = modeAlmost().map((c) => S.byCode[c]).filter(Boolean);
   const rest = restUntil();
   const ms = d.market_state || { up: rg.nikkei_up, above: rg.nikkei_up };
-  const noTrade = isLoose() ? (ms.up === false && ms.above === false) : rg.nikkei_up === false;
-  const rgLabel = isLoose() && rg.label === '買わない日' && !noTrade ? '中立' : rg.label;
-  const rgText = isLoose() && rg.label === '買わない日' && !noTrade
-    ? '日経平均の25日線は下向きですが、日経平均は25日線の上にあるので、ゆるめのルールでは買えます。株数は控えめに。' : rg.text;
+  const noTrade = isBear() ? false : isLoose() ? (ms.up === false && ms.above === false) : rg.nikkei_up === false;
+  const bearOff = isBear() && ms.up === true;  // 下げ相場用なのに日経平均が上向き
+  const rgLabel = isBear() && rg.label === '買わない日' ? '下げ相場' : isLoose() && rg.label === '買わない日' && !noTrade ? '中立' : rg.label;
+  const rgText = isBear() && rg.label === '買わない日'
+    ? '日経平均は下向きです。下げ相場用のルールで、日経平均より強く・つられにくい銘柄だけを、株数を半分にして狙います。'
+    : isLoose() && rg.label === '買わない日' && !noTrade
+      ? '日経平均の25日線は下向きですが、日経平均は25日線の上にあるので、ゆるめのルールでは買えます。株数は控えめに。' : rg.text;
   const tr = modeTrack().stats;
   const secs = d.sectors || [];
   const secMax = Math.max(1, ...secs.map((x) => Math.abs(x.ret20)));
@@ -365,6 +377,8 @@ function renderHome() {
       <span class="sv num ${cls(x.ret20)}">${sgn(x.ret20, 1)}</span></button>`;
   $('#v-home').innerHTML = `
     ${rest ? `<div class="card banner bad"><b>3連敗中：${fmtDate(rest)} まで休みます</b><br>ルール「3連敗したら1週間休んで記録を見直す」。「保有」タブの取引記録を見直しましょう。</div>` : ''}
+    ${bearOff ? '<div class="card banner info"><b>日経平均は上向きです</b><br>下げ相場用は、日経平均の25日線が下向きの日に使うモードです。今日は「きびしめ」か「ゆるめ」に切り替えてください。</div>' : ''}
+    ${isBear() && !bearOff ? '<div class="card banner warn"><b>下げ相場用のモードです</b><br>あなたのルール「日経平均が下向きの時は買わない」の例外です。株数は自動で半分にしています。損切りは必ず入れてください。</div>' : ''}
     ${noTrade ? `<div class="card banner bad"><b>今日は買わない日</b><br>${isLoose() ? '日経平均の25日線が下向きで、日経平均も25日線の下です（ゆるめのルールでも買わない）。' : '日経平均の25日線が下向きです（ルール：日経平均が下向きの時は買わない）。'}</div>` : ''}
     ${alerts.length ? `<h2>保有銘柄のお知らせ</h2><div class="picks">${alerts.map(({ p, st }) => `<button class="pick alert" data-tab-go="watch">
       <div class="l1"><span class="nm">${esc(p.name)}</span><span class="num ${cls(st.retPct)}">${sgn(st.retPct, 1)}</span></div>
@@ -385,11 +399,12 @@ function renderHome() {
       <div class="hl">${esc(t.headline)}</div></div>`).join('')}</div>` : ''}
     ${secs.length ? `<h2>業種の強さ<small>20日の騰落の平均・押すと業種で一番点数の高い銘柄</small></h2>
     <div class="card secs">${secs.slice(0, 5).map(secRow).join('')}<div class="secgap">…</div>${secs.slice(-3).map(secRow).join('')}</div>` : ''}
-    <h2>ルールに合う銘柄<small>${S.data.price_date || ''} 終値・${picks.length}銘柄・${MODE_LABEL[S.mode]}</small></h2>
+    <h2>ルールに合う銘柄<small>${S.data.price_date || ''} 終値・${picks.length}銘柄・${MODE_LABEL[curMode()]}</small></h2>
     ${modeSeg()}
-    ${!isLoose() && !picks.length && (d.picks_loose || []).length ? `<button class="card trackmini" data-mode="loose">ゆるめのルールなら <b>${d.picks_loose.length} 銘柄</b> あります<span class="muted"> ›</span></button>` : ''}
+    ${curMode() === 'strict' && !picks.length && (d.picks_loose || []).length ? `<button class="card trackmini" data-mode="loose">ゆるめのルールなら <b>${d.picks_loose.length} 銘柄</b> あります<span class="muted"> ›</span></button>` : ''}
+    ${!isBear() && ms.up === false && (d.picks_bear || []).length ? `<button class="card trackmini" data-mode="bear">日経平均が下向きの日は「下げ相場用」に <b>${d.picks_bear.length} 銘柄</b><span class="muted"> ›</span></button>` : ''}
     ${tr && tr.n ? `<button class="card trackmini" data-tab-go="track">これまでの注目銘柄の成績：${btLine(tr)}<span class="muted"> ›</span></button>` : ''}
-    ${picks.length ? `<div class="picks">${picks.map(pickCard).join('')}</div>` : `<div class="card empty">${noTrade ? '今日は買わない日です。' : `今日は${MODE_LABEL[S.mode]}のルールに全部合う銘柄がありません。`}無理に買わないのもルールのうちです。</div>`}
+    ${picks.length ? `<div class="picks">${picks.map(pickCard).join('')}</div>` : `<div class="card empty">${noTrade ? '今日は買わない日です。' : bearOff ? '日経平均が上向きなので、下げ相場用の銘柄は出しません。' : `今日は${MODE_LABEL[curMode()]}のルールに全部合う銘柄がありません。`}無理に買わないのもルールのうちです。</div>`}
     ${almost.length ? `<h2>あと1つの銘柄<small>買わずに見張る</small></h2><div class="picks">${almost.map(pickCard).join('')}</div>` : ''}
     <h2>材料になりそうなニュース</h2>
     <div class="newslist">${topNews.map(newsItem).join('') || '<div class="card empty">ニュースはありません</div>'}</div>
@@ -431,7 +446,7 @@ function renderStocks() {
       <select id="sort">${SORTS.map(([k, l]) => `<option value="${k}" ${S.sort === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
     </div>
     <div class="list">${list.map(stockRow).join('') || '<div class="empty">該当なし</div>'}</div>
-    <p class="note">いまは「${MODE_LABEL[S.mode]}」のルールで判定しています（今日の画面で切り替え）。${d.stocks.length} 銘柄を毎日チェックしています（対象は scripts/universe.json で変更できます）。</p>`;
+    <p class="note">いまは「${MODE_LABEL[curMode()]}」のルールで判定しています（今日の画面で切り替え）。${d.stocks.length} 銘柄を毎日チェックしています（対象は scripts/universe.json で変更できます）。</p>`;
   if (keepFocus) { const q = $('#q'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
 }
 
@@ -480,7 +495,7 @@ function renderTrack() {
   const rows = tr.rows.filter((r) => f === 'all' || (f === 'closed' && ['win', 'loss', 'timeout'].includes(r.status)) || (f === 'open' && r.status === 'open'));
   const sim = tr.rows.some((r) => r.src === 'sim');
   $('#v-track').innerHTML = `
-    <h2>注目銘柄のその後<small>${MODE_LABEL[S.mode]}・翌日の寄り付きで買い、目安どおり売ったとして計算</small></h2>
+    <h2>注目銘柄のその後<small>${MODE_LABEL[curMode()]}・翌日の寄り付きで買い、目安どおり売ったとして計算</small></h2>
     ${modeSeg()}
     ${statGrid(tr.stats)}
     <p class="muted" style="font-size:12px;margin:6px 0 0">結果が出た ${tr.stats.n || 0} 回・保有中 ${tr.stats.open || 0} 回。最長 ${bt ? bt.hold_days : 15} 営業日で手じまい。${sim ? '記録を始める前の分は、同じルールで過去の日に選んだ銘柄を再現しています。' : ''}</p>
@@ -498,12 +513,12 @@ function renderTrack() {
     ${statGrid(modeBt())}
     <div class="card" style="margin-top:10px;font-size:13px">
       <table class="bt num"><tr><th></th><th>回数</th><th>勝率</th><th>平均</th><th>PF</th></tr>
-      ${[['きびしめ（ルールどおり）', bt.all], ['きびしめ・日経平均の条件なし', bt.nomkt], ['ゆるめ', bt.loose]].filter(([, st]) => st && st.n).map(([lb, st]) => `<tr><td>${lb}</td><td>${st.n}</td><td>${pctf(st.win_rate)}</td><td class="${cls(st.avg_ret)}">${sgn(st.avg_ret, 2)}</td><td>${st.pf ?? '—'}</td></tr>`).join('')}
-      <tr><td colspan="5" class="muted" style="text-align:left;font-size:11px">${MODE_LABEL[S.mode]}の点数別</td></tr>
-      ${((isLoose() ? bt.loose_by_score : bt.by_score) || []).filter((st) => st.n).map((st) => `<tr class="sub"><td>${st.label}</td><td>${st.n}</td><td>${pctf(st.win_rate)}</td><td class="${cls(st.avg_ret)}">${sgn(st.avg_ret, 2)}</td><td>${st.pf ?? '—'}</td></tr>`).join('')}
+      ${[['きびしめ（ルールどおり）', bt.all], ['きびしめ・日経平均の条件なし', bt.nomkt], ['ゆるめ', bt.loose], ['下げ相場用（日経平均が下向きの日だけ）', bt.bear]].filter(([, st]) => st && st.n).map(([lb, st]) => `<tr><td>${lb}</td><td>${st.n}</td><td>${pctf(st.win_rate)}</td><td class="${cls(st.avg_ret)}">${sgn(st.avg_ret, 2)}</td><td>${st.pf ?? '—'}</td></tr>`).join('')}
+      <tr><td colspan="5" class="muted" style="text-align:left;font-size:11px">${MODE_LABEL[curMode()]}の点数別</td></tr>
+      ${(modeByScore() || []).filter((st) => st.n).map((st) => `<tr class="sub"><td>${st.label}</td><td>${st.n}</td><td>${pctf(st.win_rate)}</td><td class="${cls(st.avg_ret)}">${sgn(st.avg_ret, 2)}</td><td>${st.pf ?? '—'}</td></tr>`).join('')}
       </table>
       <p class="muted" style="margin:8px 0 0">ゆるめは回数が増えるかわりに、勝率や1回の平均が下がりやすくなります。どちらが自分に合うかは、ここと「注目銘柄のその後」で比べてください。「日経平均の条件なし」と比べると、ルール「日経平均が下向きの時は買わない」の効き目が分かります。点数別（字下げの行）は、ルールに合った銘柄の中で点数が高いほど成績が良いかの確認です。</p>
-      <p class="muted" style="margin:8px 0 0">比べるもの：いつ買っても ${bt.hold_days} 日持った場合の平均は <b class="${cls(bt.baseline_avg_ret)}">${sgn(bt.baseline_avg_ret, 2)}</b>。これを上回っていればルールに意味がある目安です。PF（プロフィットファクター）は「勝ちの合計 ÷ 負けの合計」で、1 を超えるとプラス。</p>
+      <p class="muted" style="margin:8px 0 0">比べるもの：いつ買っても ${bt.hold_days} 日持った場合の平均は <b class="${cls(bt.baseline_avg_ret)}">${sgn(bt.baseline_avg_ret, 2)}</b>。これを上回っていればルールに意味がある目安です。${bt.baseline_down_avg_ret != null ? `日経平均が下向きの日に何でも買った場合の平均は <b class="${cls(bt.baseline_down_avg_ret)}">${sgn(bt.baseline_down_avg_ret, 2)}</b>（下げ相場用はこれと比べる）。` : ''}PF（プロフィットファクター）は「勝ちの合計 ÷ 負けの合計」で、1 を超えるとプラス。</p>
     </div>` : ''}
     <p class="note">検証は株価だけで判定できるルール（日経平均・25日線・週足・売買代金・急騰・押し目と陽線・支持線・リスク:リワード）で行い、決算のルールとニュースは使っていません（過去の決算日が取れないため）。手数料・税金は含みません。同じ日に損切りと利確の両方に届いたときは損切りとして数えています（厳しめ）。過去の成績は将来を約束しません。</p>`;
 }
@@ -548,19 +563,8 @@ function posCard(p) {
     <div class="pos-acts">
       <label>損切り（上げるだけ）<input type="number" inputmode="decimal" data-pos-stop="${p.id}" value="${p.stop}"></label>
       <label>利確<input type="number" inputmode="decimal" data-pos-target="${p.id}" value="${p.target}"></label>
-      <button class="btn-sm" data-pos-sell="${p.id}">売った</button>
-    </div>
-    <div class="sellform" data-sellform="${p.id}" hidden>
-      <div class="calc">
-        <label class="field">売値（円）<input type="number" inputmode="decimal" data-sf="price" value="${st.now}"></label>
-        <label class="field">売った日<input type="date" data-sf="date" value="${localDate()}"></label>
-      </div>
-      <div class="field" style="margin-top:8px">ルールを守れた？
-        <div class="seg"><button data-sf-kept="1">守れた</button><button data-sf-kept="0">破った</button></div>
-      </div>
-      <label class="field" style="margin-top:8px">メモ（なぜ買った・なぜ売った）<input type="text" data-sf="memo" placeholder="例：支持線で反発、利確ラインで売り"></label>
-      <div class="pos-acts"><button class="btn-main" data-sf-save="${p.id}">記録して保有から外す</button></div>
-      <button class="linkbtn" data-pos-del="${p.id}">記録せずに消す（間違えて登録したとき）</button>
+      <button class="btn-sm" data-entry="edit" data-id="${p.id}">直す</button>
+      <button class="btn-sm strong" data-entry="sell" data-id="${p.id}">売った</button>
     </div>
   </div>`;
 }
@@ -600,7 +604,7 @@ function journalHtml() {
       <div>負けの平均<b class="down">${sgn(st.avgLoss, 1)}</b></div>
       <div>ルールを守れた<b>${pctf(st.keptRate)}</b></div>
     </div>
-    ${['strict', 'loose'].map((m) => { const x = journalStats(js.filter((t) => (t.mode || 'strict') === m)); return x ? `<div class="why small">${MODE_LABEL[m]}で買った分：${x.n}回・勝率 ${pctf(x.winRate)}・損益 <span class="${cls(x.total)}">${x.total >= 0 ? '+' : '−'}${yen(Math.abs(Math.round(x.total)))}円</span></div>` : ''; }).join('')}
+    ${['strict', 'loose', 'bear'].map((m) => { const x = journalStats(js.filter((t) => (t.mode || 'strict') === m)); return x ? `<div class="why small">${MODE_LABEL[m]}で買った分：${x.n}回・勝率 ${pctf(x.winRate)}・損益 <span class="${cls(x.total)}">${x.total >= 0 ? '+' : '−'}${yen(Math.abs(Math.round(x.total)))}円</span></div>` : ''; }).join('')}
     <div class="card matrix" style="margin-top:8px">
       <div></div><div class="h">勝ち</div><div class="h">負け</div>
       <div class="h">守った</div><div class="good">${st.m.kw}<small>理想</small></div><div class="good">${st.m.kl}<small>OK（経費）</small></div>
@@ -608,7 +612,7 @@ function journalHtml() {
     </div>
     ${st.streak >= 2 ? `<div class="why warn" style="margin-top:6px">いま ${st.streak} 連敗中${st.streak >= 3 ? '（1週間休むルール）' : '。次も負けたら1週間休みます'}</div>` : ''}
     <div class="list" style="margin-top:8px">${js.slice(0, S.journalAll ? 999 : 10).map((t) => `<div class="row">
-      <div class="main"><b>${t.kept ? '' : '<span class="chip neg">破</span> '}${t.mode === 'loose' ? '<span class="chip">ゆるめ</span> ' : ''}${esc(t.name)}</b><small>${t.buyDate.slice(5).replace('-', '/')}→${t.sellDate.slice(5).replace('-', '/')}・${yen(t.price)}→${yen(t.sellPrice)}円×${t.shares}${t.memo ? '・' + esc(t.memo) : ''}</small></div>
+      <div class="main"><b>${t.kept ? '' : '<span class="chip neg">破</span> '}${t.mode && t.mode !== 'strict' ? `<span class="chip">${MODE_LABEL[t.mode]}</span> ` : ''}${esc(t.name)}</b><small>${t.buyDate.slice(5).replace('-', '/')}→${t.sellDate.slice(5).replace('-', '/')}・${yen(t.price)}→${yen(t.sellPrice)}円×${t.shares}${t.memo ? '・' + esc(t.memo) : ''}</small></div>
       <div class="rt num"><b class="${cls(t.pl)}">${t.pl >= 0 ? '+' : '−'}${yen(Math.abs(Math.round(t.pl)))}</b><span class="${cls(t.ret)}">${sgn(t.ret, 1)}</span></div>
       <button class="xbtn" data-j-del="${t.id}" aria-label="消す">×</button></div>`).join('')}</div>
     ${js.length > 10 && !S.journalAll ? `<button class="btn-sm" id="journalMore" style="width:100%;margin-top:8px">もっと見る（全 ${js.length} 件）</button>` : ''}
@@ -619,8 +623,9 @@ function renderWatch() {
   const list = [...S.watch].map((c) => S.byCode[c]).filter(Boolean).sort((a, b) => b.score - a.score);
   const tot = S.positions.reduce((a, p) => a + posStatus(p).pl, 0);
   $('#v-watch').innerHTML = `
+    <button class="btn-main add-pos" data-entry="buy">＋ 買った銘柄を記入</button>
     <h2>保有銘柄${S.positions.length ? `<small class="num ${cls(tot)}">合計 ${tot >= 0 ? '+' : '−'}${yen(Math.abs(Math.round(tot)))}円</small>` : ''}</h2>
-    ${S.positions.length ? `<div class="picks">${S.positions.map(posCard).join('')}</div>` : '<div class="card empty">銘柄の画面の「買った」から登録すると、損切り・利確・売りのサインをお知らせします。</div>'}
+    ${S.positions.length ? `<div class="picks">${S.positions.map(posCard).join('')}</div>` : '<div class="card empty">上の「＋ 買った銘柄を記入」から登録すると、損切り・利確・売りのサインをお知らせします。</div>'}
     <h2>取引記録<small>全トレードを記録し、ルールを守れたかを書く</small></h2>
     ${journalHtml()}
     <h2>ウォッチ銘柄</h2>
@@ -656,6 +661,20 @@ function renderWatch() {
     <h2>マイルール<small>ルール一覧.xlsx より</small></h2>
     <div class="card rules">${MY_RULES.map((r, i) => `${i === 0 || MY_RULES[i - 1][0] !== r[0] ? `<div class="rg">${esc(r[0])}</div>` : ''}
       <div class="rl"><b>${esc(r[1])}</b>${r[2] ? `<small>${esc(r[2])}</small>` : ''}</div>`).join('')}</div>
+    <h2>下げ相場用のルール<small>日経平均が下向きの日に使う</small></h2>
+    <div class="card" style="font-size:13px">
+      <p style="margin-top:0">あなたのルール「日経平均が下向きの時は買わない」の例外として使うモードです。日経平均が下げている中でも強い銘柄だけを、小さく狙います。</p>
+      <ul style="padding-left:18px;margin:0">
+        <li><b>使う日</b>：日経平均の25日線が下向きの日だけ（上向きの日は銘柄を出さない）</li>
+        <li><b>逆行高</b>：直近20日で日経平均より +3% 以上強い</li>
+        <li><b>つられにくい</b>：直近60日の β（日経平均が1%動くと平均で何%動くか）が 0.8 以下、または食品・医薬品・通信・電力・小売・陸運</li>
+        <li><b>トレンド</b>：その銘柄の25日線が上向きで、株価がその上</li>
+        <li><b>押し目</b>：5日以内に25日線 +3% か支持線まで下げ、陽線か前日比プラス</li>
+        <li><b>利確幅</b>：損切り幅の2倍以上（ゆるめより厳しい）。急騰は5日で +12% 未満</li>
+        <li><b>株数</b>：許せる損失を半分にして計算（設定 1% なら 0.5%）</li>
+        <li>決算は1週間以内なら買わない。売買代金・IFDOCO・損切りを下げない、などは同じ</li>
+      </ul>
+    </div>
     <h2>ゆるめのルール<small>きびしめとの違い</small></h2>
     <div class="card" style="font-size:13px">
       <table class="bt cmp"><tr><th></th><th>きびしめ</th><th>ゆるめ</th></tr>
@@ -691,7 +710,7 @@ function renderWatch() {
 function sharesFor(s) {
   const per = s.entry - s.stop;
   if (!(per > 0) || !(S.capital > 0)) return null;
-  const byRisk = Math.floor((S.capital * S.riskPct / 100) / per / 100) * 100;
+  const byRisk = Math.floor((S.capital * riskPctNow() / 100) / per / 100) * 100;
   const byCash = Math.floor(S.capital / s.entry / 100) * 100;
   const n = Math.max(0, Math.min(byRisk, byCash));
   return { n, cost: n * s.entry, loss: n * per, gain: n * (s.target - s.entry), limited: byCash < byRisk };
@@ -702,13 +721,14 @@ function calcHtml(s) {
   if (!r) return '資金を入れてください';
   if (r.n === 0) return `この資金と損失の割合では 100 株を買えません（100株で損切り時 ${yen((s.entry - s.stop) * 100)} 円の損）`;
   return `<b>${r.n.toLocaleString()} 株</b>（約 ${yen(r.cost)} 円）<br>
-    損切りなら <span class="down">−${yen(r.loss)} 円</span>・利確なら <span class="up">+${yen(r.gain)} 円</span>${r.limited ? '<br><small class="muted">資金の上限で株数を抑えています</small>' : ''}`;
+    損切りなら <span class="down">−${yen(r.loss)} 円</span>・利確なら <span class="up">+${yen(r.gain)} 円</span>${r.limited ? '<br><small class="muted">資金の上限で株数を抑えています</small>' : ''}${isBear() ? `<br><small class="muted">下げ相場用なので、許せる損失を半分（${riskPctNow().toFixed(1)}%）にしています</small>` : ''}`;
 }
 
 async function openStock(code, keepScroll) {
   const s = S.byCode[code];
   if (!s) return;
   S.open = code;
+  if (typeof noteRecent === 'function') noteRecent(code);
   const sheet = $('#sheet');
   const y = sheet.scrollTop;
   sheet.hidden = false;
@@ -717,6 +737,7 @@ async function openStock(code, keepScroll) {
   $('#sheetName').textContent = s.name;
   $('#sheetSub').textContent = `${s.code}・${s.sector}・${s.date} 終値`;
   $('#sheetStar').classList.toggle('on', S.watch.has(code));
+  $('#sheetBuy').dataset.code = code;
   const news = s.news_ids.map((id) => S.newsById[id]).filter(Boolean);
   const pctTo = (x) => sgn((x / s.entry - 1) * 100, 1);
   $('#sheetBody').innerHTML = `
@@ -731,7 +752,7 @@ async function openStock(code, keepScroll) {
     <div class="card verdict ${s.rule_ok ? 'ok' : 'ng'}">${s.rule_ok
       ? `<b>✓ ルールに合っています</b>${s.earnings_days == null ? '<br><small>決算日だけは取れなかったので、自分で確認してください</small>' : ''}`
       : `<b>✗ ルールに合っていません（${s.fails.length}つ）</b><br><small>買わずに見張りましょう。</small>`}</div>
-    <h2>ルールチェック<small>${MODE_LABEL[S.mode]}${isLoose() ? '・きびしめとの違いは「保有」タブの下' : ''}</small></h2>
+    <h2>ルールチェック<small>${MODE_LABEL[curMode()]}${curMode() !== 'strict' ? '・きびしめとの違いは「保有」タブの下' : ''}</small></h2>
     <ul class="checks">${s.checks.map((c) => `<li class="c-${c.req === false ? 'ref' : c.ok}"><i>${CHECK_ICON[c.ok]}</i><span>${esc(c.label)}${c.detail ? `<small>${esc(c.detail)}</small>` : ''}</span></li>`).join('')}</ul>
     <div class="chartbox"><canvas id="chart"></canvas>
       <div class="legend"><span><i style="background:#f0a020"></i>25日線</span><span><i style="background:#8a63d2"></i>75日線</span>
@@ -761,18 +782,7 @@ async function openStock(code, keepScroll) {
       <label class="field">資金（円）<input id="cCap" type="number" inputmode="numeric" value="${S.capital}"></label>
       <label class="field">許せる損失（%）<input id="cRisk" type="number" inputmode="decimal" step="0.1" value="${S.riskPct}"></label>
       <div class="res num" id="cRes">${calcHtml(s)}</div>
-      <button class="btn-main" id="btnBought">買った（保有に追加）</button>
-    </div>
-    <div class="card buyform" id="buyForm" hidden>
-      <div class="calc">
-        <label class="field">買値（円）<input id="bPrice" type="number" inputmode="decimal" value="${s.entry}"></label>
-        <label class="field">株数<input id="bShares" type="number" inputmode="numeric" step="100" value="${(sharesFor(s) || {}).n || 100}"></label>
-        <div class="why warn" id="bWarn" style="grid-column:1/-1" hidden></div>
-        <label class="field">損切り（円）<input id="bStop" type="number" inputmode="decimal" value="${s.stop}"></label>
-        <label class="field">利確（円）<input id="bTarget" type="number" inputmode="decimal" value="${s.target}"></label>
-        <label class="field">買った日<input id="bDate" type="date" value="${localDate()}"></label>
-        <button class="btn-main" id="btnSavePos" style="align-self:end">保有に追加</button>
-      </div>
+      <button class="btn-main" data-entry="buy" data-code="${s.code}">買った（記入する）</button>
     </div>
     ${s.reasons.length || s.theme_notes.some((t) => t.includes('追い風')) ? `<h2>注目する理由</h2><ul class="pts good">${[...s.reasons, ...s.theme_notes.filter((t) => t.includes('追い風'))].map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
     ${s.cautions.length || s.theme_notes.some((t) => t.includes('向かい風')) ? `<h2>注意すること</h2><ul class="pts bad">${[...s.cautions, ...s.theme_notes.filter((t) => t.includes('向かい風'))].map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
@@ -935,66 +945,11 @@ document.addEventListener('click', (e) => {
   const tf = e.target.closest('[data-tf]');
   if (tf) { S.trackFilter = tf.dataset.tf; S.trackAll = false; return renderTrack(); }
   if (e.target.closest('#trackMore')) { S.trackAll = true; return renderTrack(); }
-  if (e.target.closest('#btnBought')) {
-    const f = $('#buyForm'); f.hidden = !f.hidden;
-    if (!f.hidden) f.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    return;
-  }
-  if (e.target.closest('#btnSavePos')) {
-    const s = S.byCode[S.open];
-    const p = { id: Date.now().toString(36), code: s.code, name: s.name, price: +$('#bPrice').value, shares: +$('#bShares').value,
-      stop: +$('#bStop').value, target: +$('#bTarget').value, date: $('#bDate').value || localDate() };
-    if (!(p.price > 0 && p.shares > 0)) return toast('買値と株数を入れてください');
-    if (!(p.stop > 0 && p.target > 0) || p.stop >= p.price || p.target <= p.price) return toast('ルール：損切りと利確の値段を決めてから買う');
-    const warns = [];
-    const rest = restUntil();
-    if (rest) warns.push(`3連敗中で ${fmtDate(rest)} まで休む期間です`);
-    if (!s.rule_ok) warns.push(`この銘柄は${MODE_LABEL[S.mode]}のルールに合っていません（` + s.checks.filter((c) => c.ok === false && c.req !== false).map((c) => c.label).join('・') + '）');
-    const rr = (p.target - p.price) / (p.price - p.stop);
-    const minRr = isLoose() ? 1.5 : 2;
-    if (rr < minRr - 1e-9) warns.push(`利確幅が損切り幅の ${rr.toFixed(1)} 倍しかありません（${MODE_LABEL[S.mode]}のルールは${minRr}倍以上）`);
-    const lossPct = (p.price - p.stop) * p.shares / (S.capital || 1) * 100;
-    if (lossPct > 2) warns.push(`損切りになると資金の ${lossPct.toFixed(1)}% の損です（ルールは1〜2%まで）`);
-    if (warns.length && !confirm('ルールに合っていません。\n\n・' + warns.join('\n・') + '\n\nそれでも記録しますか？（「破った」取引として記録されます）')) return;
-    p.ruleOkAtBuy = !warns.length;
-    p.mode = S.mode;
-    p.initStop = p.stop;
-    S.positions.push(p); savePositions();
-    $('#buyForm').hidden = true;
-    toast('保有に追加しました（「保有」タブ）');
-    renderWatch(); renderHome();
-    return;
-  }
   const raise = e.target.closest('[data-pos-raise]');
   if (raise) {
     const p = S.positions.find((x) => x.id === raise.dataset.posRaise);
     const v = +raise.dataset.v;
     if (p && v > p.stop) { p.stop = v; savePositions(); renderWatch(); renderHome(); toast(`損切りを ${yen(v)} 円に上げました`); }
-    return;
-  }
-  const sell = e.target.closest('[data-pos-sell]');
-  if (sell) { const f = document.querySelector(`[data-sellform="${sell.dataset.posSell}"]`); f.hidden = !f.hidden; return; }
-  const kept = e.target.closest('[data-sf-kept]');
-  if (kept) {
-    kept.parentElement.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === kept));
-    return;
-  }
-  const sfs = e.target.closest('[data-sf-save]');
-  if (sfs) {
-    const p = S.positions.find((x) => x.id === sfs.dataset.sfSave);
-    const f = document.querySelector(`[data-sellform="${p.id}"]`);
-    const sp = +f.querySelector('[data-sf=price]').value;
-    const k = f.querySelector('[data-sf-kept].on');
-    if (!(sp > 0)) return toast('売値を入れてください');
-    if (!k) return toast('ルールを守れたかを選んでください（ルール：必ず書く）');
-    const t = { id: p.id, code: p.code, name: p.name, buyDate: p.date, sellDate: f.querySelector('[data-sf=date]').value || localDate(),
-      price: p.price, sellPrice: sp, shares: p.shares, stop: p.initStop || p.stop, target: p.target,
-      pl: (sp - p.price) * p.shares, ret: (sp / p.price - 1) * 100, kept: k.dataset.sfKept === '1', mode: p.mode || 'strict',
-      memo: f.querySelector('[data-sf=memo]').value.trim() };
-    S.journal.push(t); saveJournal();
-    S.positions = S.positions.filter((x) => x !== p); savePositions();
-    renderWatch(); renderHome();
-    toast(t.pl >= 0 ? '記録しました' : (t.kept ? '記録しました。ルールどおりの損切りは経費です' : '記録しました'));
     return;
   }
   const jd = e.target.closest('[data-j-del]');
@@ -1037,11 +992,6 @@ document.addEventListener('input', (e) => {
   if (id === 'capital' || id === 'cCap') { S.capital = Math.max(0, +e.target.value || 0); store.set('capital', S.capital); }
   if (id === 'riskPct' || id === 'cRisk') { S.riskPct = Math.max(0, +e.target.value || 0); store.set('riskPct', S.riskPct); }
   if ((id === 'cCap' || id === 'cRisk') && S.open) $('#cRes').innerHTML = calcHtml(S.byCode[S.open]);
-  if (id === 'bShares' && S.open) {
-    const r = sharesFor(S.byCode[S.open]);
-    const w = $('#bWarn');
-    if (w) { w.hidden = !(r && +e.target.value > r.n); w.textContent = `ルール：負けを取り返そうと株数を増やさない（計算では ${r ? r.n : 0} 株まで）`; }
-  }
   if (id === 'riskPct') renderWatchSoon();
 });
 

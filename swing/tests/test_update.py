@@ -169,3 +169,31 @@ class Tdnet(unittest.TestCase):
         got = sorted(c for n in news for c in n["codes"])
         self.assertEqual(got, ["7203", "8058"])
         self.assertTrue(all("適時開示" in n["tags"] for n in news))
+
+
+class BearRules(unittest.TestCase):
+    def test_beta(self):
+        bench = u.demo_prices("nk", 30000, days=200, drift=0, vol=0.01)
+        # ちょうど日経平均の2倍動く銘柄 → β は 2
+        c = [1000.0]
+        for k in range(1, 200):
+            c.append(c[-1] * (1 + 2 * (bench["c"][k] / bench["c"][k - 1] - 1)))
+        ind = u.indicators({"d": bench["d"], "o": c, "h": [x * 1.01 for x in c], "l": [x * 0.99 for x in c], "c": c, "v": [1e6] * 200})
+        u.add_beta(ind, bench)
+        self.assertAlmostEqual(ind["beta"][-1], 2.0, places=6)
+
+    def test_bear_only_on_down_days_and_needs_rs(self):
+        ind = u.indicators(u.demo_prices("b", 1000, days=500, drift=0.0012, vol=0.015))
+        ind["sector"] = "食品"  # ディフェンシブ業種なので β の条件は通る
+        bear = u.RULESETS["bear"]
+        ok_days = 0
+        for i in range(100, ind["n"]):
+            up = u.evaluate(ind, i, 0, mkt_up={"up": True, "above": True}, rules=bear)
+            self.assertFalse(up["rule_ok"])  # 日経平均が上向きの日は使わない
+            weak = u.evaluate(ind, i, 50, mkt_up={"up": False, "above": False}, rules=bear)
+            self.assertFalse(weak["rule_ok"])  # 日経平均の方が 50% 強い → 逆行高ではない
+            ev = u.evaluate(ind, i, -20, mkt_up={"up": False, "above": False}, rules=bear)
+            if ev["rule_ok"]:
+                ok_days += 1
+                self.assertGreaterEqual((ev["target"] - ev["entry"]) / ev["risk"], 2 - 1e-9)
+        self.assertGreater(ok_days, 0)

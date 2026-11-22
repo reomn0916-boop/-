@@ -48,12 +48,16 @@
     <div class="sheet-head">
       <button id="sheetBack" class="icon" aria-label="戻る"><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
       <div class="sheet-title"><b id="sheetName"></b><small id="sheetSub"></small></div>
+      <button id="sheetBuy" class="chip-btn" data-entry="buy" aria-label="買った銘柄として記入">買った</button>
       <button id="sheetStar" class="icon" aria-label="ウォッチに追加"><svg viewBox="0 0 24 24"><path d="M12 3l2.7 5.6 6.1.8-4.5 4.2 1.1 6-5.4-2.9-5.4 2.9 1.1-6-4.5-4.2 6.1-.8z"/></svg></button>
     </div>
     <div id="sheetBody"></div>
   </div>
 
+  <div id="entry" hidden><div class="ent-panel" id="entryBody" role="dialog" aria-modal="true"></div></div>
+
   <div id="toast" role="status"></div>
   <script src="app.js"></script>
+  <script src="entry.js"></script>
 </body>
 </html>

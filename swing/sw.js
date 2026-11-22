@@ -1,6 +1,6 @@
 // スイングボードのオフライン用キャッシュ。画面のファイルを変えたら VERSION を上げる
-const VERSION = 'swing-v6';
-const FILES = ['./', './index.html', './app.css', './app.js', './manifest.webmanifest', './icon.svg', './icon-192.png'];
+const VERSION = 'swing-v8';
+const FILES = ['./', './index.html', './app.css', './app.js', './entry.js', './manifest.webmanifest', './icon.svg', './icon-192.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(FILES)).then(() => self.skipWaiting()));
