@@ -563,19 +563,8 @@ function posCard(p) {
     <div class="pos-acts">
       <label>損切り（上げるだけ）<input type="number" inputmode="decimal" data-pos-stop="${p.id}" value="${p.stop}"></label>
       <label>利確<input type="number" inputmode="decimal" data-pos-target="${p.id}" value="${p.target}"></label>
-      <button class="btn-sm" data-pos-sell="${p.id}">売った</button>
-    </div>
-    <div class="sellform" data-sellform="${p.id}" hidden>
-      <div class="calc">
-        <label class="field">売値（円）<input type="number" inputmode="decimal" data-sf="price" value="${st.now}"></label>
-        <label class="field">売った日<input type="date" data-sf="date" value="${localDate()}"></label>
-      </div>
-      <div class="field" style="margin-top:8px">ルールを守れた？
-        <div class="seg"><button data-sf-kept="1">守れた</button><button data-sf-kept="0">破った</button></div>
-      </div>
-      <label class="field" style="margin-top:8px">メモ（なぜ買った・なぜ売った）<input type="text" data-sf="memo" placeholder="例：支持線で反発、利確ラインで売り"></label>
-      <div class="pos-acts"><button class="btn-main" data-sf-save="${p.id}">記録して保有から外す</button></div>
-      <button class="linkbtn" data-pos-del="${p.id}">記録せずに消す（間違えて登録したとき）</button>
+      <button class="btn-sm" data-entry="edit" data-id="${p.id}">直す</button>
+      <button class="btn-sm strong" data-entry="sell" data-id="${p.id}">売った</button>
     </div>
   </div>`;
 }
@@ -634,8 +623,9 @@ function renderWatch() {
   const list = [...S.watch].map((c) => S.byCode[c]).filter(Boolean).sort((a, b) => b.score - a.score);
   const tot = S.positions.reduce((a, p) => a + posStatus(p).pl, 0);
   $('#v-watch').innerHTML = `
+    <button class="btn-main add-pos" data-entry="buy">＋ 買った銘柄を記入</button>
     <h2>保有銘柄${S.positions.length ? `<small class="num ${cls(tot)}">合計 ${tot >= 0 ? '+' : '−'}${yen(Math.abs(Math.round(tot)))}円</small>` : ''}</h2>
-    ${S.positions.length ? `<div class="picks">${S.positions.map(posCard).join('')}</div>` : '<div class="card empty">銘柄の画面の「買った」から登録すると、損切り・利確・売りのサインをお知らせします。</div>'}
+    ${S.positions.length ? `<div class="picks">${S.positions.map(posCard).join('')}</div>` : '<div class="card empty">上の「＋ 買った銘柄を記入」から登録すると、損切り・利確・売りのサインをお知らせします。</div>'}
     <h2>取引記録<small>全トレードを記録し、ルールを守れたかを書く</small></h2>
     ${journalHtml()}
     <h2>ウォッチ銘柄</h2>
@@ -738,6 +728,7 @@ async function openStock(code, keepScroll) {
   const s = S.byCode[code];
   if (!s) return;
   S.open = code;
+  if (typeof noteRecent === 'function') noteRecent(code);
   const sheet = $('#sheet');
   const y = sheet.scrollTop;
   sheet.hidden = false;
@@ -746,6 +737,7 @@ async function openStock(code, keepScroll) {
   $('#sheetName').textContent = s.name;
   $('#sheetSub').textContent = `${s.code}・${s.sector}・${s.date} 終値`;
   $('#sheetStar').classList.toggle('on', S.watch.has(code));
+  $('#sheetBuy').dataset.code = code;
   const news = s.news_ids.map((id) => S.newsById[id]).filter(Boolean);
   const pctTo = (x) => sgn((x / s.entry - 1) * 100, 1);
   $('#sheetBody').innerHTML = `
@@ -790,18 +782,7 @@ async function openStock(code, keepScroll) {
       <label class="field">資金（円）<input id="cCap" type="number" inputmode="numeric" value="${S.capital}"></label>
       <label class="field">許せる損失（%）<input id="cRisk" type="number" inputmode="decimal" step="0.1" value="${S.riskPct}"></label>
       <div class="res num" id="cRes">${calcHtml(s)}</div>
-      <button class="btn-main" id="btnBought">買った（保有に追加）</button>
-    </div>
-    <div class="card buyform" id="buyForm" hidden>
-      <div class="calc">
-        <label class="field">買値（円）<input id="bPrice" type="number" inputmode="decimal" value="${s.entry}"></label>
-        <label class="field">株数<input id="bShares" type="number" inputmode="numeric" step="100" value="${(sharesFor(s) || {}).n || 100}"></label>
-        <div class="why warn" id="bWarn" style="grid-column:1/-1" hidden></div>
-        <label class="field">損切り（円）<input id="bStop" type="number" inputmode="decimal" value="${s.stop}"></label>
-        <label class="field">利確（円）<input id="bTarget" type="number" inputmode="decimal" value="${s.target}"></label>
-        <label class="field">買った日<input id="bDate" type="date" value="${localDate()}"></label>
-        <button class="btn-main" id="btnSavePos" style="align-self:end">保有に追加</button>
-      </div>
+      <button class="btn-main" data-entry="buy" data-code="${s.code}">買った（記入する）</button>
     </div>
     ${s.reasons.length || s.theme_notes.some((t) => t.includes('追い風')) ? `<h2>注目する理由</h2><ul class="pts good">${[...s.reasons, ...s.theme_notes.filter((t) => t.includes('追い風'))].map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
     ${s.cautions.length || s.theme_notes.some((t) => t.includes('向かい風')) ? `<h2>注意すること</h2><ul class="pts bad">${[...s.cautions, ...s.theme_notes.filter((t) => t.includes('向かい風'))].map((r) => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
@@ -964,67 +945,11 @@ document.addEventListener('click', (e) => {
   const tf = e.target.closest('[data-tf]');
   if (tf) { S.trackFilter = tf.dataset.tf; S.trackAll = false; return renderTrack(); }
   if (e.target.closest('#trackMore')) { S.trackAll = true; return renderTrack(); }
-  if (e.target.closest('#btnBought')) {
-    const f = $('#buyForm'); f.hidden = !f.hidden;
-    if (!f.hidden) f.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    return;
-  }
-  if (e.target.closest('#btnSavePos')) {
-    const s = S.byCode[S.open];
-    const p = { id: Date.now().toString(36), code: s.code, name: s.name, price: +$('#bPrice').value, shares: +$('#bShares').value,
-      stop: +$('#bStop').value, target: +$('#bTarget').value, date: $('#bDate').value || localDate() };
-    if (!(p.price > 0 && p.shares > 0)) return toast('買値と株数を入れてください');
-    if (!(p.stop > 0 && p.target > 0) || p.stop >= p.price || p.target <= p.price) return toast('ルール：損切りと利確の値段を決めてから買う');
-    const warns = [];
-    const rest = restUntil();
-    if (rest) warns.push(`3連敗中で ${fmtDate(rest)} まで休む期間です`);
-    if (!s.rule_ok) warns.push(`この銘柄は${MODE_LABEL[curMode()]}のルールに合っていません（` + s.checks.filter((c) => c.ok === false && c.req !== false).map((c) => c.label).join('・') + '）');
-    const rr = (p.target - p.price) / (p.price - p.stop);
-    const minRr = MIN_RR[curMode()];
-    if (rr < minRr - 1e-9) warns.push(`利確幅が損切り幅の ${rr.toFixed(1)} 倍しかありません（${MODE_LABEL[curMode()]}のルールは${minRr}倍以上）`);
-    const lossPct = (p.price - p.stop) * p.shares / (S.capital || 1) * 100;
-    if (isBear() && lossPct > S.riskPct / 2 + 1e-9) warns.push(`下げ相場用は損を資金の ${(S.riskPct / 2).toFixed(1)}% までにしています（いまは ${lossPct.toFixed(1)}%）`);
-    else if (lossPct > 2) warns.push(`損切りになると資金の ${lossPct.toFixed(1)}% の損です（ルールは1〜2%まで）`);
-    if (warns.length && !confirm('ルールに合っていません。\n\n・' + warns.join('\n・') + '\n\nそれでも記録しますか？（「破った」取引として記録されます）')) return;
-    p.ruleOkAtBuy = !warns.length;
-    p.mode = curMode();
-    p.initStop = p.stop;
-    S.positions.push(p); savePositions();
-    $('#buyForm').hidden = true;
-    toast('保有に追加しました（「保有」タブ）');
-    renderWatch(); renderHome();
-    return;
-  }
   const raise = e.target.closest('[data-pos-raise]');
   if (raise) {
     const p = S.positions.find((x) => x.id === raise.dataset.posRaise);
     const v = +raise.dataset.v;
     if (p && v > p.stop) { p.stop = v; savePositions(); renderWatch(); renderHome(); toast(`損切りを ${yen(v)} 円に上げました`); }
-    return;
-  }
-  const sell = e.target.closest('[data-pos-sell]');
-  if (sell) { const f = document.querySelector(`[data-sellform="${sell.dataset.posSell}"]`); f.hidden = !f.hidden; return; }
-  const kept = e.target.closest('[data-sf-kept]');
-  if (kept) {
-    kept.parentElement.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === kept));
-    return;
-  }
-  const sfs = e.target.closest('[data-sf-save]');
-  if (sfs) {
-    const p = S.positions.find((x) => x.id === sfs.dataset.sfSave);
-    const f = document.querySelector(`[data-sellform="${p.id}"]`);
-    const sp = +f.querySelector('[data-sf=price]').value;
-    const k = f.querySelector('[data-sf-kept].on');
-    if (!(sp > 0)) return toast('売値を入れてください');
-    if (!k) return toast('ルールを守れたかを選んでください（ルール：必ず書く）');
-    const t = { id: p.id, code: p.code, name: p.name, buyDate: p.date, sellDate: f.querySelector('[data-sf=date]').value || localDate(),
-      price: p.price, sellPrice: sp, shares: p.shares, stop: p.initStop || p.stop, target: p.target,
-      pl: (sp - p.price) * p.shares, ret: (sp / p.price - 1) * 100, kept: k.dataset.sfKept === '1', mode: p.mode || 'strict',
-      memo: f.querySelector('[data-sf=memo]').value.trim() };
-    S.journal.push(t); saveJournal();
-    S.positions = S.positions.filter((x) => x !== p); savePositions();
-    renderWatch(); renderHome();
-    toast(t.pl >= 0 ? '記録しました' : (t.kept ? '記録しました。ルールどおりの損切りは経費です' : '記録しました'));
     return;
   }
   const jd = e.target.closest('[data-j-del]');
@@ -1067,11 +992,6 @@ document.addEventListener('input', (e) => {
   if (id === 'capital' || id === 'cCap') { S.capital = Math.max(0, +e.target.value || 0); store.set('capital', S.capital); }
   if (id === 'riskPct' || id === 'cRisk') { S.riskPct = Math.max(0, +e.target.value || 0); store.set('riskPct', S.riskPct); }
   if ((id === 'cCap' || id === 'cRisk') && S.open) $('#cRes').innerHTML = calcHtml(S.byCode[S.open]);
-  if (id === 'bShares' && S.open) {
-    const r = sharesFor(S.byCode[S.open]);
-    const w = $('#bWarn');
-    if (w) { w.hidden = !(r && +e.target.value > r.n); w.textContent = `ルール：負けを取り返そうと株数を増やさない（計算では ${r ? r.n : 0} 株まで）`; }
-  }
   if (id === 'riskPct') renderWatchSoon();
 });
 
