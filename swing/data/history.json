@@ -1439,6 +1439,78 @@
 "target": 3524,
 "src": "live",
 "mode": "bear"
+},
+{
+"date": "2026-11-24",
+"code": "4502",
+"name": "武田薬品工業",
+"setup": "pullback",
+"score": 84.0,
+"entry": 7020,
+"stop": 6555,
+"target": 7955,
+"src": "live",
+"mode": "bear"
+},
+{
+"date": "2026-11-24",
+"code": "5108",
+"name": "ブリヂストン",
+"setup": "pullback",
+"score": 81.6,
+"entry": 4286,
+"stop": 4010,
+"target": 4839,
+"src": "live",
+"mode": "bear"
+},
+{
+"date": "2026-11-24",
+"code": "7203",
+"name": "トヨタ自動車",
+"setup": "pullback",
+"score": 79.6,
+"entry": 3333,
+"stop": 3205,
+"target": 3589,
+"src": "live",
+"mode": "bear"
+},
+{
+"date": "2026-11-24",
+"code": "3402",
+"name": "東レ",
+"setup": "pullback",
+"score": 78.0,
+"entry": 1306,
+"stop": 1256,
+"target": 1407,
+"src": "live",
+"mode": "bear"
+},
+{
+"date": "2026-11-24",
+"code": "4507",
+"name": "塩野義製薬",
+"setup": "pullback",
+"score": 77.7,
+"entry": 3126,
+"stop": 2919,
+"target": 3539,
+"src": "live",
+"mode": "bear"
+},
+{
+"date": "2026-11-24",
+"code": "5401",
+"name": "日本製鉄",
+"setup": "pullback",
+"score": 77.6,
+"entry": 672.7,
+"stop": 660.6,
+"target": 703.0,
+"src": "live",
+"mode": "bear"
 }
 ]
 }
