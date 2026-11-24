@@ -1511,6 +1511,42 @@
 "target": 703.0,
 "src": "live",
 "mode": "bear"
+},
+{
+"date": "2026-11-24",
+"code": "6758",
+"name": "ソニーグループ",
+"setup": "pullback",
+"score": 94.4,
+"entry": 4322,
+"stop": 4147,
+"target": 4672,
+"src": "live",
+"mode": "bear"
+},
+{
+"date": "2026-11-24",
+"code": "4452",
+"name": "花王",
+"setup": "pullback",
+"score": 90.0,
+"entry": 4005,
+"stop": 3812,
+"target": 4390,
+"src": "live",
+"mode": "bear"
+},
+{
+"date": "2026-11-24",
+"code": "8113",
+"name": "ユニ・チャーム",
+"setup": "pullback",
+"score": 84.0,
+"entry": 1079,
+"stop": 1045,
+"target": 1146,
+"src": "live",
+"mode": "bear"
 }
 ]
 }
