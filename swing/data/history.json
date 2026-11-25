@@ -1667,6 +1667,42 @@
 "target": 1485,
 "src": "live",
 "mode": "bear"
+},
+{
+"date": "2026-11-25",
+"code": "2503",
+"name": "キリンHD",
+"setup": "pullback",
+"score": 83.2,
+"entry": 3204,
+"stop": 2979,
+"target": 3654,
+"src": "live",
+"mode": "bear"
+},
+{
+"date": "2026-11-25",
+"code": "8113",
+"name": "ユニ・チャーム",
+"setup": "pullback",
+"score": 78.0,
+"entry": 1126,
+"stop": 1050,
+"target": 1279,
+"src": "live",
+"mode": "bear"
+},
+{
+"date": "2026-11-25",
+"code": "5411",
+"name": "JFE HD",
+"setup": "pullback",
+"score": 59.4,
+"entry": 1788,
+"stop": 1763,
+"target": 1854,
+"src": "live",
+"mode": "bear"
 }
 ]
 }
