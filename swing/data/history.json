@@ -1547,6 +1547,126 @@
 "target": 1146,
 "src": "live",
 "mode": "bear"
+},
+{
+"date": "2026-11-25",
+"code": "8725",
+"name": "MS&AD",
+"setup": "pullback",
+"score": 100,
+"entry": 5375,
+"stop": 5125,
+"target": 5875,
+"src": "live",
+"mode": "bear"
+},
+{
+"date": "2026-11-25",
+"code": "2502",
+"name": "アサヒグループHD",
+"setup": "pullback",
+"score": 86.0,
+"entry": 1812,
+"stop": 1686,
+"target": 2065,
+"src": "live",
+"mode": "bear"
+},
+{
+"date": "2026-11-25",
+"code": "4507",
+"name": "塩野義製薬",
+"setup": "pullback",
+"score": 84.0,
+"entry": 3241,
+"stop": 3037,
+"target": 3649,
+"src": "live",
+"mode": "bear"
+},
+{
+"date": "2026-11-25",
+"code": "5108",
+"name": "ブリヂストン",
+"setup": "pullback",
+"score": 84.0,
+"entry": 4380,
+"stop": 4111,
+"target": 4917,
+"src": "live",
+"mode": "bear"
+},
+{
+"date": "2026-11-25",
+"code": "7269",
+"name": "スズキ",
+"setup": "pullback",
+"score": 84.0,
+"entry": 2203,
+"stop": 2053,
+"target": 2503,
+"src": "live",
+"mode": "bear"
+},
+{
+"date": "2026-11-25",
+"code": "7751",
+"name": "キヤノン",
+"setup": "pullback",
+"score": 82.7,
+"entry": 4905,
+"stop": 4740,
+"target": 5235,
+"src": "live",
+"mode": "bear"
+},
+{
+"date": "2026-11-25",
+"code": "2801",
+"name": "キッコーマン",
+"setup": "pullback",
+"score": 82.5,
+"entry": 1847,
+"stop": 1778,
+"target": 1986,
+"src": "live",
+"mode": "bear"
+},
+{
+"date": "2026-11-25",
+"code": "7203",
+"name": "トヨタ自動車",
+"setup": "pullback",
+"score": 81.9,
+"entry": 3360,
+"stop": 3310,
+"target": 3461,
+"src": "live",
+"mode": "bear"
+},
+{
+"date": "2026-11-25",
+"code": "9020",
+"name": "JR東日本",
+"setup": "pullback",
+"score": 78.0,
+"entry": 4048,
+"stop": 3788,
+"target": 4569,
+"src": "live",
+"mode": "bear"
+},
+{
+"date": "2026-11-25",
+"code": "3402",
+"name": "東レ",
+"setup": "pullback",
+"score": 78.0,
+"entry": 1332,
+"stop": 1256,
+"target": 1485,
+"src": "live",
+"mode": "bear"
 }
 ]
 }
