@@ -1703,6 +1703,42 @@
 "target": 1854,
 "src": "live",
 "mode": "bear"
+},
+{
+"date": "2026-11-26",
+"code": "7751",
+"name": "キヤノン",
+"setup": "pullback",
+"score": 100,
+"entry": 4989,
+"stop": 4745,
+"target": 5475,
+"src": "live",
+"mode": "bear"
+},
+{
+"date": "2026-11-26",
+"code": "7269",
+"name": "スズキ",
+"setup": "pullback",
+"score": 91.1,
+"entry": 2280,
+"stop": 2123,
+"target": 2593,
+"src": "live",
+"mode": "bear"
+},
+{
+"date": "2026-11-26",
+"code": "7974",
+"name": "任天堂",
+"setup": "pullback",
+"score": 84.0,
+"entry": 9080,
+"stop": 8450,
+"target": 10345,
+"src": "live",
+"mode": "bear"
 }
 ]
 }
