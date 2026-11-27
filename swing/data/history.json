@@ -1739,6 +1739,66 @@
 "target": 10345,
 "src": "live",
 "mode": "bear"
+},
+{
+"date": "2026-11-27",
+"code": "8725",
+"name": "MS&AD",
+"setup": "pullback",
+"score": 96.6,
+"entry": 5390,
+"stop": 5150,
+"target": 5870,
+"src": "live",
+"mode": "bear"
+},
+{
+"date": "2026-11-27",
+"code": "7203",
+"name": "トヨタ自動車",
+"setup": "pullback",
+"score": 89.9,
+"entry": 3384,
+"stop": 3310,
+"target": 3533,
+"src": "live",
+"mode": "bear"
+},
+{
+"date": "2026-11-27",
+"code": "6758",
+"name": "ソニーグループ",
+"setup": "pullback",
+"score": 85.6,
+"entry": 4413,
+"stop": 4147,
+"target": 4945,
+"src": "live",
+"mode": "bear"
+},
+{
+"date": "2026-11-27",
+"code": "4578",
+"name": "大塚HD",
+"setup": "pullback",
+"score": 84.0,
+"entry": 13025,
+"stop": 12090,
+"target": 14895,
+"src": "live",
+"mode": "bear"
+},
+{
+"date": "2026-11-27",
+"code": "7751",
+"name": "キヤノン",
+"setup": "pullback",
+"score": 83.2,
+"entry": 4993,
+"stop": 4678,
+"target": 5625,
+"src": "live",
+"mode": "bear"
 }
 ]
 }
